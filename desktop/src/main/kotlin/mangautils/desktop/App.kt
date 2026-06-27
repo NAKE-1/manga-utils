@@ -36,7 +36,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
@@ -79,6 +81,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -137,6 +140,9 @@ private sealed interface Screen {
 }
 
 private data class MangaRef(val title: String, val url: String, val thumb: String?)
+
+/** Suwayomi-style rounded-rectangle buttons (not Material's default pill shape). */
+private val BtnShape = RoundedCornerShape(8.dp)
 
 @Composable
 fun App() {
@@ -299,7 +305,7 @@ private fun LibraryScreen(onOpen: (LibraryEntry) -> Unit) {
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { entries = LibraryService.list() } }
     if (entries.isEmpty()) { Empty("Your library is empty.\nBrowse a source and add a series."); return }
     LazyVerticalGrid(
-        GridCells.Adaptive(150.dp),
+        GridCells.Adaptive(168.dp),
         Modifier.fillMaxSize().padding(16.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -310,11 +316,15 @@ private fun LibraryScreen(onOpen: (LibraryEntry) -> Unit) {
 
 @Composable
 private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, onClick: () -> Unit) {
-    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MuTheme.Panel), modifier = Modifier.width(150.dp)) {
-        Cover(sourceId, m.thumb, m.title, Modifier.fillMaxWidth().aspectRatio(0.7f))
-        Column(Modifier.padding(8.dp)) {
-            Text(m.title, color = MuTheme.Paper, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (subtitle.isNotBlank()) Text(subtitle, color = MuTheme.Muted, fontSize = 11.sp)
+    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MuTheme.Panel)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(0.69f)) {
+            Cover(sourceId, m.thumb, m.title, Modifier.fillMaxSize())
+            // Bottom gradient scrim so the overlaid title stays readable on any cover.
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.92f))))
+            Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 8.dp, vertical = 7.dp)) {
+                Text(m.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotBlank()) Text(subtitle, color = Color.White.copy(alpha = 0.75f), fontSize = 10.sp)
+            }
         }
     }
 }
@@ -389,7 +399,6 @@ private fun ExtensionTab() {
     var refresh by remember { mutableStateOf(0) }
     var showRepos by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
-    val nsfwVisible = remember { mangautils.core.config.SettingsStore.get().nsfwVisible }
 
     LaunchedEffect(refresh) {
         loading = true
@@ -405,13 +414,13 @@ private fun ExtensionTab() {
 
     val byPkg = remember(allEntries) { allEntries.associateBy { it.first.pkg } }
     val have = installed.map { it.pkg }.toSet()
-    val available = allEntries.filter { it.first.pkg !in have && (nsfwVisible || !it.first.isNsfw) && it.first.name.contains(query, ignoreCase = true) }
+    val available = allEntries.filter { it.first.pkg !in have && it.first.name.contains(query, ignoreCase = true) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
             OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("Search extensions") }, leadingIcon = { Icon(Icons.Filled.Search, null) })
             Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = { showRepos = true }) { Text("R", fontWeight = FontWeight.Black, color = MuTheme.Vermilion) }
+            OutlinedButton(onClick = { showRepos = true }, shape = BtnShape) { Text("R", fontWeight = FontWeight.Black, color = MuTheme.Vermilion) }
         }
         if (loading) {
             Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
@@ -454,9 +463,9 @@ private fun ExtRow(iconUrl: String?, name: String, meta: String, repoUrl: String
         if (installed) {
             IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Settings", tint = MuTheme.Muted) }
             Spacer(Modifier.width(4.dp))
-            OutlinedButton(onClick = onAction) { Text("UNINSTALL", color = MuTheme.Vermilion) }
+            OutlinedButton(onClick = onAction, shape = BtnShape) { Text("UNINSTALL", color = MuTheme.Vermilion) }
         } else {
-            Button(onClick = onAction, colors = ButtonDefaults.buttonColors(containerColor = MuTheme.Vermilion)) { Text("INSTALL") }
+            Button(onClick = onAction, colors = ButtonDefaults.buttonColors(containerColor = MuTheme.Vermilion), shape = BtnShape) { Text("INSTALL") }
         }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
@@ -510,13 +519,15 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, onOpen: (MangaRef) -> Uni
     var page by remember(s) { mutableStateOf(0) }
     var hasNext by remember(s) { mutableStateOf(false) }
     var loading by remember(s) { mutableStateOf(false) }
+    var error by remember(s) { mutableStateOf<String?>(null) }
 
     fun loadNext(reset: Boolean) {
         if (loading) return
         loading = true
+        error = null
         val next = if (reset) 1 else page + 1
         scope.launch {
-            val result =
+            val outcome =
                 withContext(Dispatchers.IO) {
                     runCatching {
                         when (mode) {
@@ -524,11 +535,16 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, onOpen: (MangaRef) -> Uni
                             "search" -> SourceBrowser.search(s.sourceId, query, next)
                             else -> SourceBrowser.popular(s.sourceId, next)
                         }
-                    }.getOrNull()
+                    }
                 }
-            if (reset) items.clear()
-            result?.mangas?.forEach { m -> items.add(MangaRef(runCatching { m.title }.getOrDefault(m.url), m.url, m.thumbnail_url)) }
-            hasNext = result?.hasNextPage ?: false
+            outcome.onSuccess { result ->
+                if (reset) items.clear()
+                result.mangas.forEach { m -> items.add(MangaRef(runCatching { m.title }.getOrDefault(m.url), m.url, m.thumbnail_url)) }
+                hasNext = result.hasNextPage
+            }.onFailure {
+                if (reset) items.clear()
+                error = it.message ?: it.javaClass.simpleName
+            }
             page = next
             loading = false
         }
@@ -538,29 +554,39 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, onOpen: (MangaRef) -> Uni
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ModeChip("Popular", mode == "popular") { mode = "popular" }
+            ModeChip("Popular", Icons.Filled.Favorite, mode == "popular") { mode = "popular" }
             Spacer(Modifier.width(8.dp))
-            ModeChip("Latest", mode == "latest") { mode = "latest" }
+            ModeChip("Latest", Icons.Filled.Bolt, mode == "latest") { mode = "latest" }
             Spacer(Modifier.width(16.dp))
             OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("Search this source") })
             Spacer(Modifier.width(8.dp))
-            Button(onClick = { mode = "search"; loadNext(true) }) { Text("Search") }
+            Button(onClick = { mode = "search"; loadNext(true) }, shape = BtnShape) { Text("Search") }
         }
         Spacer(Modifier.height(12.dp))
         Box(Modifier.weight(1f)) {
             LazyVerticalGrid(
-                GridCells.Adaptive(150.dp),
+                GridCells.Adaptive(168.dp),
                 Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 items(items) { m -> MangaCover(s.sourceId, m, "") { onOpen(m) } }
             }
-            if (loading && items.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
+            when {
+                loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
+                items.isEmpty() && error != null ->
+                    Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
+                        Text(
+                            "Couldn't load this source.\n\n$error\n\nSome sources (e.g. Aqua Manga, Asura Scans) are behind Cloudflare, which isn't supported yet. Try another source.",
+                            color = MuTheme.Muted, textAlign = TextAlign.Center,
+                        )
+                    }
+                items.isEmpty() && !loading -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No results.", color = MuTheme.Muted) }
+            }
         }
         if (hasNext) {
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { loadNext(false) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { loadNext(false) }, enabled = !loading, modifier = Modifier.fillMaxWidth(), shape = BtnShape) {
                 Text(if (loading) "Loading..." else "Load more")
             }
         }
@@ -568,9 +594,14 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, onOpen: (MangaRef) -> Uni
 }
 
 @Composable
-private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun ModeChip(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
     val bg = if (selected) MuTheme.Vermilion else MuTheme.Panel
-    Box(Modifier.clip(RoundedCornerShape(20.dp)).background(bg).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Row(
+        Modifier.clip(BtnShape).background(bg).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = if (selected) Color.White else MuTheme.Muted, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
         Text(label, color = if (selected) Color.White else MuTheme.Muted, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
     }
 }
@@ -629,6 +660,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                     Button(
                         onClick = { toggleLibrary() },
                         modifier = Modifier.fillMaxWidth(),
+                        shape = BtnShape,
                         colors = ButtonDefaults.buttonColors(containerColor = if (inLibrary) MuTheme.Vermilion else MuTheme.Panel),
                     ) { Text(if (inLibrary) "♥  In library" else "♡  Add to library", color = if (inLibrary) Color.White else MuTheme.Paper) }
                     Spacer(Modifier.height(12.dp))
