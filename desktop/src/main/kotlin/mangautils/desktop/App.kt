@@ -352,10 +352,19 @@ private fun BrowseScreen(onOpenSource: (Long, String, Boolean) -> Unit) {
 private fun SourceTab(onOpen: (Long, String, Boolean) -> Unit) {
     var sources by remember { mutableStateOf<List<Triple<Long, String, String>>>(emptyList()) }
     var nsfwIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var iconBySource by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
+            val installed = InstalledStore.list()
             sources = SourceManager.listInstalledSources().map { Triple(it.id, it.name, it.lang) }
-            nsfwIds = InstalledStore.list().filter { it.nsfw }.flatMap { it.sources.map { s -> s.id } }.toSet()
+            nsfwIds = installed.filter { it.nsfw }.flatMap { it.sources.map { s -> s.id } }.toSet()
+            // Resolve each source's extension icon: sourceId -> pkg -> repo -> <repo>/icon/<pkg>.png
+            val pkgBySource = installed.flatMap { ext -> ext.sources.map { it.id to ext.pkg } }.toMap()
+            val client = ExtensionRepoClient()
+            val repoByPkg = RepoStore.list().flatMap { repo ->
+                runCatching { client.fetchIndex(repo) }.getOrDefault(emptyList()).map { it.pkg to repo }
+            }.toMap()
+            iconBySource = pkgBySource.mapNotNull { (sid, pkg) -> repoByPkg[pkg]?.let { sid to extIconUrl(it, pkg) } }.toMap()
         }
     }
     if (sources.isEmpty()) { Empty("No sources installed.\nInstall an extension from the Extension tab."); return }
@@ -363,20 +372,18 @@ private fun SourceTab(onOpen: (Long, String, Boolean) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         byLang.forEach { (lang, group) ->
             item { SectionHeader(lang.uppercase()) }
-            items(group) { s -> SourceRow(s.first, s.second, s.third, s.first in nsfwIds, onOpen) }
+            items(group) { s -> SourceRow(iconBySource[s.first], s.first, s.second, s.third, s.first in nsfwIds, onOpen) }
         }
     }
 }
 
 @Composable
-private fun SourceRow(id: Long, name: String, lang: String, nsfw: Boolean, onOpen: (Long, String, Boolean) -> Unit) {
+private fun SourceRow(iconUrl: String?, id: Long, name: String, lang: String, nsfw: Boolean, onOpen: (Long, String, Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable { onOpen(id, name, false) }.padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)).background(coverColor(name)), Alignment.Center) {
-            Text(name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
-        }
+        IconImage(iconUrl, name, Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold)
