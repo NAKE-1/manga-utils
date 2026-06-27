@@ -242,6 +242,32 @@ private object ImageCache {
         cache[url] = img
         return img
     }
+
+    /** Plain HTTP image (e.g. extension icons from a repo) — no source headers needed. */
+    fun url(u: String): ImageBitmap? {
+        cache[u]?.let { return it }
+        val bytes = runCatching { java.net.URI(u).toURL().openStream().use { it.readBytes() } }.getOrNull() ?: return null
+        val img = decode(bytes) ?: return null
+        cache[u] = img
+        return img
+    }
+}
+
+/** Extension icons live next to the index, e.g. <repo>/icon/<pkg>.png. */
+private fun extIconUrl(repoUrl: String, pkg: String): String = "${repoUrl.substringBeforeLast('/')}/icon/$pkg.png"
+
+@Composable
+private fun IconImage(url: String?, seed: String, modifier: Modifier) {
+    var bmp by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(url) { if (!url.isNullOrBlank()) bmp = withContext(Dispatchers.IO) { ImageCache.url(url) } }
+    val b = bmp
+    if (b != null) {
+        Image(b, null, modifier, contentScale = ContentScale.Crop)
+    } else {
+        Box(modifier.background(coverColor(seed)), Alignment.Center) {
+            Text(seed.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+        }
+    }
 }
 
 private fun decode(bytes: ByteArray): ImageBitmap? = runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()
@@ -358,7 +384,7 @@ private fun SourceRow(id: Long, name: String, lang: String, nsfw: Boolean, onOpe
 private fun ExtensionTab() {
     val scope = rememberCoroutineScope()
     var installed by remember { mutableStateOf<List<InstalledExtension>>(emptyList()) }
-    var available by remember { mutableStateOf<List<Pair<ExtensionRepoEntry, String>>>(emptyList()) }
+    var allEntries by remember { mutableStateOf<List<Pair<ExtensionRepoEntry, String>>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var refresh by remember { mutableStateOf(0) }
     var showRepos by remember { mutableStateOf(false) }
@@ -369,38 +395,39 @@ private fun ExtensionTab() {
         loading = true
         withContext(Dispatchers.IO) {
             installed = InstalledStore.list()
-            val have = installed.map { it.pkg }.toSet()
             val client = ExtensionRepoClient()
-            available =
-                RepoStore.list().flatMap { repo ->
-                    runCatching { client.fetchIndex(repo) }.getOrDefault(emptyList()).map { it to repo }
-                }.filter { it.first.pkg !in have && (nsfwVisible || !it.first.isNsfw) }
+            allEntries = RepoStore.list().flatMap { repo ->
+                runCatching { client.fetchIndex(repo) }.getOrDefault(emptyList()).map { it to repo }
+            }
         }
         loading = false
     }
+
+    val byPkg = remember(allEntries) { allEntries.associateBy { it.first.pkg } }
+    val have = installed.map { it.pkg }.toSet()
+    val available = allEntries.filter { it.first.pkg !in have && (nsfwVisible || !it.first.isNsfw) && it.first.name.contains(query, ignoreCase = true) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
             OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("Search extensions") }, leadingIcon = { Icon(Icons.Filled.Search, null) })
             Spacer(Modifier.width(8.dp))
-            // "R" — open the extension repositories dialog.
             OutlinedButton(onClick = { showRepos = true }) { Text("R", fontWeight = FontWeight.Black, color = MuTheme.Vermilion) }
         }
         if (loading) {
             Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
         } else {
-            val filteredAvail = available.filter { it.first.name.contains(query, ignoreCase = true) }
             LazyColumn(Modifier.fillMaxSize()) {
                 item { SectionHeader("Installed") }
                 if (installed.isEmpty()) item { Text("None installed.", color = MuTheme.Muted, modifier = Modifier.padding(vertical = 8.dp)) }
                 items(installed) { ext ->
-                    ExtRow(ext.name, "${ext.lang.uppercase()} · v${ext.versionName}${if (ext.nsfw) " · 18+" else ""}", ext.pkg, installed = true) {
+                    val repo = byPkg[ext.pkg]?.second
+                    ExtRow(repo?.let { extIconUrl(it, ext.pkg) }, ext.name, "${ext.lang.uppercase()} · v${ext.versionName}${if (ext.nsfw) " · 18+" else ""}", repo, installed = true) {
                         removeExtension(ext); refresh++
                     }
                 }
-                item { SectionHeader("Available (${filteredAvail.size})") }
-                items(filteredAvail) { (entry, repo) ->
-                    ExtRow(entry.name, "${entry.lang.uppercase()} · v${entry.version}${if (entry.isNsfw) " · 18+" else ""}", entry.pkg, installed = false) {
+                item { SectionHeader("Available (${available.size})") }
+                items(available) { (entry, repo) ->
+                    ExtRow(extIconUrl(repo, entry.pkg), entry.name, "${entry.lang.uppercase()} · v${entry.version}${if (entry.isNsfw) " · 18+" else ""}", repo, installed = false) {
                         scope.launch {
                             withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(entry, repo) } }
                             refresh++
@@ -415,17 +442,18 @@ private fun ExtensionTab() {
 }
 
 @Composable
-private fun ExtRow(name: String, meta: String, pkg: String, installed: Boolean, onAction: () -> Unit) {
+private fun ExtRow(iconUrl: String?, name: String, meta: String, repoUrl: String?, installed: Boolean, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)).background(coverColor(name)), Alignment.Center) {
-            Text(name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
-        }
+        IconImage(iconUrl, name, Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold)
             Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
+            repoUrl?.let { Text(it, color = MuTheme.Muted.copy(alpha = 0.65f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         if (installed) {
+            IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Settings", tint = MuTheme.Muted) }
+            Spacer(Modifier.width(4.dp))
             OutlinedButton(onClick = onAction) { Text("UNINSTALL", color = MuTheme.Vermilion) }
         } else {
             Button(onClick = onAction, colors = ButtonDefaults.buttonColors(containerColor = MuTheme.Vermilion)) { Text("INSTALL") }
