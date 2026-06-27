@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -40,6 +41,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -80,12 +82,16 @@ import mangautils.core.extension.InstalledExtension
 import mangautils.core.extension.InstalledStore
 import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
+import mangautils.core.library.LibraryStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.MangaDetails
 import mangautils.core.source.SourceBrowser
 import mangautils.core.source.SourceImage
 import mangautils.core.source.SourceManager
 import java.nio.file.Files
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import org.jetbrains.skia.Image as SkiaImage
 
@@ -362,51 +368,104 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     val scope = rememberCoroutineScope()
     var details by remember(s) { mutableStateOf<MangaDetails?>(null) }
     var error by remember(s) { mutableStateOf<String?>(null) }
-    var following by remember(s) { mutableStateOf(false) }
+    var inLibrary by remember(s) { mutableStateOf(false) }
+    var sourceLabel by remember(s) { mutableStateOf("") }
     val readUrls = remember(s) { ReadStore.readUrls(s.sourceId, s.url) }
+    val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+
     LaunchedEffect(s) {
         withContext(Dispatchers.IO) {
+            inLibrary = LibraryStore.find(s.sourceId, s.url) != null
+            sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${it.name} (${it.lang.uppercase()})" } ?: ""
             runCatching { SourceBrowser.details(s.sourceId, s.url) }.onSuccess { details = it }.onFailure { error = it.message }
         }
     }
     val d = details
+
+    fun toggleLibrary() {
+        if (inLibrary) {
+            scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(s.sourceId, s.url) } }
+            inLibrary = false
+        } else {
+            inLibrary = true
+            scope.launch { withContext(Dispatchers.IO) { LibraryService.add(s.sourceId, s.url) } }
+        }
+    }
+
     when {
         error != null -> Empty("Couldn't load: $error")
         d == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
-        else -> LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
-            item {
-                Row {
-                    Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.size(150.dp, 214.dp).clip(RoundedCornerShape(10.dp)))
-                    Spacer(Modifier.width(16.dp))
-                    Column {
-                        Text(s.title, color = MuTheme.Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                        d.manga.author?.takeIf { it.isNotBlank() }?.let { Text(it, color = MuTheme.Muted) }
-                        Text(SourceBrowser.statusLabel(d.manga.status), color = MuTheme.Muted)
-                        Spacer(Modifier.height(10.dp))
-                        Button(onClick = {
-                            following = true
-                            scope.launch { withContext(Dispatchers.IO) { LibraryService.add(s.sourceId, s.url) } }
-                        }, enabled = !following) { Text(if (following) "Following" else "Follow") }
-                        Spacer(Modifier.height(8.dp))
+        else -> {
+            // Continue/Start target = oldest unread chapter (chapter lists are newest-first).
+            val continueCh = d.chapters.reversed().firstOrNull { it.url !in readUrls } ?: d.chapters.firstOrNull()
+            Box(Modifier.fillMaxSize()) {
+                LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+                    item {
+                        Row {
+                            Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.size(160.dp, 228.dp).clip(RoundedCornerShape(10.dp)))
+                            Spacer(Modifier.width(16.dp))
+                            Column {
+                                Text(s.title, color = MuTheme.Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(6.dp))
+                                d.manga.author?.takeIf { it.isNotBlank() }?.let { InfoRow("Author", it) }
+                                d.manga.artist?.takeIf { it.isNotBlank() }?.let { InfoRow("Artist", it) }
+                                InfoRow("Status", SourceBrowser.statusLabel(d.manga.status))
+                                if (sourceLabel.isNotBlank()) InfoRow("Source", sourceLabel)
+                                Spacer(Modifier.height(12.dp))
+                                Button(
+                                    onClick = { toggleLibrary() },
+                                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                        containerColor = if (inLibrary) MuTheme.VermilionDim else MuTheme.Vermilion,
+                                    ),
+                                ) { Text(if (inLibrary) "In library  ✓" else "Add to library") }
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
                         d.manga.genre?.takeIf { it.isNotBlank() }?.let { Text(it, color = MuTheme.Muted, fontSize = 12.sp) }
+                        Spacer(Modifier.height(8.dp))
+                        d.manga.description?.let { Text(it.trim(), color = MuTheme.Paper.copy(alpha = 0.85f), fontSize = 13.sp) }
+                        Spacer(Modifier.height(14.dp))
+                        Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outline)
                     }
+                    items(d.chapters) { ch ->
+                        val read = ch.url in readUrls
+                        Row(Modifier.fillMaxWidth().clickable { onReadChapter(ch.url, ch.name) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(if (read) MuTheme.VermilionDim else MuTheme.Vermilion))
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val meta = listOfNotNull(
+                                    ch.scanlator?.takeIf { it.isNotBlank() },
+                                    ch.date_upload.takeIf { it > 0 }?.let { dateFmt.format(Date(it)) },
+                                ).joinToString("  ·  ")
+                                if (meta.isNotBlank()) Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                    }
+                    item { Spacer(Modifier.height(72.dp)) }
                 }
-                Spacer(Modifier.height(10.dp))
-                d.manga.description?.let { Text(it.trim(), color = MuTheme.Paper.copy(alpha = 0.85f), fontSize = 13.sp) }
-                Spacer(Modifier.height(12.dp))
-                Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontWeight = FontWeight.Bold)
-                HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outline)
-            }
-            items(d.chapters) { ch ->
-                val read = ch.url in readUrls
-                Row(Modifier.fillMaxWidth().clickable { onReadChapter(ch.url, ch.name) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(if (read) MuTheme.VermilionDim else MuTheme.Vermilion))
-                    Spacer(Modifier.width(12.dp))
-                    Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (continueCh != null) {
+                    ExtendedFloatingActionButton(
+                        onClick = { onReadChapter(continueCh.url, continueCh.name) },
+                        containerColor = MuTheme.Vermilion,
+                        contentColor = Color.White,
+                        icon = { Icon(Icons.Filled.PlayArrow, null) },
+                        text = { Text(if (readUrls.isEmpty()) "Start" else "Continue") },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                    )
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
             }
         }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row {
+        Text("$label  ", color = MuTheme.Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(value, color = MuTheme.Paper, fontSize = 12.sp)
     }
 }
 
