@@ -1,0 +1,38 @@
+manga-utils
+Copyright 2026 manga-utils contributors
+
+This product's own source code is licensed under the Mozilla Public License,
+v. 2.0 (see LICENSE).
+
+----------------------------------------------------------------------
+Third-party code vendored into this repository
+----------------------------------------------------------------------
+
+The `android-compat` module and the extension install/load pipeline are derived
+from Suwayomi-Server and its predecessors. Attribution is retained per their
+licenses:
+
+  - AndroidCompat — originally developed by @null-dev for TachiWeb-Server.
+    Licensed under the Apache License, Version 2.0.
+    Copyright 2019 Andy Bao and contributors.
+
+  - Portions adopted from Mihon (Tachiyomi).
+    Licensed under the Apache License, Version 2.0.
+    Copyright 2015 Javier Tomás.
+
+  - Changes made by the Suwayomi project are licensed under the
+    Mozilla Public License, v. 2.0.
+
+The `source-api` module mirrors the Tachiyomi/Mihon `extensions-lib` interfaces
+so that community-built extensions remain binary-compatible. Those interfaces
+originate from Mihon (Tachiyomi), Apache License 2.0, Copyright 2015 Javier Tomás.
+
+A copy of the Apache License 2.0 is available at:
+  https://www.apache.org/licenses/LICENSE-2.0
+
+----------------------------------------------------------------------
+Note
+----------------------------------------------------------------------
+
+manga-utils does not host or bundle any manga content or any source/site
+connectors. Extension repositories are added by the end user.
