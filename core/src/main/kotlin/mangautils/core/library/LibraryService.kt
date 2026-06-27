@@ -57,6 +57,40 @@ object LibraryService {
         return entry
     }
 
+    /**
+     * Follow using details already in hand (no network) — used by UIs that have just loaded the
+     * manga. Reliable + instant, unlike [add] which re-fetches. Returns the saved entry.
+     */
+    fun addKnown(
+        sourceId: Long,
+        mangaUrl: String,
+        title: String,
+        manga: SManga,
+        chapters: List<SChapter>,
+        mode: ReadingMode? = null,
+    ): LibraryEntry {
+        val existing = LibraryStore.find(sourceId, mangaUrl)
+        val entry =
+            (existing ?: LibraryEntry(sourceId = sourceId, mangaUrl = mangaUrl, title = title)).apply {
+                this.title = title.ifBlank { runCatching { manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: SlugTitle.fromUrl(mangaUrl) }
+                author = runCatching { manga.author }.getOrNull() ?: author
+                description = runCatching { manga.description }.getOrNull() ?: description
+                thumbnailUrl = runCatching { manga.thumbnail_url }.getOrNull() ?: thumbnailUrl
+                genre = runCatching { manga.genre }.getOrNull() ?: genre
+                status = runCatching { manga.status }.getOrDefault(0)
+                if (mode != null) readingMode = mode
+                knownChapters = chapters.map { it.toRef() }.toMutableList()
+                lastCheckedAt = System.currentTimeMillis()
+            }
+        LibraryStore.upsert(entry)
+        return entry
+    }
+
+    fun isFollowed(
+        sourceId: Long,
+        mangaUrl: String,
+    ): Boolean = LibraryStore.find(sourceId, mangaUrl) != null
+
     fun list(): List<LibraryEntry> = LibraryStore.list()
 
     fun remove(
