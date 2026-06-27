@@ -127,11 +127,10 @@ fun App() {
     var panelOpen by remember { mutableStateOf(true) }
     fun go(s: Screen) = backStack.add(s)
     fun back() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
-    fun home() { backStack.clear(); backStack.add(Screen.Library) }
 
     Surface(Modifier.fillMaxSize(), color = MuTheme.Ink) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(titleFor(current), backStack.size > 1, ::back, ::home) { panelOpen = !panelOpen }
+            TopBar(titleFor(current), backStack.size > 1, ::back) { panelOpen = !panelOpen }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Row(Modifier.fillMaxSize()) {
                 if (current !is Screen.Reader && panelOpen) {
@@ -168,22 +167,15 @@ private fun titleFor(s: Screen): String =
 // ---- chrome ---------------------------------------------------------------------------------
 
 @Composable
-private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onLogo: () -> Unit, onMenu: () -> Unit) {
+private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().background(MuTheme.Panel).padding(horizontal = 10.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().background(MuTheme.Ink).padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Hamburger — always shown; toggles the left panel / reader sidebar.
         IconButton(onClick = onMenu) { Icon(Icons.Filled.Menu, "Menu", tint = MuTheme.Paper) }
-        Spacer(Modifier.width(4.dp))
-        Box(
-            Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(MuTheme.Vermilion).clickable(onClick = onLogo),
-            contentAlignment = Alignment.Center,
-        ) { Text("漫", color = Color.White, fontWeight = FontWeight.Black) }
-        Spacer(Modifier.width(10.dp))
-        Text("manga-utils", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable(onClick = onLogo))
-        Spacer(Modifier.width(18.dp))
         if (canGoBack) IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
+        Spacer(Modifier.width(6.dp))
         Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

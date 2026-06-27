@@ -22,5 +22,8 @@ compose.desktop {
     application {
         mainClass = "mangautils.desktop.MainKt"
         jvmArgs += "--enable-native-access=ALL-UNNAMED"
+        // Share the same data dir as the CLI/Swing tools (extensions, library, settings, downloads)
+        // regardless of the launch working directory.
+        jvmArgs += "-DMU_DATA_DIR=${rootProject.projectDir.resolve("data").absolutePath}"
     }
 }
