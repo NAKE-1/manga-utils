@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -143,6 +144,12 @@ private data class MangaRef(val title: String, val url: String, val thumb: Strin
 
 /** Suwayomi-style rounded-rectangle buttons (not Material's default pill shape). */
 private val BtnShape = RoundedCornerShape(8.dp)
+
+/** Red used for the 18+/NSFW badge. */
+private val Red18 = Color(0xFFFF5252)
+
+/** Many extension names are "Tachiyomi: Foo" — show just "Foo". */
+private fun cleanName(s: String): String = s.removePrefix("Tachiyomi: ").trim()
 
 @Composable
 fun App() {
@@ -302,7 +309,8 @@ private fun coverColor(seed: String): Color {
 @Composable
 private fun LibraryScreen(onOpen: (LibraryEntry) -> Unit) {
     var entries by remember { mutableStateOf<List<LibraryEntry>>(emptyList()) }
-    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { entries = LibraryService.list() } }
+    var refresh by remember { mutableStateOf(0) }
+    LaunchedEffect(refresh) { withContext(Dispatchers.IO) { entries = LibraryService.list() } }
     if (entries.isEmpty()) { Empty("Your library is empty.\nBrowse a source and add a series."); return }
     LazyVerticalGrid(
         GridCells.Adaptive(168.dp),
@@ -310,7 +318,35 @@ private fun LibraryScreen(onOpen: (LibraryEntry) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        items(entries) { e -> MangaCover(e.sourceId, MangaRef(e.title, e.mangaUrl, e.thumbnailUrl), "${e.knownChapters.size} ch") { onOpen(e) } }
+        items(entries) { e -> LibraryCard(e, onOpen = { onOpen(e) }) { refresh++ } }
+    }
+}
+
+@Composable
+private fun LibraryCard(e: LibraryEntry, onOpen: () -> Unit, onChanged: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var menuOpen by remember { mutableStateOf(false) }
+    fun markAll(read: Boolean) {
+        scope.launch { withContext(Dispatchers.IO) { e.knownChapters.forEach { ReadStore.setRead(e.sourceId, e.mangaUrl, it.url, read) } } }
+    }
+    Box {
+        MangaCover(e.sourceId, MangaRef(e.title, e.mangaUrl, e.thumbnailUrl), "${e.knownChapters.size} ch") { onOpen() }
+        Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
+            Box(
+                Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.45f)).clickable { menuOpen = true }.padding(4.dp),
+            ) { Icon(Icons.Filled.MoreVert, "Menu", tint = Color.White, modifier = Modifier.size(20.dp)) }
+            DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(text = { Text("Mark all read") }, onClick = { menuOpen = false; markAll(true) })
+                DropdownMenuItem(text = { Text("Mark all unread") }, onClick = { menuOpen = false; markAll(false) })
+                DropdownMenuItem(
+                    text = { Text("Remove from library", color = MuTheme.Vermilion) },
+                    onClick = {
+                        menuOpen = false
+                        scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(e.sourceId, e.mangaUrl) }; onChanged() }
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -386,13 +422,13 @@ private fun SourceRow(iconUrl: String?, id: Long, name: String, lang: String, ns
         IconImage(iconUrl, name, Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold)
+            Text(cleanName(name), color = MuTheme.Paper, fontWeight = FontWeight.SemiBold)
             Row {
                 Text(lang.uppercase(), color = MuTheme.Muted, fontSize = 11.sp)
-                if (nsfw) { Spacer(Modifier.width(6.dp)); Text("18+", color = MuTheme.Vermilion, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                if (nsfw) { Spacer(Modifier.width(6.dp)); Text("18+", color = Red18, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             }
         }
-        TextButton(onClick = { onOpen(id, name, true) }) { Text("LATEST", color = MuTheme.Vermilion) }
+        OutlinedButton(onClick = { onOpen(id, name, true) }, shape = BtnShape) { Text("LATEST", color = MuTheme.Vermilion) }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 }
@@ -437,13 +473,13 @@ private fun ExtensionTab() {
                 if (installed.isEmpty()) item { Text("None installed.", color = MuTheme.Muted, modifier = Modifier.padding(vertical = 8.dp)) }
                 items(installed) { ext ->
                     val repo = byPkg[ext.pkg]?.second
-                    ExtRow(repo?.let { extIconUrl(it, ext.pkg) }, ext.name, "${ext.lang.uppercase()} · v${ext.versionName}${if (ext.nsfw) " · 18+" else ""}", repo, installed = true) {
+                    ExtRow(repo?.let { extIconUrl(it, ext.pkg) }, ext.name, ext.lang, ext.versionName, ext.nsfw, repo, installed = true) {
                         removeExtension(ext); refresh++
                     }
                 }
                 item { SectionHeader("Available (${available.size})") }
                 items(available) { (entry, repo) ->
-                    ExtRow(extIconUrl(repo, entry.pkg), entry.name, "${entry.lang.uppercase()} · v${entry.version}${if (entry.isNsfw) " · 18+" else ""}", repo, installed = false) {
+                    ExtRow(extIconUrl(repo, entry.pkg), entry.name, entry.lang, entry.version, entry.isNsfw, repo, installed = false) {
                         scope.launch {
                             withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(entry, repo) } }
                             refresh++
@@ -458,14 +494,20 @@ private fun ExtensionTab() {
 }
 
 @Composable
-private fun ExtRow(iconUrl: String?, name: String, meta: String, repoUrl: String?, installed: Boolean, onAction: () -> Unit) {
+private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String, nsfw: Boolean, repoUrl: String?, installed: Boolean, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconImage(iconUrl, name, Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)))
+        IconImage(iconUrl, cleanName(name), Modifier.size(40.dp).clip(BtnShape))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold)
-            Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
-            repoUrl?.let { Text(it, color = MuTheme.Muted.copy(alpha = 0.65f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Text(cleanName(name), color = MuTheme.Paper, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${lang.uppercase()} · v$version", color = MuTheme.Muted, fontSize = 11.sp)
+                if (nsfw) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("18+", color = Red18, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            repoUrl?.let { Text(it, color = MuTheme.Muted.copy(alpha = 0.6f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         if (installed) {
             IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Settings", tint = MuTheme.Muted) }
@@ -628,7 +670,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     LaunchedEffect(s) {
         withContext(Dispatchers.IO) {
             inLibrary = LibraryService.isFollowed(s.sourceId, s.url)
-            sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${it.name} (${it.lang.uppercase()})" } ?: ""
+            sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${cleanName(it.name)} (${it.lang.uppercase()})" } ?: ""
             runCatching { SourceBrowser.details(s.sourceId, s.url) }.onSuccess { details = it }.onFailure { error = it.message }
         }
     }
