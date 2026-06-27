@@ -647,25 +647,29 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             val continueCh = d.chapters.reversed().firstOrNull { it.url !in readUrls } ?: d.chapters.firstOrNull()
             Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
-                Column(Modifier.weight(0.42f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.fillMaxWidth().aspectRatio(0.72f).clip(RoundedCornerShape(12.dp)))
-                    Spacer(Modifier.height(12.dp))
-                    Text(s.title, color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    d.manga.author?.takeIf { it.isNotBlank() }?.let { InfoRow("Author", it) }
-                    d.manga.artist?.takeIf { it.isNotBlank() }?.let { InfoRow("Artist", it) }
-                    InfoRow("Status", SourceBrowser.statusLabel(d.manga.status))
-                    if (sourceLabel.isNotBlank()) InfoRow("Source", sourceLabel)
-                    Spacer(Modifier.height(12.dp))
+                Column(Modifier.weight(0.46f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                    Row {
+                        // Fixed-size cover (don't let it scale to the column width).
+                        Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.width(210.dp).aspectRatio(0.7f).clip(RoundedCornerShape(12.dp)))
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(s.title, color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(8.dp))
+                            d.manga.author?.takeIf { it.isNotBlank() }?.let { InfoRow("Author", it) }
+                            d.manga.artist?.takeIf { it.isNotBlank() }?.let { InfoRow("Artist", it) }
+                            InfoRow("Status", SourceBrowser.statusLabel(d.manga.status))
+                            if (sourceLabel.isNotBlank()) InfoRow("Source", sourceLabel)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
                     Button(
                         onClick = { toggleLibrary() },
-                        modifier = Modifier.fillMaxWidth(),
                         shape = BtnShape,
                         colors = ButtonDefaults.buttonColors(containerColor = if (inLibrary) MuTheme.Vermilion else MuTheme.Panel),
                     ) { Text(if (inLibrary) "♥  In library" else "♡  Add to library", color = if (inLibrary) Color.White else MuTheme.Paper) }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(14.dp))
                     d.manga.description?.takeIf { it.isNotBlank() }?.let { Text(it.trim(), color = MuTheme.Paper.copy(alpha = 0.85f), fontSize = 13.sp) }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(14.dp))
                     val genres = d.manga.genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         genres.forEach { g ->
