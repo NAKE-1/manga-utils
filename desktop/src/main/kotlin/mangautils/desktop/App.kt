@@ -8,8 +8,11 @@
 package mangautils.desktop
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollbarStyle
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +38,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -49,6 +53,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
@@ -707,15 +713,15 @@ private fun SettingsScreen() {
 @Composable
 private fun ThemeSwatch(p: MuPalette, selected: Boolean, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(120.dp).clickable(onClick = onClick)) {
-        Box(Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(10.dp)).background(p.ink)) {
+        Box(Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(10.dp)).background(p.inkDark)) {
             Column(Modifier.fillMaxSize().padding(10.dp)) {
-                Box(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(4.dp)).background(p.accent))
+                Box(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(4.dp)).background(p.accentDark))
                 Spacer(Modifier.height(8.dp))
-                Box(Modifier.size(26.dp).clip(RoundedCornerShape(6.dp)).background(p.panel))
+                Box(Modifier.size(26.dp).clip(RoundedCornerShape(6.dp)).background(p.panelDark))
                 Spacer(Modifier.weight(1f))
-                Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(4.dp)).background(p.accent.copy(alpha = 0.55f)))
+                Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(4.dp)).background(p.accentDark.copy(alpha = 0.55f)))
             }
-            if (selected) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(12.dp).clip(RoundedCornerShape(6.dp)).background(p.accent))
+            if (selected) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(12.dp).clip(RoundedCornerShape(6.dp)).background(p.accentDark))
         }
         Spacer(Modifier.height(6.dp))
         Text(p.name, color = if (selected) MuTheme.Paper else MuTheme.Muted, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -948,15 +954,43 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                         }
                     }
                     Spacer(Modifier.height(14.dp))
-                    d.manga.description?.takeIf { it.isNotBlank() }?.let { Text(it.trim(), color = MuTheme.Paper.copy(alpha = 0.85f), fontSize = 13.sp) }
-                    Spacer(Modifier.height(14.dp))
-                    val genres = d.manga.genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        genres.forEach { g ->
-                            Box(Modifier.clip(RoundedCornerShape(16.dp)).background(MuTheme.Panel).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                Text(g, color = MuTheme.Paper, fontSize = 12.sp)
+                    var descExpanded by remember(s) { mutableStateOf(false) }
+                    d.manga.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                        Box {
+                            Text(
+                                desc.trim(), color = MuTheme.Paper.copy(alpha = 0.85f), fontSize = 13.sp,
+                                maxLines = if (descExpanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
+                            )
+                            if (!descExpanded) {
+                                Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to MuTheme.Ink)))
                             }
                         }
+                        Box(Modifier.fillMaxWidth(), Alignment.Center) {
+                            IconButton(onClick = { descExpanded = !descExpanded }, modifier = Modifier.size(32.dp)) {
+                                Icon(if (descExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, "Toggle description", tint = MuTheme.Muted)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val genres = d.manga.genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+                    if (genres.isNotEmpty()) {
+                        val tagScroll = rememberScrollState()
+                        Row(Modifier.fillMaxWidth().horizontalScroll(tagScroll), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            genres.forEach { g ->
+                                Box(
+                                    Modifier.clip(RoundedCornerShape(16.dp)).border(1.dp, MuTheme.Muted.copy(alpha = 0.4f), RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
+                                ) { Text(g, color = MuTheme.Paper, fontSize = 12.sp, maxLines = 1) }
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        HorizontalScrollbar(
+                            rememberScrollbarAdapter(tagScroll),
+                            Modifier.fillMaxWidth(),
+                            style = ScrollbarStyle(
+                                minimalHeight = 16.dp, thickness = 4.dp, shape = RoundedCornerShape(2.dp),
+                                hoverDurationMillis = 300, unhoverColor = MuTheme.Vermilion.copy(alpha = 0.5f), hoverColor = MuTheme.Vermilion,
+                            ),
+                        )
                     }
                 }
                 Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline))

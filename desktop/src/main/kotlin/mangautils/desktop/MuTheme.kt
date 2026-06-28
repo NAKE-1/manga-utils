@@ -12,39 +12,67 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 
-/** A named theme — surfaces (ink/panel), text (paper/muted) and a single accent, in dark + light. */
+/** A resolved theme: accent + surfaces for both dark and light. */
 data class MuPalette(
     val name: String,
-    val accent: Color,
-    val accentDim: Color,
-    // dark surfaces
-    val ink: Color,
-    val panel: Color,
-    val panelHigh: Color,
-    // light surfaces (used when themeDark = false)
-    val inkLight: Color = Color(0xFFEDEAE3),
-    val panelLight: Color = Color(0xFFFFFFFF),
-    val panelHighLight: Color = Color(0xFFE7E3DA),
+    val accentDark: Color,
+    val accentLight: Color,
+    val inkDark: Color,
+    val panelDark: Color,
+    val panelHighDark: Color,
+    val inkLight: Color,
+    val panelLight: Color,
+    val panelHighLight: Color,
 )
 
 /**
- * Theme registry. Property names match the original "Ink & Vermilion" palette so the UI code is
- * unchanged; the values are now backed by the active [palette] (a snapshot state), so switching
- * themes recomposes the whole app. Preset colors adapt Suwayomi's theme set.
+ * Theme spec mirroring Suwayomi's `Themes.ts` (primary per mode + optional explicit backgrounds).
+ * Where a dark background isn't given, MUI/Suwayomi derive one from the primary — we do the same.
  */
+private data class ThemeSpec(
+    val name: String,
+    val darkPrimary: Long,
+    val lightPrimary: Long,
+    val darkPaper: Long? = null,
+    val darkDefault: Long? = null,
+    val lightPaper: Long? = null,
+    val lightDefault: Long? = null,
+)
+
 object MuTheme {
-    val presets =
+    private val specs =
         listOf(
-            MuPalette("Default", Color(0xFFE8483D), Color(0xFF7A2A26), Color(0xFF0E0F13), Color(0xFF1A1D27), Color(0xFF222531)),
-            MuPalette("Lavender", Color(0xFFA076FD), Color(0xFF5A3FA0), Color(0xFF111129), Color(0xFF1D193B), Color(0xFF2A2450)),
-            MuPalette("Crimson", Color(0xFFE53935), Color(0xFF7A2226), Color(0xFF140A0C), Color(0xFF241015), Color(0xFF321820)),
-            MuPalette("Forest Dew", Color(0xFF43C463), Color(0xFF226A36), Color(0xFF0A140D), Color(0xFF102418), Color(0xFF183222)),
-            MuPalette("Rosegold", Color(0xFFE89AA0), Color(0xFFA06868), Color(0xFF1A1012), Color(0xFF2A1C1F), Color(0xFF382428)),
-            MuPalette("Mountain Sunset", Color(0xFFC4436F), Color(0xFF7A2A48), Color(0xFF160D12), Color(0xFF261520), Color(0xFF34202C)),
-            MuPalette("Minty Miracles", Color(0xFF43C4A0), Color(0xFF226A58), Color(0xFF0A1410), Color(0xFF102420), Color(0xFF18322A)),
-            MuPalette("Orange Juice", Color(0xFFE8A043), Color(0xFFA06822), Color(0xFF14100A), Color(0xFF241C10), Color(0xFF322818)),
+            ThemeSpec("Default", 0xFF5B74EF, 0xFF5B74EF),
+            ThemeSpec("Lavender", 0xFFA076FD, 0xFF6D41C8, darkPaper = 0xFF1D193B, darkDefault = 0xFF111129, lightPaper = 0xFFE4D5F8, lightDefault = 0xFFEDE2FF),
+            ThemeSpec("Dune", 0xFF897869, 0xFF897869),
+            ThemeSpec("Rosegold", 0xFFE9A7A1, 0xFFC07F7A, lightPaper = 0xFFEAE1E0, lightDefault = 0xFFF3EFEE),
+            ThemeSpec("Forest Dew", 0xFF53A584, 0xFF53A584),
+            ThemeSpec("Mountain Sunset", 0xFFC55A77, 0xFF974258, lightPaper = 0xFFE5D6DA, lightDefault = 0xFFF7F3F4),
+            ThemeSpec("Crimson", 0xFFDC143C, 0xFFDC143C),
+            ThemeSpec("Minty Miracles", 0xFF5CE6A1, 0xFF00C56A, lightPaper = 0xFFD6EAE0, lightDefault = 0xFFE9F3EE),
+            ThemeSpec("Orange Juice", 0xFFFFB546, 0xFFE74C00, lightPaper = 0xFFEDE3D3, lightDefault = 0xFFF5F0E8),
+            ThemeSpec("Bright Pink", 0xFFFF007F, 0xFFFF007F),
+            ThemeSpec("Veronica", 0xFFA020F0, 0xFFA020F0),
+            ThemeSpec("Tree Frog Green", 0xFF8ACE31, 0xFF4F9513, lightPaper = 0xFFDDE6D0, lightDefault = 0xFFEDF1E6),
+            ThemeSpec("Ying & Yang", 0xFFFFFFFF, 0xFF000000, lightPaper = 0xFFEFEFEF, lightDefault = 0xFFFFFFFF),
         )
+
+    val presets: List<MuPalette> = specs.map(::build)
+
+    private fun build(s: ThemeSpec): MuPalette {
+        val pDark = Color(s.darkPrimary)
+        val pLight = Color(s.lightPrimary)
+        // Derive a dark surface tinted by the primary when Suwayomi doesn't specify one.
+        val inkD = s.darkDefault?.let(::Color) ?: lerp(Color(0xFF0D0D0F), pDark, 0.05f)
+        val panelD = s.darkPaper?.let(::Color) ?: lerp(Color(0xFF18181C), pDark, 0.07f)
+        val panelHiD = lerp(panelD, Color.White, 0.06f)
+        val inkL = s.lightDefault?.let(::Color) ?: Color(0xFFFAFAFA)
+        val panelL = s.lightPaper?.let(::Color) ?: Color(0xFFFFFFFF)
+        val panelHiL = lerp(panelL, Color.Black, 0.05f)
+        return MuPalette(s.name, pDark, pLight, inkD, panelD, panelHiD, inkL, panelL, panelHiL)
+    }
 
     var palette by mutableStateOf(presets.first())
         private set
@@ -53,17 +81,17 @@ object MuTheme {
         private set
 
     fun apply(name: String, isDark: Boolean) {
-        palette = presets.firstOrNull { it.name == name } ?: presets.first()
+        palette = presets.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: presets.first()
         dark = isDark
     }
 
-    val Ink get() = if (dark) palette.ink else palette.inkLight
-    val Panel get() = if (dark) palette.panel else palette.panelLight
-    val PanelHigh get() = if (dark) palette.panelHigh else palette.panelHighLight
+    val Vermilion get() = if (dark) palette.accentDark else palette.accentLight
+    val VermilionDim get() = lerp(Vermilion, Color.Black, 0.5f)
+    val Ink get() = if (dark) palette.inkDark else palette.inkLight
+    val Panel get() = if (dark) palette.panelDark else palette.panelLight
+    val PanelHigh get() = if (dark) palette.panelHighDark else palette.panelHighLight
     val Paper get() = if (dark) Color(0xFFECEAE3) else Color(0xFF1A1A1F)
     val Muted get() = if (dark) Color(0xFF8A8F9C) else Color(0xFF6A6F7C)
-    val Vermilion get() = palette.accent
-    val VermilionDim get() = palette.accentDim
 
     val scheme: ColorScheme
         get() =
@@ -71,13 +99,13 @@ object MuTheme {
                 darkColorScheme(
                     primary = Vermilion, onPrimary = Color(0xFF120606), secondary = Paper, onSecondary = Ink,
                     background = Ink, onBackground = Paper, surface = Panel, onSurface = Paper,
-                    surfaceVariant = PanelHigh, onSurfaceVariant = Muted, outline = Color(0xFF333845), error = Vermilion,
+                    surfaceVariant = PanelHigh, onSurfaceVariant = Muted, outline = lerp(Panel, Color.White, 0.18f), error = Vermilion,
                 )
             } else {
                 lightColorScheme(
                     primary = Vermilion, onPrimary = Color(0xFFFFFFFF), secondary = Paper, onSecondary = Ink,
                     background = Ink, onBackground = Paper, surface = Panel, onSurface = Paper,
-                    surfaceVariant = PanelHigh, onSurfaceVariant = Muted, outline = Color(0xFFCFCAC0), error = Vermilion,
+                    surfaceVariant = PanelHigh, onSurfaceVariant = Muted, outline = lerp(Panel, Color.Black, 0.18f), error = Vermilion,
                 )
             }
 }
