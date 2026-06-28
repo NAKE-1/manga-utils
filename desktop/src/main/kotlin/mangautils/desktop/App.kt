@@ -84,6 +84,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
@@ -153,6 +154,7 @@ import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import mangautils.core.config.AppConfig
@@ -1648,6 +1650,32 @@ private fun ModeChip(label: String, icon: ImageVector, selected: Boolean, onClic
 
 // ---- Detail (two-column) --------------------------------------------------------------------
 
+/** Build full details from the cached library entry (offline / instant). */
+private fun cachedDetails(e: LibraryEntry): MangaDetails {
+    val m = SManga.create().apply {
+        url = e.mangaUrl; title = e.title; author = e.author; artist = e.artist
+        description = e.description; thumbnail_url = e.thumbnailUrl; genre = e.genre; status = e.status
+    }
+    val chs = e.knownChapters.map { cr ->
+        SChapter.create().apply { url = cr.url; name = cr.name; chapter_number = cr.number; scanlator = cr.scanlator; date_upload = cr.dateUpload }
+    }
+    return MangaDetails(m, chs)
+}
+
+private fun computeBrowseUrl(src: HttpSource?, url: String, title: String, m: SManga): String? =
+    src?.let { hs ->
+        runCatching {
+            hs.getMangaUrl(
+                SManga.create().apply {
+                    this.url = url
+                    this.title = runCatching { m.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: title
+                    thumbnail_url = m.thumbnail_url; artist = m.artist; author = m.author; description = m.description; genre = m.genre; status = m.status
+                },
+            )
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: if (url.startsWith("http")) url else hs.baseUrl.trimEnd('/') + "/" + url.trimStart('/')
+    } ?: url.takeIf { it.startsWith("http") }
+
 @Composable
 private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
@@ -1665,36 +1693,35 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     val dynColors = settings?.dynamicThemeColors ?: true
     val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
 
-    LaunchedEffect(s) {
+    var refreshTick by remember(s) { mutableStateOf(0) }
+    var refreshing by remember(s) { mutableStateOf(false) }
+    LaunchedEffect(s, refreshTick) {
         withContext(Dispatchers.IO) {
-            inLibrary = LibraryService.isFollowed(s.sourceId, s.url)
+            val cached = LibraryStore.find(s.sourceId, s.url)
+            inLibrary = cached != null
             sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${cleanName(it.name)} (${it.lang.uppercase()})" } ?: ""
             val src = runCatching { SourceManager.loadSource(s.sourceId) }.getOrNull() as? HttpSource
-            runCatching { SourceBrowser.details(s.sourceId, s.url) }
-                .onSuccess { dd ->
-                    details = dd
-                    // Suwayomi's "realUrl": call getMangaUrl() with a fully-populated SManga (some
-                    // sources need more than the url to build it), wrapped in runCatching.
-                    browseUrl = src?.let { hs ->
-                        runCatching {
-                            hs.getMangaUrl(
-                                SManga.create().apply {
-                                    url = s.url
-                                    title = runCatching { dd.manga.title }.getOrNull() ?: s.title
-                                    thumbnail_url = dd.manga.thumbnail_url
-                                    artist = dd.manga.artist
-                                    author = dd.manga.author
-                                    description = dd.manga.description
-                                    genre = dd.manga.genre
-                                    status = dd.manga.status
-                                },
-                            )
-                        }.getOrNull()?.takeIf { it.isNotBlank() }
-                    } ?: if (s.url.startsWith("http")) s.url else src?.let { it.baseUrl.trimEnd('/') + "/" + s.url.trimStart('/') }
-                }
-                .onFailure { error = it.message }
+            val forceNetwork = refreshTick > 0
+            // Library entries read from the cache (instant + offline); refresh re-fetches + updates it.
+            if (cached != null && cached.knownChapters.isNotEmpty() && !forceNetwork) {
+                val dd = cachedDetails(cached)
+                details = dd; error = null
+                browseUrl = computeBrowseUrl(src, s.url, s.title, dd.manga)
+            } else {
+                runCatching { SourceBrowser.details(s.sourceId, s.url) }
+                    .onSuccess { dd ->
+                        details = dd; error = null
+                        browseUrl = computeBrowseUrl(src, s.url, s.title, dd.manga)
+                        if (cached != null) runCatching { LibraryService.addKnown(s.sourceId, s.url, s.title, dd.manga, dd.chapters) }
+                    }
+                    .onFailure {
+                        if (cached != null) { details = cachedDetails(cached); browseUrl = computeBrowseUrl(src, s.url, s.title, cachedDetails(cached).manga) } else error = it.message
+                    }
+            }
+            refreshing = false
         }
     }
+    fun refresh() { if (!refreshing) { refreshing = true; refreshTick++ } }
     val d = details
     LaunchedEffect(d?.manga?.thumbnail_url) {
         val url = d?.manga?.thumbnail_url
@@ -1853,6 +1880,10 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                     Column(Modifier.fillMaxSize()) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { refresh() }, enabled = !refreshing) {
+                                if (refreshing) CircularProgressIndicator(color = MuTheme.Muted, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                                else Icon(Icons.Filled.Refresh, "Refresh from source", tint = MuTheme.Muted)
+                            }
                             IconButton(onClick = {
                                 scope.launch { withContext(Dispatchers.IO) { d.chapters.forEach { ReadStore.setRead(s.sourceId, s.url, it.url, true) } }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
                             }) { Icon(Icons.Filled.DoneAll, "Mark all read", tint = MuTheme.Muted) }

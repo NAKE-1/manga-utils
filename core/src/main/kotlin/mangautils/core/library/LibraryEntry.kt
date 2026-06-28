@@ -31,12 +31,14 @@ enum class ReadingMode {
     }
 }
 
-/** A snapshot of a chapter, used to diff for "new chapter" detection. */
+/** A snapshot of a chapter, used to diff for "new chapter" detection + offline display. */
 @Serializable
 data class ChapterRef(
     val url: String,
     val name: String,
     val number: Float,
+    val scanlator: String? = null,
+    val dateUpload: Long = 0,
 )
 
 /**
@@ -49,6 +51,7 @@ data class LibraryEntry(
     val mangaUrl: String,
     var title: String,
     var author: String? = null,
+    var artist: String? = null,
     var description: String? = null,
     var thumbnailUrl: String? = null,
     var genre: String? = null,

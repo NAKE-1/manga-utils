@@ -74,6 +74,7 @@ object LibraryService {
             (existing ?: LibraryEntry(sourceId = sourceId, mangaUrl = mangaUrl, title = title)).apply {
                 this.title = title.ifBlank { runCatching { manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: SlugTitle.fromUrl(mangaUrl) }
                 author = runCatching { manga.author }.getOrNull() ?: author
+                artist = runCatching { manga.artist }.getOrNull() ?: artist
                 description = runCatching { manga.description }.getOrNull() ?: description
                 thumbnailUrl = runCatching { manga.thumbnail_url }.getOrNull() ?: thumbnailUrl
                 genre = runCatching { manga.genre }.getOrNull() ?: genre
@@ -123,7 +124,14 @@ object LibraryService {
             UpdateResult(entry, newChapters)
         }
 
-    private fun SChapter.toRef() = ChapterRef(url = url, name = name, number = ChapterNumber.of(this))
+    private fun SChapter.toRef() =
+        ChapterRef(
+            url = url,
+            name = name,
+            number = ChapterNumber.of(this),
+            scanlator = runCatching { scanlator }.getOrNull(),
+            dateUpload = runCatching { date_upload }.getOrDefault(0),
+        )
 
     private fun seed(url: String): SManga = SManga.create().apply { this.url = url; title = url }
 }
