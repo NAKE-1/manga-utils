@@ -183,6 +183,8 @@ import mangautils.core.library.LibraryStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.MangaDetails
 import mangautils.core.source.SourceBrowser
+import mangautils.core.source.LocalChapter
+import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceImage
 import mangautils.core.source.SourceManager
 import mangautils.core.source.SourcePref
@@ -2055,6 +2057,12 @@ private fun ReaderSettingsScreen() {
 
 private data class ReaderChapter(val url: String, val name: String, val number: Float, val scanlator: String?)
 
+/** A reader page resolved either to a local download or a streamed source page. */
+private sealed interface ReaderPageRef {
+    class Streamed(val sourceId: Long, val page: Page) : ReaderPageRef
+    class Local(val local: LocalChapter, val index: Int) : ReaderPageRef
+}
+
 /**
  * Suwayomi's removeDuplicates: keep one chapter per number, preferring the one the reader is on,
  * then the last one from the current scanlator, then the last available. So forward/back navigation
@@ -2074,7 +2082,7 @@ private fun dedupChapters(current: ReaderChapter?, all: List<ReaderChapter>): Li
 private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: () -> Unit, onOpenChapter: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    var pages by remember(s.chapterUrl) { mutableStateOf<List<Page>>(emptyList()) }
+    var pageRefs by remember(s.chapterUrl) { mutableStateOf<List<ReaderPageRef>>(emptyList()) }
     var chapters by remember(s.mangaUrl) { mutableStateOf<List<ReaderChapter>>(emptyList()) }
     var loading by remember(s.chapterUrl) { mutableStateOf(true) }
 
@@ -2088,9 +2096,17 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
                     SourceBrowser.details(s.sourceId, s.mangaUrl).chapters.map {
                         ReaderChapter(it.url, it.name, runCatching { it.chapter_number }.getOrDefault(-1f), runCatching { it.scanlator }.getOrNull())
                     }
-                }.getOrDefault(emptyList())
+                }.getOrNull()?.takeIf { it.isNotEmpty() }
+                    ?: LibraryStore.find(s.sourceId, s.mangaUrl)?.knownChapters?.map { ReaderChapter(it.url, it.name, it.number, it.scanlator) }
+                    ?: emptyList()
             }
-            pages = SourceImage.pageList(s.sourceId, s.chapterUrl)
+            // Offline-first: read the local download (folder/CBZ) if present, else stream from source.
+            val local = runCatching { LocalChapterReader.localChapter(s.mangaTitle, s.chapterName) }.getOrNull()
+            pageRefs = if (local != null) {
+                (0 until local.count).map { ReaderPageRef.Local(local, it) }
+            } else {
+                runCatching { SourceImage.pageList(s.sourceId, s.chapterUrl).map { ReaderPageRef.Streamed(s.sourceId, it) } }.getOrDefault(emptyList())
+            }
         }
         loading = false
         listState.scrollToItem(0)
@@ -2117,14 +2133,14 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
         if (panelOpen) {
             ReaderSidebar(
                 title = s.mangaTitle, chapterName = s.chapterName, chapters = chapters, currentChapterUrl = s.chapterUrl,
-                sourceId = s.sourceId, mangaUrl = s.mangaUrl, pageCount = pages.size, currentPage = currentPage,
+                sourceId = s.sourceId, mangaUrl = s.mangaUrl, pageCount = pageRefs.size, currentPage = currentPage,
                 prevChapter = prevChapter, nextChapter = nextChapter, onOpenChapter = onOpenChapter, onOpenSettings = onOpenSettings,
-                onJumpPage = { i -> scope.launch { listState.animateScrollToItem(i.coerceIn(0, (pages.size - 1).coerceAtLeast(0))) } },
+                onJumpPage = { i -> scope.launch { listState.animateScrollToItem(i.coerceIn(0, (pageRefs.size - 1).coerceAtLeast(0))) } },
             )
             Box(Modifier.width(1.dp).fillMaxSize().background(MaterialTheme.colorScheme.outline))
         }
         Box(Modifier.fillMaxSize().background(ReaderPrefs.bg(MuTheme.Ink))) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) { items(pages) { p -> ReaderPage(s.sourceId, p) } }
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) { items(pageRefs) { ref -> ReaderPage(ref) } }
             if (loading) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
             if (showTop) {
                 FloatingActionButton(
@@ -2222,11 +2238,17 @@ private fun ReaderSidebar(
 }
 
 @Composable
-private fun ReaderPage(sourceId: Long, page: Page) {
-    var bmp by remember(page) { mutableStateOf<ImageBitmap?>(null) }
-    var failed by remember(page) { mutableStateOf(false) }
-    LaunchedEffect(page) {
-        val b = withContext(Dispatchers.IO) { SourceImage.pageBytes(sourceId, page)?.let { decode(it) } }
+private fun ReaderPage(ref: ReaderPageRef) {
+    var bmp by remember(ref) { mutableStateOf<ImageBitmap?>(null) }
+    var failed by remember(ref) { mutableStateOf(false) }
+    LaunchedEffect(ref) {
+        val bytes = withContext(Dispatchers.IO) {
+            when (ref) {
+                is ReaderPageRef.Streamed -> SourceImage.pageBytes(ref.sourceId, ref.page)
+                is ReaderPageRef.Local -> ref.local.bytes(ref.index)
+            }
+        }
+        val b = bytes?.let { decode(it) }
         if (b == null) failed = true else bmp = b
     }
     val b = bmp
