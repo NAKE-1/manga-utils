@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
@@ -99,6 +100,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -154,6 +156,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import mangautils.core.config.AppConfig
 import mangautils.core.download.ChapterSelect
+import mangautils.core.download.DownloadListener
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.SourceRef
 import kotlinx.coroutines.CoroutineScope
@@ -298,6 +301,76 @@ private fun ToastRow(t: ToastMsg) {
         Text(t.text, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
         IconButton(onClick = { Toasts.hide(t) }, modifier = Modifier.size(30.dp)) { Icon(Icons.Filled.Close, "Dismiss", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
     }
+}
+
+// ---- Download queue -------------------------------------------------------------------------
+
+private enum class DlState { QUEUED, DOWNLOADING, DONE, ERROR }
+
+private class DlItem(val id: Long, val sourceId: Long, val mangaUrl: String, val title: String, val chapterUrl: String, val chapterName: String) {
+    var state by mutableStateOf(DlState.QUEUED)
+    var pagesDone by mutableStateOf(0)
+    var pagesTotal by mutableStateOf(0)
+    var bytesPerSec by mutableStateOf(0.0)
+}
+
+private fun fmtSpeed(bps: Double): String = when {
+    bps >= 1_000_000 -> "%.1f MB/s".format(bps / 1_000_000)
+    bps >= 1_000 -> "%.0f KB/s".format(bps / 1_000)
+    bps > 0 -> "${bps.toInt()} B/s"
+    else -> "—"
+}
+
+/** Global, sequential download queue with live per-chapter progress + speed. */
+private object DownloadQueue {
+    private val scope = CoroutineScope(Dispatchers.Default)
+    val items = mutableStateListOf<DlItem>()
+    var completedTick by mutableStateOf(0)
+        private set
+    private var counter = 0L
+
+    @Volatile private var running = false
+
+    fun enqueue(sourceId: Long, mangaUrl: String, title: String, chapterUrl: String, chapterName: String) {
+        if (items.any { it.chapterUrl == chapterUrl && (it.state == DlState.QUEUED || it.state == DlState.DOWNLOADING) }) return
+        if (runCatching { DownloadManager.isDownloaded(title, chapterName) }.getOrDefault(false)) return
+        items.add(DlItem(counter++, sourceId, mangaUrl, title, chapterUrl, chapterName))
+        pump()
+    }
+
+    fun enqueueAll(sourceId: Long, mangaUrl: String, title: String, chapters: List<Pair<String, String>>) {
+        chapters.forEach { enqueue(sourceId, mangaUrl, title, it.first, it.second) }
+    }
+
+    private fun pump() {
+        if (running) return
+        running = true
+        scope.launch {
+            while (true) {
+                val next = items.firstOrNull { it.state == DlState.QUEUED } ?: break
+                next.state = DlState.DOWNLOADING
+                val listener = DownloadListener { p -> next.pagesDone = p.pagesDone; next.pagesTotal = p.pagesTotal; next.bytesPerSec = p.bytesPerSecond }
+                val ok = runCatching {
+                    DownloadManager(listener = listener).download(SourceRef(next.sourceId, next.mangaUrl), select = ChapterSelect.Urls(setOf(next.chapterUrl))).state.toString() == "DONE"
+                }.getOrDefault(false)
+                next.state = if (ok) DlState.DONE else DlState.ERROR
+                completedTick++
+            }
+            running = false
+        }
+    }
+
+    val activeCount: Int get() = items.count { it.state == DlState.QUEUED || it.state == DlState.DOWNLOADING }
+
+    fun overallProgress(): Float {
+        val active = items.filter { it.state == DlState.QUEUED || it.state == DlState.DOWNLOADING }
+        val total = active.sumOf { it.pagesTotal }
+        return if (total > 0) active.sumOf { it.pagesDone }.toFloat() / total else 0f
+    }
+
+    fun speed(): Double = items.filter { it.state == DlState.DOWNLOADING }.sumOf { it.bytesPerSec }
+
+    fun clearFinished() = items.removeAll { it.state == DlState.DONE || it.state == DlState.ERROR }
 }
 
 /** Shared source-browse search state so the top bar (App) and the grid (SourceBrowseScreen) agree. */
@@ -469,7 +542,15 @@ private fun Sidebar(current: Screen, onSelect: (Screen) -> Unit) {
                     .padding(horizontal = 12.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(item.icon, item.label, tint = if (selected) MuTheme.Vermilion else MuTheme.Muted, modifier = Modifier.size(20.dp))
+                Box {
+                    Icon(item.icon, item.label, tint = if (selected) MuTheme.Vermilion else MuTheme.Muted, modifier = Modifier.size(20.dp))
+                    val dlCount = DownloadQueue.activeCount
+                    if (item.screen == Screen.Downloads && dlCount > 0) {
+                        Box(Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-6).dp).size(16.dp).clip(RoundedCornerShape(8.dp)).background(MuTheme.Vermilion), Alignment.Center) {
+                            Text("$dlCount", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 Spacer(Modifier.width(14.dp))
                 Text(item.label, color = if (selected) MuTheme.Paper else MuTheme.Muted, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             }
@@ -1077,8 +1158,19 @@ private fun DownloadsScreen() {
             }.getOrDefault(emptyList())
         }
     }
-    if (series.isEmpty()) { Empty("No downloads yet.\nDownload chapters from a manga page."); return }
+    val queue = DownloadQueue.items
+    if (series.isEmpty() && queue.isEmpty()) { Empty("No downloads yet.\nDownload chapters from a manga page."); return }
     LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+        if (queue.isNotEmpty()) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Queue · ${DownloadQueue.activeCount} active", color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { DownloadQueue.clearFinished() }) { Text("Clear finished", color = MuTheme.Vermilion) }
+                }
+            }
+            items(queue, key = { it.id }) { dl -> QueueRow(dl) }
+            item { Spacer(Modifier.height(8.dp)); HorizontalDivider(color = MaterialTheme.colorScheme.outline); Text("Downloaded", color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+        }
         series.forEach { (dir, files) ->
             item {
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1095,6 +1187,31 @@ private fun DownloadsScreen() {
             }
         }
     }
+}
+
+@Composable
+private fun QueueRow(dl: DlItem) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(dl.title, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(dl.chapterName, color = MuTheme.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            val label = when (dl.state) {
+                DlState.DOWNLOADING -> if (dl.pagesTotal > 0) "${dl.pagesDone}/${dl.pagesTotal}" else "starting…"
+                DlState.QUEUED -> "Queued"
+                DlState.DONE -> "Done"
+                DlState.ERROR -> "Failed"
+            }
+            Text(label, color = when (dl.state) { DlState.ERROR -> Red18; DlState.DONE -> Color(0xFF4CAF50); else -> MuTheme.Muted }, fontSize = 11.sp)
+        }
+        if (dl.state == DlState.DOWNLOADING) {
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(progress = { if (dl.pagesTotal > 0) dl.pagesDone.toFloat() / dl.pagesTotal else 0f }, modifier = Modifier.fillMaxWidth().height(4.dp), color = MuTheme.Vermilion, trackColor = MuTheme.Panel)
+            Text(fmtSpeed(dl.bytesPerSec), color = MuTheme.Muted, fontSize = 10.sp)
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
 }
 
 // ---- Settings (appearance / themes) ---------------------------------------------------------
@@ -1572,13 +1689,9 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     fun setChapterRead(url: String, read: Boolean) {
         scope.launch { withContext(Dispatchers.IO) { ReadStore.setRead(s.sourceId, s.url, url, read) }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
     }
-    fun downloadChapter(url: String) {
-        Toasts.info("Downloading chapter…")
-        scope.launch {
-            val ok = withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.Urls(setOf(url))).state.toString() == "DONE" }.getOrDefault(false) }
-            dlVersion++
-            if (ok) Toasts.success("Download complete") else Toasts.error("Download failed")
-        }
+    fun downloadChapter(url: String, name: String) {
+        DownloadQueue.enqueue(s.sourceId, s.url, s.title, url, name)
+        Toasts.info("Queued download")
     }
     fun openInBrowser() { browseUrl?.let { u -> runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(u)) } } }
     fun openFolder() {
@@ -1707,19 +1820,16 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 scope.launch { withContext(Dispatchers.IO) { d.chapters.forEach { ReadStore.setRead(s.sourceId, s.url, it.url, true) } }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
                             }) { Icon(Icons.Filled.DoneAll, "Mark all read", tint = MuTheme.Muted) }
                             IconButton(onClick = {
-                                Toasts.info("Downloading all chapters…")
-                                scope.launch {
-                                    val ok = withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.All).state.toString() == "DONE" }.getOrDefault(false) }
-                                    dlVersion++
-                                    if (ok) Toasts.success("Downloads finished") else Toasts.error("Some downloads failed")
-                                }
+                                DownloadQueue.enqueueAll(s.sourceId, s.url, s.title, d.chapters.map { it.url to it.name })
+                                Toasts.info("Queued ${d.chapters.size} chapters")
                             }) { Icon(Icons.Filled.Download, "Download all", tint = MuTheme.Muted) }
                         }
                       Box(Modifier.weight(1f)) {
                         LazyColumn(state = chapterListState, modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 18.dp)) {
                             items(d.chapters) { ch ->
                                 val read = ch.url in readUrls
-                                val downloaded = remember(ch.url, dlVersion) { DownloadManager.isDownloaded(s.title, ch.name) }
+                                val downloaded = remember(ch.url, DownloadQueue.completedTick) { DownloadManager.isDownloaded(s.title, ch.name) }
+                                val dl = DownloadQueue.items.firstOrNull { it.chapterUrl == ch.url }
                                 var chMenu by remember(ch.url) { mutableStateOf(false) }
                                 Card(
                                     onClick = { onReadChapter(ch.url, ch.name) },
@@ -1738,10 +1848,21 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                                 if (downloaded) Text("  ·  Downloaded", color = acc, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
+                                        // Live download status from the queue.
+                                        when (dl?.state) {
+                                            DlState.DOWNLOADING -> {
+                                                val pct = if (dl.pagesTotal > 0) dl.pagesDone.toFloat() / dl.pagesTotal else 0f
+                                                Box(Modifier.size(30.dp), Alignment.Center) { CircularProgressIndicator(progress = { pct }, modifier = Modifier.size(22.dp), color = acc, strokeWidth = 2.5.dp) }
+                                                Text("${(pct * 100).toInt()}%", color = MuTheme.Muted, fontSize = 10.sp)
+                                            }
+                                            DlState.QUEUED -> Text("Queued", color = MuTheme.Muted, fontSize = 11.sp)
+                                            DlState.ERROR -> Text("Failed", color = Red18, fontSize = 11.sp)
+                                            else -> {}
+                                        }
                                         Box {
                                             IconButton(onClick = { chMenu = true }) { Icon(Icons.Filled.MoreVert, "Chapter menu", tint = MuTheme.Muted) }
                                             DropdownMenu(chMenu, onDismissRequest = { chMenu = false }) {
-                                                DropdownMenuItem(text = { Text(if (downloaded) "Downloaded" else "Download") }, enabled = !downloaded, onClick = { chMenu = false; downloadChapter(ch.url) })
+                                                DropdownMenuItem(text = { Text(if (downloaded) "Downloaded" else "Download") }, enabled = !downloaded && dl == null, onClick = { chMenu = false; downloadChapter(ch.url, ch.name) })
                                                 DropdownMenuItem(text = { Text(if (read) "Mark as unread" else "Mark as read") }, onClick = { chMenu = false; setChapterRead(ch.url, !read) })
                                             }
                                         }
