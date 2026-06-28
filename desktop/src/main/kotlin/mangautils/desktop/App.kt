@@ -220,7 +220,8 @@ private class ToastMsg(val id: Long, val text: String, val kind: ToastKind) {
 
 /** Transient bottom-left notifications; max 5 shown, the rest queued, each auto-fades after ~5s. */
 private object Toasts {
-    private val scope = CoroutineScope(Dispatchers.Main)
+    // Compose Desktop has no Dispatchers.Main; snapshot state is safe to mutate off-thread.
+    private val scope = CoroutineScope(Dispatchers.Default)
     val active = mutableStateListOf<ToastMsg>()
     private val pending = ArrayDeque<ToastMsg>()
     private var counter = 0L
