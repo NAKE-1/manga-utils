@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FilterList
@@ -231,7 +232,15 @@ fun App() {
                     is Screen.Browse -> IconButton(onClick = { showRepos = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
                     is Screen.SourceBrowse -> {
                         val sb = current
-                        IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
+                        var gridMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { gridMenu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
+                            DropdownMenu(gridMenu, { gridMenu = false }) {
+                                DropdownMenuItem(text = { Text("Compact grid") }, onClick = { Display.set(GridMode.COMPACT); gridMenu = false })
+                                DropdownMenuItem(text = { Text("Comfortable grid") }, onClick = { Display.set(GridMode.COMFORTABLE); gridMenu = false })
+                                DropdownMenuItem(text = { Text("List") }, onClick = { Display.set(GridMode.LIST); gridMenu = false })
+                            }
+                        }
                         IconButton(onClick = { go(Screen.SourceConfig(sb.sourceId, sb.name)) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
                     }
                     else -> {}
@@ -470,13 +479,19 @@ private fun LibraryScreen(onOpen: (LibraryEntry) -> Unit) {
     var refresh by remember { mutableStateOf(0) }
     LaunchedEffect(refresh) { withContext(Dispatchers.IO) { entries = LibraryService.list() } }
     if (entries.isEmpty()) { Empty("Your library is empty.\nBrowse a source and add a series."); return }
-    LazyVerticalGrid(
-        GridCells.Adaptive(168.dp),
-        Modifier.fillMaxSize().padding(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        items(entries) { e -> LibraryCard(e, onOpen = { onOpen(e) }) { refresh++ } }
+    if (Display.grid == GridMode.LIST) {
+        LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+            items(entries) { e -> MangaRow(e.sourceId, MangaRef(e.title, e.mangaUrl, e.thumbnailUrl), "${e.knownChapters.size} ch") { onOpen(e) } }
+        }
+    } else {
+        LazyVerticalGrid(
+            gridCell(),
+            Modifier.fillMaxSize().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(entries) { e -> LibraryCard(e, onOpen = { onOpen(e) }) { refresh++ } }
+        }
     }
 }
 
@@ -521,6 +536,34 @@ private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, onClick: (
             }
         }
     }
+}
+
+private enum class GridMode { COMPACT, COMFORTABLE, LIST }
+
+/** Library/browse grid density, persisted to settings. */
+private object Display {
+    var grid by mutableStateOf(runCatching { GridMode.valueOf(SettingsStore.get().gridMode) }.getOrNull() ?: GridMode.COMFORTABLE)
+        private set
+
+    fun set(m: GridMode) {
+        grid = m
+        runCatching { SettingsStore.save(SettingsStore.get().copy(gridMode = m.name)) }
+    }
+}
+
+private fun gridCell() = GridCells.Adaptive(if (Display.grid == GridMode.COMPACT) 132.dp else 178.dp)
+
+@Composable
+private fun MangaRow(sourceId: Long, m: MangaRef, subtitle: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Cover(sourceId, m.thumb, m.title, Modifier.width(44.dp).aspectRatio(0.7f).clip(RoundedCornerShape(6.dp)))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(m.title, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) Text(subtitle, color = MuTheme.Muted, fontSize = 11.sp)
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 }
 
 // ---- Browse (tabs: Source / Extension / Migrate) --------------------------------------------
@@ -872,13 +915,17 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
         }
         Spacer(Modifier.height(12.dp))
         Box(Modifier.weight(1f)) {
-            LazyVerticalGrid(
-                GridCells.Adaptive(168.dp),
-                Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                items(items) { m -> MangaCover(s.sourceId, m, "") { onOpen(m) } }
+            if (Display.grid == GridMode.LIST) {
+                LazyColumn(Modifier.fillMaxSize()) { items(items) { m -> MangaRow(s.sourceId, m, "") { onOpen(m) } } }
+            } else {
+                LazyVerticalGrid(
+                    gridCell(),
+                    Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    items(items) { m -> MangaCover(s.sourceId, m, "") { onOpen(m) } }
+                }
             }
             when {
                 loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
@@ -1298,7 +1345,15 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                 Box(Modifier.weight(0.58f).fillMaxHeight()) {
                     val chapterListState = rememberLazyListState()
                     Column(Modifier.fillMaxSize()) {
-                        Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
+                        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = {
+                                scope.launch { withContext(Dispatchers.IO) { d.chapters.forEach { ReadStore.setRead(s.sourceId, s.url, it.url, true) } }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
+                            }) { Icon(Icons.Filled.DoneAll, "Mark all read", tint = MuTheme.Muted) }
+                            IconButton(onClick = {
+                                scope.launch { withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.All) } }; dlVersion++ }
+                            }) { Icon(Icons.Filled.Download, "Download all", tint = MuTheme.Muted) }
+                        }
                       Box(Modifier.weight(1f)) {
                         LazyColumn(state = chapterListState, modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 18.dp)) {
                             items(d.chapters) { ch ->

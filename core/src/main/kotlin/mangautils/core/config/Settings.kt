@@ -44,4 +44,6 @@ data class Settings(
     val mangaThumbnailBackground: Boolean = true,
     /** Tint the detail page with the cover's dominant color. */
     val dynamicThemeColors: Boolean = true,
+    /** Library/browse grid density: COMPACT | COMFORTABLE | LIST. */
+    val gridMode: String = "COMFORTABLE",
 )
