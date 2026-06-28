@@ -167,6 +167,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import mangautils.core.config.SettingsStore
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.ExtensionRepoClient
@@ -1761,16 +1762,20 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                 val dd = cachedDetails(cached)
                 details = dd; error = null
                 browseUrl = computeBrowseUrl(src, s.url, s.title, dd.manga)
+            } else if (!Net.online) {
+                // Offline: use the cache if we have it, else a clear offline error (no hanging fetch).
+                if (cached != null) { details = cachedDetails(cached); error = null; browseUrl = computeBrowseUrl(src, s.url, s.title, cachedDetails(cached).manga) } else error = "offline"
             } else {
-                runCatching { SourceBrowser.details(s.sourceId, s.url) }
-                    .onSuccess { dd ->
-                        details = dd; error = null
-                        browseUrl = computeBrowseUrl(src, s.url, s.title, dd.manga)
-                        if (cached != null) runCatching { LibraryService.addKnown(s.sourceId, s.url, s.title, dd.manga, dd.chapters) }
-                    }
-                    .onFailure {
-                        if (cached != null) { details = cachedDetails(cached); browseUrl = computeBrowseUrl(src, s.url, s.title, cachedDetails(cached).manga) } else error = it.message
-                    }
+                val dd = runCatching { withTimeoutOrNull(15_000) { SourceBrowser.details(s.sourceId, s.url) } }.getOrNull()
+                if (dd != null) {
+                    details = dd; error = null
+                    browseUrl = computeBrowseUrl(src, s.url, s.title, dd.manga)
+                    if (cached != null) runCatching { LibraryService.addKnown(s.sourceId, s.url, s.title, dd.manga, dd.chapters) }
+                } else if (cached != null) {
+                    details = cachedDetails(cached); browseUrl = computeBrowseUrl(src, s.url, s.title, cachedDetails(cached).manga)
+                } else {
+                    error = "Couldn't reach the source."
+                }
             }
             refreshing = false
         }
@@ -2132,21 +2137,25 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
         withContext(Dispatchers.IO) {
             ReadStore.setRead(s.sourceId, s.mangaUrl, s.chapterUrl, true)
             runCatching { HistoryStore.record(s.sourceId, s.mangaUrl, s.mangaTitle, s.chapterUrl, s.chapterName) }
-            if (chapters.isEmpty()) {
-                chapters = runCatching {
-                    SourceBrowser.details(s.sourceId, s.mangaUrl).chapters.map {
-                        ReaderChapter(it.url, it.name, runCatching { it.chapter_number }.getOrDefault(-1f), runCatching { it.scanlator }.getOrNull())
-                    }
-                }.getOrNull()?.takeIf { it.isNotEmpty() }
-                    ?: LibraryStore.find(s.sourceId, s.mangaUrl)?.knownChapters?.map { ReaderChapter(it.url, it.name, it.number, it.scanlator) }
-                    ?: emptyList()
-            }
-            // Offline-first: read the local download (folder/CBZ) if present, else stream from source.
+            // Pages: the local download (folder/CBZ) FIRST — instant + offline. Only stream when online.
             val local = runCatching { LocalChapterReader.localChapter(s.mangaTitle, s.chapterName) }.getOrNull()
-            pageRefs = if (local != null) {
-                (0 until local.count).map { ReaderPageRef.Local(local, it) }
-            } else {
-                runCatching { SourceImage.pageList(s.sourceId, s.chapterUrl).map { ReaderPageRef.Streamed(s.sourceId, it) } }.getOrDefault(emptyList())
+            pageRefs = when {
+                local != null -> (0 until local.count).map { ReaderPageRef.Local(local, it) }
+                Net.online -> runCatching { withTimeoutOrNull(25_000) { SourceImage.pageList(s.sourceId, s.chapterUrl).map { ReaderPageRef.Streamed(s.sourceId, it) } } }.getOrNull() ?: emptyList()
+                else -> emptyList()
+            }
+            // Chapter list for prev/next nav: cached when offline; fetch (with timeout) + cache fallback when online.
+            if (chapters.isEmpty()) {
+                val cachedChs = LibraryStore.find(s.sourceId, s.mangaUrl)?.knownChapters?.map { ReaderChapter(it.url, it.name, it.number, it.scanlator) }
+                chapters = if (Net.online) {
+                    runCatching {
+                        withTimeoutOrNull(12_000) {
+                            SourceBrowser.details(s.sourceId, s.mangaUrl).chapters.map { ReaderChapter(it.url, it.name, runCatching { it.chapter_number }.getOrDefault(-1f), runCatching { it.scanlator }.getOrNull()) }
+                        }
+                    }.getOrNull()?.takeIf { it.isNotEmpty() } ?: cachedChs ?: emptyList()
+                } else {
+                    cachedChs ?: emptyList()
+                }
             }
         }
         loading = false
