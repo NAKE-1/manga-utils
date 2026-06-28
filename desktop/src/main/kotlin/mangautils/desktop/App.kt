@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -167,8 +168,11 @@ import mangautils.core.extension.ExtensionRepoEntry
 import mangautils.core.extension.InstalledExtension
 import mangautils.core.extension.InstalledStore
 import mangautils.core.extension.RepoStore
+import mangautils.core.library.HistoryEntry
+import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
+import mangautils.core.library.UpdateResult
 import mangautils.core.library.LibraryStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.MangaDetails
@@ -208,6 +212,12 @@ private sealed interface Screen {
     data object Settings : Screen
 
     data object ReaderSettings : Screen
+
+    data object Updates : Screen
+
+    data object History : Screen
+
+    data object Downloads : Screen
 
     data class Stub(val label: String) : Screen
 }
@@ -359,6 +369,9 @@ fun App() {
                         }
                         Screen.Settings -> SettingsScreen { go(Screen.ReaderSettings) }
                         Screen.ReaderSettings -> ReaderSettingsScreen()
+                        Screen.Updates -> UpdatesScreen { e -> go(Screen.Detail(e.sourceId, e.mangaUrl, e.title)) }
+                        Screen.History -> HistoryScreen { h -> go(Screen.Reader(h.sourceId, h.mangaUrl, h.mangaTitle, h.chapterUrl, h.chapterName)) }
+                        Screen.Downloads -> DownloadsScreen()
                         is Screen.Stub -> Empty("${s.label} — coming soon")
                     }
                 }
@@ -380,6 +393,9 @@ private fun titleFor(s: Screen): String =
         is Screen.SourceConfig -> "Source Configuration"
         Screen.Settings -> "Settings"
         Screen.ReaderSettings -> "Reader"
+        Screen.Updates -> "Updates"
+        Screen.History -> "History"
+        Screen.Downloads -> "Downloads"
         is Screen.Stub -> s.label
     }
 
@@ -434,10 +450,10 @@ private fun Sidebar(current: Screen, onSelect: (Screen) -> Unit) {
     val items =
         listOf(
             NavItem("Library", Icons.Filled.Home, Screen.Library),
-            NavItem("Updates", Icons.Filled.Update, Screen.Stub("Updates")),
-            NavItem("History", Icons.Filled.History, Screen.Stub("History")),
+            NavItem("Updates", Icons.Filled.Update, Screen.Updates),
+            NavItem("History", Icons.Filled.History, Screen.History),
             NavItem("Browse", Icons.Filled.Explore, Screen.Browse),
-            NavItem("Downloads", Icons.Filled.Download, Screen.Stub("Downloads")),
+            NavItem("Downloads", Icons.Filled.Download, Screen.Downloads),
             NavItem("Settings", Icons.Filled.Settings, Screen.Settings),
             NavItem("About", Icons.Filled.Info, Screen.Stub("About")),
         )
@@ -955,6 +971,130 @@ private fun RepoDialog(onClose: () -> Unit) {
 @Composable
 private fun SectionHeader(text: String) {
     Text(text, color = MuTheme.Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+}
+
+// ---- Updates / History / Downloads ----------------------------------------------------------
+
+private fun timeAgo(ts: Long): String {
+    val m = (System.currentTimeMillis() - ts) / 60000
+    return when {
+        m < 1 -> "just now"
+        m < 60 -> "${m}m ago"
+        m < 1440 -> "${m / 60}h ago"
+        else -> "${m / 1440}d ago"
+    }
+}
+
+@Composable
+private fun UpdatesScreen(onOpenManga: (LibraryEntry) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var results by remember { mutableStateOf<List<UpdateResult>>(emptyList()) }
+    var running by remember { mutableStateOf(false) }
+    var checked by remember { mutableStateOf(false) }
+    fun refresh() {
+        if (running) return
+        running = true
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { LibraryService.update() }.getOrDefault(emptyList()) }
+            results = r.filter { it.newChapters.isNotEmpty() }
+            running = false; checked = true
+            val n = results.sumOf { it.newChapters.size }
+            Toasts.success(if (n > 0) "$n new chapter(s) across ${results.size} series" else "No new chapters")
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { refresh() }, enabled = !running, shape = BtnShape, colors = ButtonDefaults.buttonColors(containerColor = MuTheme.Vermilion)) {
+                Text(if (running) "Checking…" else "Check for updates")
+            }
+            Spacer(Modifier.width(12.dp))
+            if (running) CircularProgressIndicator(color = MuTheme.Vermilion, modifier = Modifier.size(22.dp))
+        }
+        if (results.isEmpty()) {
+            Empty(if (checked) "No new chapters." else "Check your library for new chapters.")
+        } else {
+            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                items(results) { res ->
+                    Row(Modifier.fillMaxWidth().clickable { onOpenManga(res.entry) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Cover(res.entry.sourceId, res.entry.thumbnailUrl, res.entry.title, Modifier.width(40.dp).aspectRatio(0.7f).clip(RoundedCornerShape(6.dp)))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(res.entry.title, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${res.newChapters.size} new chapter${if (res.newChapters.size == 1) "" else "s"}", color = MuTheme.Vermilion, fontSize = 12.sp)
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryScreen(onOpen: (HistoryEntry) -> Unit) {
+    var items by remember { mutableStateOf<List<HistoryEntry>>(emptyList()) }
+    var rev by remember { mutableStateOf(0) }
+    LaunchedEffect(rev) { withContext(Dispatchers.IO) { items = HistoryStore.list() } }
+    if (items.isEmpty()) { Empty("No reading history yet."); return }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${items.size} entries", color = MuTheme.Muted, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { HistoryStore.clear(); rev++ }, shape = BtnShape) { Text("Clear", color = MuTheme.Vermilion) }
+        }
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            items(items) { h ->
+                Row(Modifier.fillMaxWidth().clickable { onOpen(h) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Cover(h.sourceId, h.thumbnailUrl, h.mangaTitle, Modifier.width(40.dp).aspectRatio(0.7f).clip(RoundedCornerShape(6.dp)))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(h.mangaTitle, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(h.chapterName, color = MuTheme.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(timeAgo(h.readAt), color = MuTheme.Muted, fontSize = 11.sp)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadsScreen() {
+    var series by remember { mutableStateOf<List<Pair<java.nio.file.Path, List<java.nio.file.Path>>>>(emptyList()) }
+    var rev by remember { mutableStateOf(0) }
+    LaunchedEffect(rev) {
+        series = withContext(Dispatchers.IO) {
+            runCatching {
+                val dir = mangautils.core.config.AppConfig.downloadsDir
+                if (!java.nio.file.Files.exists(dir)) {
+                    emptyList()
+                } else {
+                    java.nio.file.Files.list(dir).use { st -> st.filter { java.nio.file.Files.isDirectory(it) }.toList() }
+                        .map { d -> d to java.nio.file.Files.list(d).use { it.filter { f -> f.toString().endsWith(".cbz") }.toList() }.sortedBy { it.toString() } }
+                        .filter { it.second.isNotEmpty() }
+                        .sortedBy { it.first.fileName.toString().lowercase() }
+                }
+            }.getOrDefault(emptyList())
+        }
+    }
+    if (series.isEmpty()) { Empty("No downloads yet.\nDownload chapters from a manga page."); return }
+    LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
+        series.forEach { (dir, files) ->
+            item {
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(dir.fileName.toString(), color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${files.size} ch", color = MuTheme.Muted, fontSize = 12.sp)
+                    IconButton(onClick = { runCatching { files.forEach { java.nio.file.Files.deleteIfExists(it) }; java.nio.file.Files.deleteIfExists(dir) }; rev++ }) { Icon(Icons.Filled.Delete, "Delete series", tint = MuTheme.Vermilion) }
+                }
+            }
+            items(files) { f ->
+                Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 3.dp, bottom = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(f.fileName.toString().removeSuffix(".cbz"), color = MuTheme.Muted, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { runCatching { java.nio.file.Files.deleteIfExists(f) }; rev++ }, modifier = Modifier.size(30.dp)) { Icon(Icons.Filled.Close, "Delete", tint = MuTheme.Muted, modifier = Modifier.size(16.dp)) }
+                }
+            }
+        }
+    }
 }
 
 // ---- Settings (appearance / themes) ---------------------------------------------------------
@@ -1742,6 +1882,7 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
         loading = true
         withContext(Dispatchers.IO) {
             ReadStore.setRead(s.sourceId, s.mangaUrl, s.chapterUrl, true)
+            runCatching { HistoryStore.record(s.sourceId, s.mangaUrl, s.mangaTitle, s.chapterUrl, s.chapterName) }
             if (chapters.isEmpty()) {
                 chapters = runCatching {
                     SourceBrowser.details(s.sourceId, s.mangaUrl).chapters.map {
