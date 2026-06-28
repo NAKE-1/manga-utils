@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -120,6 +121,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -400,25 +402,35 @@ private fun coverColor(seed: String): Color {
     return Color(hues[(seed.hashCode().ushr(1)) % hues.size])
 }
 
-/** A representative color of a cover, weighting saturated pixels (for the dynamic page tint). */
+/**
+ * The cover's dominant *vibrant* color (Suwayomi-like). Averaging muddies covers, so instead we
+ * bucket saturated, mid-brightness pixels into a coarse color histogram and take the heaviest
+ * bucket's weighted-average color.
+ */
 private fun dominantColor(bmp: ImageBitmap): Color {
     val pm = runCatching { bmp.toPixelMap() }.getOrNull() ?: return Color.Gray
-    var r = 0.0; var g = 0.0; var b = 0.0; var wSum = 0.0
-    val stepX = (pm.width / 28).coerceAtLeast(1)
-    val stepY = (pm.height / 28).coerceAtLeast(1)
+    val buckets = HashMap<Int, DoubleArray>() // key -> [weight, r, g, b]
+    val stepX = (pm.width / 40).coerceAtLeast(1)
+    val stepY = (pm.height / 40).coerceAtLeast(1)
     var x = 0
     while (x < pm.width) {
         var y = 0
         while (y < pm.height) {
             val c = pm[x, y]
-            val w = 0.08 + (maxOf(c.red, c.green, c.blue) - minOf(c.red, c.green, c.blue)) // boost saturated
-            r += c.red * w; g += c.green * w; b += c.blue * w; wSum += w
+            val mx = maxOf(c.red, c.green, c.blue); val mn = minOf(c.red, c.green, c.blue)
+            val sat = mx - mn
+            if (sat > 0.12f && mx in 0.15f..0.97f) { // ignore near-grey / too dark / blown-out
+                val key = ((c.red * 4).toInt() shl 8) or ((c.green * 4).toInt() shl 4) or (c.blue * 4).toInt()
+                val w = sat.toDouble()
+                val arr = buckets.getOrPut(key) { DoubleArray(4) }
+                arr[0] += w; arr[1] += c.red * w; arr[2] += c.green * w; arr[3] += c.blue * w
+            }
             y += stepY
         }
         x += stepX
     }
-    if (wSum <= 0.0) return Color.Gray
-    return Color((r / wSum).toFloat().coerceIn(0f, 1f), (g / wSum).toFloat().coerceIn(0f, 1f), (b / wSum).toFloat().coerceIn(0f, 1f))
+    val best = buckets.values.maxByOrNull { it[0] } ?: return Color(0xFF555560)
+    return Color((best[1] / best[0]).toFloat().coerceIn(0f, 1f), (best[2] / best[0]).toFloat().coerceIn(0f, 1f), (best[3] / best[0]).toFloat().coerceIn(0f, 1f))
 }
 
 /** A vibrant accent derived from a cover color (boost saturation, fix brightness) — for buttons etc. */
@@ -1218,7 +1230,8 @@ private fun ReaderSidebar(
     var menuOpen by remember { mutableStateOf(false) }
     Column(Modifier.width(300.dp).fillMaxSize().background(MuTheme.Panel).padding(16.dp)) {
         Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(chapterName, color = MuTheme.Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val curScan = chapters.firstOrNull { it.url == currentChapterUrl }?.scanlator?.takeIf { it.isNotBlank() }
+        Text(if (curScan != null) "$chapterName  ·  $curScan" else chapterName, color = MuTheme.Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(16.dp))
         Text("PAGE", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1233,22 +1246,33 @@ private fun ReaderSidebar(
             Box(Modifier.weight(1f)) {
                 OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) { Text(chapterName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                    // Full list (every scanlator) so you can still pick any version manually.
-                    chapters.forEach { ch ->
-                        val read = ReadStore.isRead(sourceId, mangaUrl, ch.url) || ch.url == currentChapterUrl
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(7.dp).clip(RoundedCornerShape(4.dp)).background(if (read) MuTheme.VermilionDim else MuTheme.Vermilion))
-                                    Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper)
-                                        ch.scanlator?.takeIf { it.isNotBlank() }?.let { Text(it, color = MuTheme.Muted, fontSize = 10.sp) }
+                    // Full list (every scanlator) so you can still pick any version manually,
+                    // opened scrolled to — and highlighting — the chapter you're currently on.
+                    val scroll = rememberScrollState()
+                    val density = LocalDensity.current
+                    val currentIdx = chapters.indexOfFirst { it.url == currentChapterUrl }
+                    LaunchedEffect(menuOpen) {
+                        if (menuOpen && currentIdx > 0) scroll.scrollTo((currentIdx * with(density) { 52.dp.toPx() }).toInt())
+                    }
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(scroll)) {
+                        chapters.forEach { ch ->
+                            val isCurrent = ch.url == currentChapterUrl
+                            val read = ReadStore.isRead(sourceId, mangaUrl, ch.url) || isCurrent
+                            DropdownMenuItem(
+                                modifier = if (isCurrent) Modifier.background(MuTheme.Vermilion.copy(alpha = 0.15f)) else Modifier,
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(7.dp).clip(RoundedCornerShape(4.dp)).background(if (read) MuTheme.VermilionDim else MuTheme.Vermilion))
+                                        Spacer(Modifier.width(8.dp))
+                                        Column {
+                                            Text(ch.name, color = if (isCurrent) MuTheme.Vermilion else if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal)
+                                            ch.scanlator?.takeIf { it.isNotBlank() }?.let { Text(it, color = MuTheme.Muted, fontSize = 10.sp) }
+                                        }
                                     }
-                                }
-                            },
-                            onClick = { menuOpen = false; onOpenChapter(ch.url, ch.name) },
-                        )
+                                },
+                                onClick = { menuOpen = false; onOpenChapter(ch.url, ch.name) },
+                            )
+                        }
                     }
                 }
             }
