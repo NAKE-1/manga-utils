@@ -158,6 +158,8 @@ import mangautils.core.source.MangaDetails
 import mangautils.core.source.SourceBrowser
 import mangautils.core.source.SourceImage
 import mangautils.core.source.SourceManager
+import mangautils.core.source.SourcePref
+import mangautils.core.source.SourcePreferences
 import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -173,6 +175,8 @@ private sealed interface Screen {
     data object Browse : Screen
 
     data class SourceBrowse(val sourceId: Long, val name: String, val startLatest: Boolean = false) : Screen
+
+    data class SourceConfig(val sourceId: Long, val name: String) : Screen
 
     data class Detail(val sourceId: Long, val url: String, val title: String) : Screen
 
@@ -226,9 +230,9 @@ fun App() {
                 when (current) {
                     is Screen.Browse -> IconButton(onClick = { showRepos = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
                     is Screen.SourceBrowse -> {
+                        val sb = current
                         IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
-                        IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.OpenInNew, "Open", tint = MuTheme.Paper) }
-                        IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
+                        IconButton(onClick = { go(Screen.SourceConfig(sb.sourceId, sb.name)) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
                     }
                     else -> {}
                 }
@@ -244,6 +248,7 @@ fun App() {
                         Screen.Library -> LibraryScreen { go(Screen.Detail(it.sourceId, it.mangaUrl, it.title)) }
                         Screen.Browse -> BrowseScreen(dataVersion) { id, name, latest -> go(Screen.SourceBrowse(id, name, latest)) }
                         is Screen.SourceBrowse -> SourceBrowseScreen(s, srcSearch) { m -> go(Screen.Detail(s.sourceId, m.url, m.title)) }
+                        is Screen.SourceConfig -> SourceConfigScreen(s.sourceId)
                         is Screen.Detail -> DetailScreen(s) { chUrl, chName -> go(Screen.Reader(s.sourceId, s.url, s.title, chUrl, chName)) }
                         is Screen.Reader -> ReaderScreen(s, sidebarOpen) { chUrl, chName ->
                             backStack[backStack.lastIndex] = Screen.Reader(s.sourceId, s.mangaUrl, s.mangaTitle, chUrl, chName)
@@ -265,6 +270,7 @@ private fun titleFor(s: Screen): String =
         is Screen.SourceBrowse -> s.name
         is Screen.Detail -> s.title
         is Screen.Reader -> s.mangaTitle
+        is Screen.SourceConfig -> "Source Configuration"
         Screen.Settings -> "Settings"
         is Screen.Stub -> s.label
     }
@@ -988,6 +994,91 @@ private fun FilterControl(f: Filter<*>, bump: () -> Unit) {
             }
         }
         else -> {}
+    }
+}
+
+// ---- Source configuration (the source's own getSourcePreferences) ---------------------------
+
+@Composable
+private fun SourceConfigScreen(sourceId: Long) {
+    var prefs by remember(sourceId) { mutableStateOf<List<SourcePref>?>(null) }
+    var error by remember(sourceId) { mutableStateOf<String?>(null) }
+    var rev by remember(sourceId) { mutableStateOf(0) }
+    LaunchedEffect(sourceId, rev) {
+        withContext(Dispatchers.IO) {
+            runCatching { SourcePreferences.list(sourceId) }.onSuccess { prefs = it; error = null }.onFailure { error = it.message }
+        }
+    }
+    val list = prefs
+    when {
+        error != null -> Empty("Couldn't load source settings:\n$error")
+        list == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
+        list.isEmpty() -> Empty("This source has no settings.")
+        else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 8.dp)) {
+            items(list) { p ->
+                SourcePrefRow(sourceId, p) { rev++ }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrefTitle(title: String, summary: String?) {
+    Text(title, color = MuTheme.Paper)
+    summary?.takeIf { it.isNotBlank() }?.let { Text(it, color = MuTheme.Muted, fontSize = 12.sp) }
+}
+
+@Composable
+private fun SourcePrefRow(sourceId: Long, p: SourcePref, onChanged: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val entries = p.entries
+    val entryValues = p.entryValues
+    fun save(v: String) { scope.launch { withContext(Dispatchers.IO) { SourcePreferences.set(sourceId, p.index, v) }; onChanged() } }
+    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        when {
+            p.type == "Boolean" ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { PrefTitle(p.title, p.summary) }
+                    Switch(checked = p.value.toBooleanStrictOrNull() ?: false, enabled = p.enabled, onCheckedChange = { save(it.toString()) })
+                }
+            !entries.isNullOrEmpty() && p.type != "Set<String>" -> {
+                var open by remember { mutableStateOf(false) }
+                val curIdx = entryValues?.indexOf(p.value) ?: -1
+                val curLabel = entries.getOrNull(curIdx) ?: p.value.ifBlank { "—" }
+                PrefTitle(p.title, p.summary)
+                Spacer(Modifier.height(4.dp))
+                Box {
+                    OutlinedButton(onClick = { open = true }, enabled = p.enabled, shape = BtnShape) { Text(curLabel, color = MuTheme.Paper) }
+                    DropdownMenu(open, { open = false }) {
+                        entries.forEachIndexed { i, label ->
+                            DropdownMenuItem(text = { Text(label) }, onClick = { open = false; save(entryValues?.getOrNull(i) ?: label) })
+                        }
+                    }
+                }
+            }
+            !entries.isNullOrEmpty() && p.type == "Set<String>" -> {
+                PrefTitle(p.title, p.summary)
+                entries.forEachIndexed { i, label ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = p.value.contains(entryValues?.getOrNull(i) ?: label), enabled = p.enabled, onCheckedChange = { on ->
+                            val sel = entryValues?.filterIndexed { j, v -> if (j == i) on else p.value.contains(v) } ?: emptyList()
+                            save(sel.joinToString(","))
+                        })
+                        Text(label, color = MuTheme.Paper)
+                    }
+                }
+            }
+            else -> {
+                PrefTitle(p.title, p.summary)
+                var text by remember(p.value) { mutableStateOf(p.value) }
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, enabled = p.enabled,
+                    trailingIcon = { TextButton(onClick = { save(text) }) { Text("Save", color = MuTheme.Vermilion) } },
+                )
+            }
+        }
     }
 }
 
