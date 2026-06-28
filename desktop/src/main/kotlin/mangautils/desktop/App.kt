@@ -1211,51 +1211,18 @@ private fun HistoryScreen(onOpen: (HistoryEntry) -> Unit) {
 
 @Composable
 private fun DownloadsScreen() {
-    var series by remember { mutableStateOf<List<Pair<java.nio.file.Path, List<java.nio.file.Path>>>>(emptyList()) }
-    var rev by remember { mutableStateOf(0) }
-    LaunchedEffect(rev) {
-        series = withContext(Dispatchers.IO) {
-            runCatching {
-                val dir = mangautils.core.config.AppConfig.downloadsDir
-                if (!java.nio.file.Files.exists(dir)) {
-                    emptyList()
-                } else {
-                    java.nio.file.Files.list(dir).use { st -> st.filter { java.nio.file.Files.isDirectory(it) }.toList() }
-                        .map { d -> d to java.nio.file.Files.list(d).use { it.filter { f -> f.toString().endsWith(".cbz") }.toList() }.sortedBy { it.toString() } }
-                        .filter { it.second.isNotEmpty() }
-                        .sortedBy { it.first.fileName.toString().lowercase() }
-                }
-            }.getOrDefault(emptyList())
-        }
-    }
+    // Queue-only. Managing already-downloaded chapters (by series) will live in Settings later.
     val queue = DownloadQueue.items
-    if (series.isEmpty() && queue.isEmpty()) { Empty("No downloads yet.\nDownload chapters from a manga page."); return }
+    if (queue.isEmpty()) { Empty("No downloads in the queue.\nDownloaded-chapter management will live in Settings."); return }
     LazyColumn(Modifier.fillMaxSize().padding(16.dp)) {
-        if (queue.isNotEmpty()) {
-            item {
-                Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Queue · ${DownloadQueue.activeCount} active", color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { DownloadQueue.clearFinished() }) { Text("Clear finished", color = MuTheme.Vermilion) }
-                }
-            }
-            items(queue, key = { it.id }) { dl -> QueueRow(dl) }
-            item { Spacer(Modifier.height(8.dp)); HorizontalDivider(color = MaterialTheme.colorScheme.outline); Text("Downloaded", color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
-        }
-        series.forEach { (dir, files) ->
-            item {
-                Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(dir.fileName.toString(), color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${files.size} ch", color = MuTheme.Muted, fontSize = 12.sp)
-                    IconButton(onClick = { runCatching { files.forEach { java.nio.file.Files.deleteIfExists(it) }; java.nio.file.Files.deleteIfExists(dir) }; rev++ }) { Icon(Icons.Filled.Delete, "Delete series", tint = MuTheme.Vermilion) }
-                }
-            }
-            items(files) { f ->
-                Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 3.dp, bottom = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(f.fileName.toString().removeSuffix(".cbz"), color = MuTheme.Muted, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { runCatching { java.nio.file.Files.deleteIfExists(f) }; rev++ }, modifier = Modifier.size(30.dp)) { Icon(Icons.Filled.Close, "Delete", tint = MuTheme.Muted, modifier = Modifier.size(16.dp)) }
-                }
+        item {
+            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Queue · ${DownloadQueue.activeCount} active", color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = { DownloadQueue.stopAll() }) { Text("Stop all", color = MuTheme.Vermilion) }
+                TextButton(onClick = { DownloadQueue.clearFinished() }) { Text("Clear finished", color = MuTheme.Vermilion) }
             }
         }
+        items(queue, key = { it.id }) { dl -> QueueRow(dl) }
     }
 }
 
