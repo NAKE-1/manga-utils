@@ -56,6 +56,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Cancel
@@ -100,6 +101,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -204,6 +206,8 @@ private sealed interface Screen {
     ) : Screen
 
     data object Settings : Screen
+
+    data object ReaderSettings : Screen
 
     data class Stub(val label: String) : Screen
 }
@@ -350,10 +354,11 @@ fun App() {
                         is Screen.SourceBrowse -> SourceBrowseScreen(s, srcSearch) { m -> go(Screen.Detail(s.sourceId, m.url, m.title)) }
                         is Screen.SourceConfig -> SourceConfigScreen(s.sourceId)
                         is Screen.Detail -> DetailScreen(s) { chUrl, chName -> go(Screen.Reader(s.sourceId, s.url, s.title, chUrl, chName)) }
-                        is Screen.Reader -> ReaderScreen(s, sidebarOpen) { chUrl, chName ->
+                        is Screen.Reader -> ReaderScreen(s, sidebarOpen, onOpenSettings = { go(Screen.ReaderSettings) }) { chUrl, chName ->
                             backStack[backStack.lastIndex] = Screen.Reader(s.sourceId, s.mangaUrl, s.mangaTitle, chUrl, chName)
                         }
-                        Screen.Settings -> SettingsScreen()
+                        Screen.Settings -> SettingsScreen { go(Screen.ReaderSettings) }
+                        Screen.ReaderSettings -> ReaderSettingsScreen()
                         is Screen.Stub -> Empty("${s.label} — coming soon")
                     }
                 }
@@ -374,6 +379,7 @@ private fun titleFor(s: Screen): String =
         is Screen.Reader -> s.mangaTitle
         is Screen.SourceConfig -> "Source Configuration"
         Screen.Settings -> "Settings"
+        Screen.ReaderSettings -> "Reader"
         is Screen.Stub -> s.label
     }
 
@@ -659,6 +665,37 @@ private object Display {
 
 private fun gridCell() = GridCells.Adaptive(if (Display.grid == GridMode.COMPACT) 132.dp else 178.dp)
 
+/** Reader preferences (persisted), readable as Compose state so the reader reacts live. */
+private object ReaderPrefs {
+    private val s = runCatching { SettingsStore.get() }.getOrNull()
+    var scaleType by mutableStateOf(s?.readerScaleType ?: "FIT_WIDTH")
+        private set
+    var pageGap by mutableStateOf(s?.readerPageGap ?: 0)
+        private set
+    var background by mutableStateOf(s?.readerBackground ?: "THEME")
+        private set
+    var skipDuplicates by mutableStateOf(s?.readerSkipDuplicates ?: true)
+        private set
+
+    private fun save() {
+        runCatching {
+            SettingsStore.save(SettingsStore.get().copy(readerScaleType = scaleType, readerPageGap = pageGap, readerBackground = background, readerSkipDuplicates = skipDuplicates))
+        }
+    }
+
+    fun applyScale(v: String) { scaleType = v; save() }
+    fun applyGap(v: Int) { pageGap = v; save() }
+    fun applyBackground(v: String) { background = v; save() }
+    fun applySkipDuplicates(v: Boolean) { skipDuplicates = v; save() }
+
+    fun bg(themeInk: Color): Color = when (background) {
+        "BLACK" -> Color.Black
+        "GRAY" -> Color(0xFF2B2B2D)
+        "WHITE" -> Color.White
+        else -> themeInk
+    }
+}
+
 @Composable
 private fun MangaRow(sourceId: Long, m: MangaRef, subtitle: String, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -923,7 +960,7 @@ private fun SectionHeader(text: String) {
 // ---- Settings (appearance / themes) ---------------------------------------------------------
 
 @Composable
-private fun SettingsScreen() {
+private fun SettingsScreen(onOpenReader: () -> Unit) {
     var themeName by remember { mutableStateOf(MuTheme.palette.name) }
     var dark by remember { mutableStateOf(MuTheme.dark) }
     fun apply() {
@@ -964,6 +1001,18 @@ private fun SettingsScreen() {
                 Text("Tint the detail page with the cover's dominant color", color = MuTheme.Muted, fontSize = 12.sp)
             }
             Switch(checked = dyn, onCheckedChange = { dyn = it; runCatching { SettingsStore.save(SettingsStore.get().copy(dynamicThemeColors = it)) } })
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("Reader", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenReader).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.PlayArrow, null, tint = MuTheme.Vermilion, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Reader settings", color = MuTheme.Paper)
+                Text("Scale, page gap, background, behaviour", color = MuTheme.Muted, fontSize = 12.sp)
+            }
+            Icon(Icons.Filled.ArrowForward, null, tint = MuTheme.Muted)
         }
     }
 }
@@ -1596,6 +1645,72 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
+// ---- Reader settings ------------------------------------------------------------------------
+
+@Composable
+private fun PrefHeader(text: String) {
+    Text(text, color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+}
+
+@Composable
+private fun SelChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    if (selected) {
+        Button(onClick = onClick, shape = BtnShape, colors = ButtonDefaults.buttonColors(containerColor = MuTheme.Vermilion)) { Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+    } else {
+        OutlinedButton(onClick = onClick, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion)) { Text(label, color = MuTheme.Vermilion, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+    }
+}
+
+@Composable
+private fun ReaderSettingsScreen() {
+    var tab by remember { mutableStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = tab, containerColor = MuTheme.Ink, contentColor = MuTheme.Vermilion) {
+            Tab(tab == 0, { tab = 0 }, text = { Text("Layout") })
+            Tab(tab == 1, { tab = 1 }, text = { Text("General") })
+            Tab(tab == 2, { tab = 2 }, text = { Text("Behaviour") })
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+            when (tab) {
+                0 -> {
+                    PrefHeader("Reading mode")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { SelChip("Continuous vertical", true) {} }
+                    Text("Paged / double-page / horizontal modes coming.", color = MuTheme.Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                    Spacer(Modifier.height(20.dp))
+                    PrefHeader("Scale type")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SelChip("FIT WIDTH", ReaderPrefs.scaleType == "FIT_WIDTH") { ReaderPrefs.applyScale("FIT_WIDTH") }
+                        SelChip("ORIGINAL SIZE", ReaderPrefs.scaleType == "ORIGINAL") { ReaderPrefs.applyScale("ORIGINAL") }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                    PrefHeader("Page gap")
+                    Text("${ReaderPrefs.pageGap}px", color = MuTheme.Muted, fontSize = 12.sp)
+                    Slider(value = ReaderPrefs.pageGap.toFloat(), onValueChange = { ReaderPrefs.applyGap(it.toInt()) }, valueRange = 0f..40f)
+                }
+                1 -> {
+                    PrefHeader("Background color")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("THEME", "BLACK", "GRAY", "WHITE").forEach { bg ->
+                            SelChip(bg, ReaderPrefs.background == bg) { ReaderPrefs.applyBackground(bg) }
+                        }
+                    }
+                }
+                else -> {
+                    Row(Modifier.fillMaxWidth().clickable { ReaderPrefs.applySkipDuplicates(!ReaderPrefs.skipDuplicates) }, verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = ReaderPrefs.skipDuplicates, onCheckedChange = { ReaderPrefs.applySkipDuplicates(it) })
+                        Column {
+                            Text("Skip duplicate chapters", color = MuTheme.Paper)
+                            Text("Stay on the current scanlator; don't re-read the same chapter number", color = MuTheme.Muted, fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text("More behaviour options (scroll amount, auto-scroll, preload) coming.", color = MuTheme.Muted, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
 // ---- Reader (streaming long-strip, scale by width) ------------------------------------------
 
 private data class ReaderChapter(val url: String, val name: String, val number: Float, val scanlator: String?)
@@ -1616,7 +1731,7 @@ private fun dedupChapters(current: ReaderChapter?, all: List<ReaderChapter>): Li
 }
 
 @Composable
-private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (String, String) -> Unit) {
+private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: () -> Unit, onOpenChapter: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var pages by remember(s.chapterUrl) { mutableStateOf<List<Page>>(emptyList()) }
@@ -1642,7 +1757,7 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (S
 
     // Scanlator-aware prev/next: navigate the de-duplicated list, preferring the current scanlator.
     val current = chapters.firstOrNull { it.url == s.chapterUrl }
-    val nav = dedupChapters(current, chapters)
+    val nav = if (ReaderPrefs.skipDuplicates) dedupChapters(current, chapters) else chapters
     val idx = nav.indexOfFirst { it.url == s.chapterUrl }
     val prevChapter = nav.getOrNull(idx + 1)
     val nextChapter = nav.getOrNull(idx - 1)
@@ -1654,13 +1769,13 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (S
             ReaderSidebar(
                 title = s.mangaTitle, chapterName = s.chapterName, chapters = chapters, currentChapterUrl = s.chapterUrl,
                 sourceId = s.sourceId, mangaUrl = s.mangaUrl, pageCount = pages.size, currentPage = currentPage,
-                prevChapter = prevChapter, nextChapter = nextChapter, onOpenChapter = onOpenChapter,
+                prevChapter = prevChapter, nextChapter = nextChapter, onOpenChapter = onOpenChapter, onOpenSettings = onOpenSettings,
                 onJumpPage = { i -> scope.launch { listState.animateScrollToItem(i.coerceIn(0, (pages.size - 1).coerceAtLeast(0))) } },
             )
             Box(Modifier.width(1.dp).fillMaxSize().background(MaterialTheme.colorScheme.outline))
         }
-        Box(Modifier.fillMaxSize().background(MuTheme.Ink)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) { items(pages) { p -> ReaderPage(s.sourceId, p) } }
+        Box(Modifier.fillMaxSize().background(ReaderPrefs.bg(MuTheme.Ink))) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) { items(pages) { p -> ReaderPage(s.sourceId, p) } }
             if (loading) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
             if (showTop) {
                 FloatingActionButton(
@@ -1677,7 +1792,7 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (S
 private fun ReaderSidebar(
     title: String, chapterName: String, chapters: List<ReaderChapter>, currentChapterUrl: String,
     sourceId: Long, mangaUrl: String, pageCount: Int, currentPage: Int,
-    prevChapter: ReaderChapter?, nextChapter: ReaderChapter?,
+    prevChapter: ReaderChapter?, nextChapter: ReaderChapter?, onOpenSettings: () -> Unit = {},
     onOpenChapter: (String, String) -> Unit, onJumpPage: (Int) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -1734,8 +1849,11 @@ private fun ReaderSidebar(
         Spacer(Modifier.height(20.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(12.dp))
-        Text("Continuous vertical · Fit width", color = MuTheme.Paper, fontSize = 13.sp)
-        Text("(more reading modes & filters coming)", color = MuTheme.Muted, fontSize = 11.sp)
+        OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth(), shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion)) {
+            Icon(Icons.Filled.Settings, null, tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Reader settings", color = MuTheme.Vermilion)
+        }
     }
 }
 
@@ -1749,7 +1867,17 @@ private fun ReaderPage(sourceId: Long, page: Page) {
     }
     val b = bmp
     when {
-        b != null -> Image(b, null, Modifier.fillMaxWidth().aspectRatio(b.width.toFloat() / b.height.toFloat()), contentScale = ContentScale.FillWidth)
+        b != null -> {
+            val ar = b.width.toFloat() / b.height.toFloat()
+            if (ReaderPrefs.scaleType == "ORIGINAL") {
+                // Natural size, centred; never wider than the column (then it's effectively fit-width).
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Image(b, null, Modifier.widthIn(max = with(LocalDensity.current) { b.width.toDp() }).fillMaxWidth().aspectRatio(ar), contentScale = ContentScale.Fit)
+                }
+            } else {
+                Image(b, null, Modifier.fillMaxWidth().aspectRatio(ar), contentScale = ContentScale.FillWidth)
+            }
+        }
         failed -> Box(Modifier.fillMaxWidth().height(120.dp), Alignment.Center) { Text("page failed", color = MuTheme.Muted) }
         else -> Box(Modifier.fillMaxWidth().height(420.dp), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
     }

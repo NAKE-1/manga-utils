@@ -50,4 +50,13 @@ data class Settings(
     val lastUsedSourceId: Long = 0,
     /** Pinned sources, shown at the top of the source list. */
     val pinnedSources: List<Long> = emptyList(),
+    // ---- Reader ----
+    /** Page scale in the reader: FIT_WIDTH | ORIGINAL. */
+    val readerScaleType: String = "FIT_WIDTH",
+    /** Gap between pages (px). */
+    val readerPageGap: Int = 0,
+    /** Reader background: THEME | BLACK | GRAY | WHITE. */
+    val readerBackground: String = "THEME",
+    /** Skip duplicate chapters (scanlator de-dup) when navigating in the reader. */
+    val readerSkipDuplicates: Boolean = true,
 )
