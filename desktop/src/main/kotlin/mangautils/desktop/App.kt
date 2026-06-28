@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -74,6 +75,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -96,6 +98,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -128,6 +131,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -803,6 +808,8 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
     var hasNext by remember(s) { mutableStateOf(false) }
     var loading by remember(s) { mutableStateOf(false) }
     var error by remember(s) { mutableStateOf<String?>(null) }
+    var filters by remember(s) { mutableStateOf<FilterList?>(null) }
+    var showFilter by remember(s) { mutableStateOf(false) }
 
     fun loadNext(reset: Boolean) {
         if (loading) return
@@ -816,6 +823,7 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
                         when (mode) {
                             "latest" -> SourceBrowser.latest(s.sourceId, next)
                             "search" -> SourceBrowser.search(s.sourceId, query, next)
+                            "filter" -> SourceBrowser.searchWithFilters(s.sourceId, query, filters ?: FilterList(), next)
                             else -> SourceBrowser.popular(s.sourceId, next)
                         }
                     }
@@ -844,11 +852,17 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Box(Modifier.fillMaxSize()) {
+      Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModeChip("Popular", Icons.Filled.Favorite, mode == "popular") { mode = "popular" }
             ModeChip("Latest", Icons.Filled.Bolt, mode == "latest") { mode = "latest" }
-            ModeChip("Filter", Icons.Filled.FilterList, false) { /* placeholder — source filters coming next */ }
+            ModeChip("Filter", Icons.Filled.FilterList, mode == "filter") {
+                scope.launch {
+                    if (filters == null) filters = withContext(Dispatchers.IO) { runCatching { SourceBrowser.filterList(s.sourceId) }.getOrNull() }
+                    showFilter = true
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
         Box(Modifier.weight(1f)) {
@@ -878,6 +892,102 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
                 Text(if (loading) "Loading..." else "Load more")
             }
         }
+      }
+      if (showFilter) {
+          FilterSheet(
+              filters = filters,
+              onApply = { showFilter = false; mode = "filter"; loadNext(true) },
+              onReset = { filters = runCatching { SourceBrowser.filterList(s.sourceId) }.getOrNull() },
+              onDismiss = { showFilter = false },
+          )
+      }
+    }
+}
+
+// ---- Source filter sheet (the source's own getFilterList) -----------------------------------
+
+@Composable
+private fun FilterSheet(filters: FilterList?, onApply: () -> Unit, onReset: () -> Unit, onDismiss: () -> Unit) {
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(onClick = onDismiss))
+        Column(Modifier.align(Alignment.CenterEnd).width(420.dp).fillMaxHeight().background(MuTheme.Panel)) {
+            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onReset) { Text("RESET", color = MuTheme.Vermilion) }
+                Spacer(Modifier.weight(1f))
+                Button(onClick = onApply, shape = BtnShape, colors = ButtonDefaults.buttonColors(containerColor = MuTheme.Vermilion)) { Text("FILTER") }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            val list = filters?.list ?: emptyList()
+            if (list.isEmpty()) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) { Text("This source has no filters.", color = MuTheme.Muted) }
+            } else {
+                var rev by remember { mutableStateOf(0) }
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    key(rev) { list.forEach { f -> FilterControl(f) { rev++ } } }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterControl(f: Filter<*>, bump: () -> Unit) {
+    when (f) {
+        is Filter.Header -> Text(f.name, color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 6.dp))
+        is Filter.Separator -> HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
+        is Filter.CheckBox ->
+            Row(Modifier.fillMaxWidth().clickable { f.state = !f.state; bump() }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = f.state, onCheckedChange = { f.state = it; bump() })
+                Text(f.name, color = MuTheme.Paper)
+            }
+        is Filter.TriState ->
+            Row(Modifier.fillMaxWidth().clickable { f.state = (f.state + 1) % 3; bump() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val (sym, col) = when (f.state) { 1 -> "✓" to Color(0xFF4CAF50); 2 -> "✕" to Red18; else -> "○" to MuTheme.Muted }
+                Text(sym, color = col, fontWeight = FontWeight.Bold, modifier = Modifier.width(22.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(f.name, color = MuTheme.Paper)
+            }
+        is Filter.Text ->
+            Column(Modifier.padding(vertical = 4.dp)) {
+                Text(f.name, color = MuTheme.Muted, fontSize = 12.sp)
+                OutlinedTextField(f.state, { f.state = it; bump() }, Modifier.fillMaxWidth(), singleLine = true)
+            }
+        is Filter.Select<*> -> {
+            var open by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                Text(f.name, color = MuTheme.Paper, modifier = Modifier.weight(1f))
+                Box {
+                    OutlinedButton(onClick = { open = true }, shape = BtnShape) { Text(f.values.getOrNull(f.state)?.toString() ?: "—", color = MuTheme.Paper) }
+                    DropdownMenu(open, { open = false }) {
+                        f.values.forEachIndexed { i, v -> DropdownMenuItem(text = { Text(v.toString()) }, onClick = { f.state = i; open = false; bump() }) }
+                    }
+                }
+            }
+        }
+        is Filter.Sort -> {
+            Text(f.name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp))
+            f.values.forEachIndexed { i, v ->
+                val sel = f.state
+                val isSel = sel?.index == i
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        f.state = if (isSel) Filter.Sort.Selection(i, !(sel?.ascending ?: false)) else Filter.Sort.Selection(i, false)
+                        bump()
+                    }.padding(vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(if (isSel) (if (sel?.ascending == true) "↑" else "↓") else " ", color = MuTheme.Vermilion, modifier = Modifier.width(18.dp))
+                    Text(v, color = if (isSel) MuTheme.Vermilion else MuTheme.Paper)
+                }
+            }
+        }
+        is Filter.Group<*> -> {
+            Text(f.name, color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+            Column(Modifier.padding(start = 8.dp)) {
+                f.state.filterIsInstance<Filter<*>>().forEach { sub -> FilterControl(sub, bump) }
+            }
+        }
+        else -> {}
     }
 }
 

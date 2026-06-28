@@ -6,6 +6,7 @@
 package mangautils.core.source
 
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -37,6 +38,21 @@ object SourceBrowser {
         val source = catalogue(sourceId)
         log.debug("search source={} query='{}' page={}", sourceId, query, page)
         return runBlocking { source.getSearchManga(page, query, source.getFilterList()) }
+    }
+
+    /** The source's own filter definitions (genres/tags/status/sort/...). */
+    fun filterList(sourceId: Long): FilterList = catalogue(sourceId).getFilterList()
+
+    /** Search using a (possibly user-modified) filter list. */
+    fun searchWithFilters(
+        sourceId: Long,
+        query: String,
+        filters: FilterList,
+        page: Int = 1,
+    ): MangasPage {
+        val source = catalogue(sourceId)
+        log.debug("filtered search source={} query='{}' page={} filters={}", sourceId, query, page, filters.size)
+        return runBlocking { source.getSearchManga(page, query, filters) }
     }
 
     fun popular(
