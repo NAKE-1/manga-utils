@@ -7,6 +7,11 @@
 
 package mangautils.desktop
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.Image
@@ -34,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,6 +60,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Download
@@ -65,6 +72,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
@@ -103,6 +111,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -144,7 +153,9 @@ import mangautils.core.config.AppConfig
 import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.SourceRef
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mangautils.core.config.SettingsStore
@@ -199,6 +210,81 @@ private sealed interface Screen {
 
 private data class MangaRef(val title: String, val url: String, val thumb: String?)
 
+// ---- Toast notifications --------------------------------------------------------------------
+
+private enum class ToastKind { SUCCESS, ERROR, INFO }
+
+private class ToastMsg(val id: Long, val text: String, val kind: ToastKind) {
+    val visible = mutableStateOf(true)
+}
+
+/** Transient bottom-left notifications; max 5 shown, the rest queued, each auto-fades after ~5s. */
+private object Toasts {
+    private val scope = CoroutineScope(Dispatchers.Main)
+    val active = mutableStateListOf<ToastMsg>()
+    private val pending = ArrayDeque<ToastMsg>()
+    private var counter = 0L
+
+    fun success(text: String) = show(text, ToastKind.SUCCESS)
+
+    fun error(text: String) = show(text, ToastKind.ERROR)
+
+    fun info(text: String) = show(text, ToastKind.INFO)
+
+    fun show(text: String, kind: ToastKind = ToastKind.INFO) {
+        scope.launch {
+            val t = ToastMsg(counter++, text, kind)
+            if (active.size < 5) promote(t) else pending.addLast(t)
+        }
+    }
+
+    private fun promote(t: ToastMsg) {
+        active.add(t)
+        scope.launch { delay(4700); hide(t) }
+    }
+
+    fun hide(t: ToastMsg) {
+        scope.launch {
+            t.visible.value = false
+            delay(280)
+            active.remove(t)
+            if (pending.isNotEmpty() && active.size < 5) promote(pending.removeFirst())
+        }
+    }
+}
+
+@Composable
+private fun ToastHost() {
+    Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.BottomStart) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Toasts.active.forEach { t ->
+                key(t.id) {
+                    AnimatedVisibility(
+                        visible = t.visible.value,
+                        enter = fadeIn() + slideInHorizontally { -it / 2 },
+                        exit = fadeOut() + slideOutHorizontally { -it / 2 },
+                    ) { ToastRow(t) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToastRow(t: ToastMsg) {
+    val icon = when (t.kind) { ToastKind.SUCCESS -> Icons.Filled.CheckCircle; ToastKind.ERROR -> Icons.Filled.ErrorOutline; ToastKind.INFO -> Icons.Filled.Info }
+    val color = when (t.kind) { ToastKind.SUCCESS -> Color(0xFF4CAF50); ToastKind.ERROR -> Red18; ToastKind.INFO -> MuTheme.Vermilion }
+    Row(
+        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF15171C)).widthIn(min = 230.dp, max = 380.dp).padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(t.text, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        IconButton(onClick = { Toasts.hide(t) }, modifier = Modifier.size(30.dp)) { Icon(Icons.Filled.Close, "Dismiss", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
+    }
+}
+
 /** Shared source-browse search state so the top bar (App) and the grid (SourceBrowseScreen) agree. */
 private class BrowseSearchState {
     var active by mutableStateOf(false)
@@ -228,6 +314,7 @@ fun App() {
     fun back() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
 
     Surface(Modifier.fillMaxSize(), color = MuTheme.Ink) {
+      Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             TopBar(titleFor(current), backStack.size > 1, ::back, onMenu = { sidebarOpen = !sidebarOpen }, search = if (current is Screen.SourceBrowse) srcSearch else null) {
                 // Per-screen actions, remastered into the top bar.
@@ -271,6 +358,8 @@ fun App() {
                 }
             }
         }
+        ToastHost()
+      }
     }
     if (showRepos) RepoDialog { showRepos = false; dataVersion++ }
 }
@@ -518,7 +607,7 @@ private fun LibraryCard(e: LibraryEntry, onOpen: () -> Unit, onChanged: () -> Un
                     text = { Text("Remove from library", color = MuTheme.Vermilion) },
                     onClick = {
                         menuOpen = false
-                        scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(e.sourceId, e.mangaUrl) }; onChanged() }
+                        scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(e.sourceId, e.mangaUrl) }; onChanged(); Toasts.success("Removed manga from the library") }
                     },
                 )
             }
@@ -546,7 +635,7 @@ private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, allowAdd: 
                 Box(
                     Modifier.align(Alignment.TopStart).clip(RoundedCornerShape(bottomEnd = 8.dp))
                         .background(if (added) MuTheme.Muted else MuTheme.Vermilion)
-                        .clickable { if (!added) { scope.launch { withContext(Dispatchers.IO) { runCatching { LibraryService.add(sourceId, m.url) } }; added = true } } }
+                        .clickable { if (!added) { scope.launch { withContext(Dispatchers.IO) { runCatching { LibraryService.add(sourceId, m.url) } }; added = true; Toasts.success("Added manga to library!") } } }
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                 ) { Text(if (added) "IN LIBRARY" else "ADD TO LIBRARY", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
             }
@@ -1287,13 +1376,19 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                     LibraryService.addKnown(s.sourceId, s.url, s.title, dd.manga, dd.chapters); true
                 }
             }
+            Toasts.success(if (inLibrary) "Added manga to library!" else "Removed manga from the library")
         }
     }
     fun setChapterRead(url: String, read: Boolean) {
         scope.launch { withContext(Dispatchers.IO) { ReadStore.setRead(s.sourceId, s.url, url, read) }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
     }
     fun downloadChapter(url: String) {
-        scope.launch { withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.Urls(setOf(url))) } }; dlVersion++ }
+        Toasts.info("Downloading chapter…")
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.Urls(setOf(url))).state.toString() == "DONE" }.getOrDefault(false) }
+            dlVersion++
+            if (ok) Toasts.success("Download complete") else Toasts.error("Download failed")
+        }
     }
     fun openInBrowser() { browseUrl?.let { u -> runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(u)) } } }
     fun openFolder() {
@@ -1422,7 +1517,12 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 scope.launch { withContext(Dispatchers.IO) { d.chapters.forEach { ReadStore.setRead(s.sourceId, s.url, it.url, true) } }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
                             }) { Icon(Icons.Filled.DoneAll, "Mark all read", tint = MuTheme.Muted) }
                             IconButton(onClick = {
-                                scope.launch { withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.All) } }; dlVersion++ }
+                                Toasts.info("Downloading all chapters…")
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.All).state.toString() == "DONE" }.getOrDefault(false) }
+                                    dlVersion++
+                                    if (ok) Toasts.success("Downloads finished") else Toasts.error("Some downloads failed")
+                                }
                             }) { Icon(Icons.Filled.Download, "Download all", tint = MuTheme.Muted) }
                         }
                       Box(Modifier.weight(1f)) {
