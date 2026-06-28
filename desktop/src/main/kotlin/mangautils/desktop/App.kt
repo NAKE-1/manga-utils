@@ -208,11 +208,11 @@ fun App() {
             TopBar(titleFor(current), backStack.size > 1, ::back, onMenu = { sidebarOpen = !sidebarOpen }, search = if (current is Screen.SourceBrowse) srcSearch else null) {
                 // Per-screen actions, remastered into the top bar.
                 when (current) {
-                    is Screen.Browse -> IconButton(onClick = { showRepos = true }) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
+                    is Screen.Browse -> IconButton(onClick = { showRepos = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
                     is Screen.SourceBrowse -> {
-                        IconButton(onClick = {}) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
-                        IconButton(onClick = {}) { Icon(Icons.Filled.OpenInNew, "Open", tint = MuTheme.Paper) }
-                        IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
+                        IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
+                        IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.OpenInNew, "Open", tint = MuTheme.Paper) }
+                        IconButton(onClick = {}, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
                     }
                     else -> {}
                 }
@@ -258,11 +258,11 @@ private fun titleFor(s: Screen): String =
 @Composable
 private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu: () -> Unit, search: BrowseSearchState? = null, actions: @Composable RowScope.() -> Unit = {}) {
     Row(
-        Modifier.fillMaxWidth().background(MuTheme.Ink).padding(horizontal = 6.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().height(48.dp).background(MuTheme.Ink).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onMenu) { Icon(Icons.Filled.Menu, "Menu", tint = MuTheme.Paper) }
-        if (canGoBack) IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
+        IconButton(onClick = onMenu, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Menu, "Menu", tint = MuTheme.Paper) }
+        if (canGoBack) IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
         Spacer(Modifier.width(6.dp))
         if (search != null && search.active) {
             val fr = remember { FocusRequester() }
@@ -285,12 +285,12 @@ private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu
                 )
                 HorizontalDivider(color = MuTheme.Vermilion, thickness = 2.dp)
             }
-            IconButton(onClick = { search.query = ""; search.active = false; search.submit() }) { Icon(Icons.Filled.Cancel, "Close search", tint = MuTheme.Paper) }
+            IconButton(onClick = { search.query = ""; search.active = false; search.submit() }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Cancel, "Close search", tint = MuTheme.Paper) }
             actions()
         } else {
             Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.weight(1f))
-            if (search != null) IconButton(onClick = { search.active = true }) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Paper) }
+            if (search != null) IconButton(onClick = { search.active = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Paper) }
             actions()
         }
     }
