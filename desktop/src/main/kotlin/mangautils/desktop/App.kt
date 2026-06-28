@@ -93,6 +93,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -437,6 +438,18 @@ private fun dominantColor(bmp: ImageBitmap): Color {
 private fun vibrant(c: Color): Color {
     val hsb = java.awt.Color.RGBtoHSB((c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt(), null)
     return Color(java.awt.Color.HSBtoRGB(hsb[0], (hsb[1] * 1.35f).coerceIn(0.45f, 1f), 0.78f))
+}
+
+/** A whole-app palette derived from a cover color (Suwayomi's dynamic color scheme). */
+private fun dynamicPalette(c: Color): MuPalette {
+    val acc = vibrant(c)
+    return MuPalette(
+        name = "dynamic", accentDark = acc, accentLight = acc,
+        inkDark = lerp(Color(0xFF0C0C0E), c, 0.13f),
+        panelDark = lerp(Color(0xFF1A1A1E), c, 0.17f),
+        panelHighDark = lerp(lerp(Color(0xFF1A1A1E), c, 0.17f), Color.White, 0.06f),
+        inkLight = Color(0xFFFAFAFA), panelLight = Color(0xFFFFFFFF), panelHighLight = Color(0xFFE7E3DA),
+    )
 }
 
 // ---- Library --------------------------------------------------------------------------------
@@ -924,6 +937,11 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             if (bmp != null && dynColors) coverTint = withContext(Dispatchers.Default) { dominantColor(bmp) }
         }
     }
+    // Recolor the WHOLE app from the cover while on this page (Suwayomi behaviour); revert on leave.
+    LaunchedEffect(coverTint, dynColors) {
+        MuTheme.dynamicOverride = if (dynColors && coverTint != null) dynamicPalette(coverTint!!) else null
+    }
+    DisposableEffect(s) { onDispose { MuTheme.dynamicOverride = null } }
 
     fun toggleLibrary() {
         val dd = details ?: return
@@ -965,12 +983,9 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             }
         else -> {
             val continueCh = d.chapters.reversed().firstOrNull { it.url !in readUrls } ?: d.chapters.firstOrNull()
-            val tint = coverTint
-            // Dynamic color: the page background itself takes a hint of the cover color (Suwayomi's
-            // mangaDynamicColorSchemes), so the thumbnail backdrop fades into a tinted surface.
-            val pageBg = if (dynColors && tint != null) lerp(MuTheme.Ink, tint, 0.12f) else MuTheme.Ink
-            // Dynamic accent: the cover color takes precedence on the manga page (Suwayomi behaviour).
-            val acc = if (dynColors && tint != null) vibrant(tint) else MuTheme.Vermilion
+            // The whole MuTheme is already recolored from the cover (dynamicOverride), so just use it.
+            val pageBg = MuTheme.Ink
+            val acc = MuTheme.Vermilion
             Box(Modifier.fillMaxSize().background(pageBg)) {
               Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
@@ -1081,7 +1096,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 var chMenu by remember(ch.url) { mutableStateOf(false) }
                                 Card(
                                     onClick = { onReadChapter(ch.url, ch.name) },
-                                    colors = CardDefaults.cardColors(containerColor = if (read) MuTheme.Ink else if (dynColors && tint != null) lerp(MuTheme.Panel, tint, 0.25f) else MuTheme.Panel),
+                                    colors = CardDefaults.cardColors(containerColor = if (read) MuTheme.Ink else MuTheme.Panel),
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {

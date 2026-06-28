@@ -80,16 +80,21 @@ object MuTheme {
     var dark by mutableStateOf(true)
         private set
 
+    /** When set (e.g. on a manga page with dynamic colors), the whole app recolors to this. */
+    var dynamicOverride: MuPalette? by mutableStateOf(null)
+
+    private val active get() = dynamicOverride ?: palette
+
     fun apply(name: String, isDark: Boolean) {
         palette = presets.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: presets.first()
         dark = isDark
     }
 
-    val Vermilion get() = if (dark) palette.accentDark else palette.accentLight
+    val Vermilion get() = if (dark) active.accentDark else active.accentLight
     val VermilionDim get() = lerp(Vermilion, Color.Black, 0.5f)
-    val Ink get() = if (dark) palette.inkDark else palette.inkLight
-    val Panel get() = if (dark) palette.panelDark else palette.panelLight
-    val PanelHigh get() = if (dark) palette.panelHighDark else palette.panelHighLight
+    val Ink get() = if (dark) active.inkDark else active.inkLight
+    val Panel get() = if (dark) active.panelDark else active.panelLight
+    val PanelHigh get() = if (dark) active.panelHighDark else active.panelHighLight
     val Paper get() = if (dark) Color(0xFFECEAE3) else Color(0xFF1A1A1F)
     val Muted get() = if (dark) Color(0xFF8A8F9C) else Color(0xFF6A6F7C)
 
