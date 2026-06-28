@@ -36,12 +36,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -95,12 +97,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -199,8 +210,8 @@ fun App() {
                 when (current) {
                     is Screen.Browse -> IconButton(onClick = { showRepos = true }) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
                     is Screen.SourceBrowse -> {
-                        IconButton(onClick = { srcSearch.active = true }) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Paper) }
                         IconButton(onClick = {}) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
+                        IconButton(onClick = {}) { Icon(Icons.Filled.OpenInNew, "Open", tint = MuTheme.Paper) }
                         IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
                     }
                     else -> {}
@@ -254,17 +265,32 @@ private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu
         if (canGoBack) IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
         Spacer(Modifier.width(6.dp))
         if (search != null && search.active) {
-            OutlinedTextField(
-                search.query, { search.query = it },
-                Modifier.weight(1f).padding(end = 8.dp),
-                singleLine = true,
-                placeholder = { Text("Search this source", color = MuTheme.Muted) },
-                trailingIcon = { IconButton(onClick = { search.submit() }) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Vermilion) } },
-            )
-            IconButton(onClick = { search.query = ""; search.active = false; search.submit() }) { Icon(Icons.Filled.Close, "Close search", tint = MuTheme.Paper) }
+            val fr = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                BasicTextField(
+                    value = search.query,
+                    onValueChange = { search.query = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = MuTheme.Paper, fontSize = 16.sp),
+                    cursorBrush = SolidColor(MuTheme.Vermilion),
+                    modifier = Modifier.fillMaxWidth().focusRequester(fr)
+                        .onPreviewKeyEvent { e -> if (e.key == Key.Enter && e.type == KeyEventType.KeyDown) { search.submit(); true } else false },
+                    decorationBox = { inner ->
+                        Box(Modifier.padding(vertical = 5.dp)) {
+                            if (search.query.isEmpty()) Text("Search this source", color = MuTheme.Muted, fontSize = 16.sp)
+                            inner()
+                        }
+                    },
+                )
+                HorizontalDivider(color = MuTheme.Vermilion, thickness = 2.dp)
+            }
+            IconButton(onClick = { search.query = ""; search.active = false; search.submit() }) { Icon(Icons.Filled.Cancel, "Close search", tint = MuTheme.Paper) }
+            actions()
         } else {
             Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.weight(1f))
+            if (search != null) IconButton(onClick = { search.active = true }) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Paper) }
             actions()
         }
     }
