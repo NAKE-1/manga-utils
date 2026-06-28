@@ -944,13 +944,19 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
             }
             when {
                 loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
-                items.isEmpty() && error != null ->
+                items.isEmpty() && error != null -> {
+                    val cf = error.orEmpty().contains("cloudflare", ignoreCase = true)
                     Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
                         Text(
-                            "Couldn't load this source.\n\n$error\n\nSome sources (e.g. Aqua Manga, Asura Scans) are behind Cloudflare, which isn't supported yet. Try another source.",
+                            if (cf) {
+                                "🛡  This source is protected by Cloudflare.\n\nA Cloudflare bypass isn't supported yet — try another source, or open a series and use the open-in-browser button to read it on the site."
+                            } else {
+                                "Couldn't load this source.\n\n$error"
+                            },
                             color = MuTheme.Muted, textAlign = TextAlign.Center,
                         )
                     }
+                }
                 items.isEmpty() && !loading -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No results.", color = MuTheme.Muted) }
             }
         }
