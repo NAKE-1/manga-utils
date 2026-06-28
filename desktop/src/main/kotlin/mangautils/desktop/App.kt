@@ -1133,12 +1133,29 @@ private fun InfoRow(label: String, value: String) {
 
 // ---- Reader (streaming long-strip, scale by width) ------------------------------------------
 
+private data class ReaderChapter(val url: String, val name: String, val number: Float, val scanlator: String?)
+
+/**
+ * Suwayomi's removeDuplicates: keep one chapter per number, preferring the one the reader is on,
+ * then the last one from the current scanlator, then the last available. So forward/back navigation
+ * stays on your provider and only switches scanlators when yours is missing — no duplicate reads.
+ */
+private fun dedupChapters(current: ReaderChapter?, all: List<ReaderChapter>): List<ReaderChapter> {
+    if (current == null) return all
+    val keep =
+        all.groupBy { it.number }.flatMap { (num, g) ->
+            if (num < 0f) g // unnumbered chapters aren't collapsed
+            else listOf(g.firstOrNull { it.url == current.url } ?: g.lastOrNull { it.scanlator == current.scanlator } ?: g.last())
+        }.map { it.url }.toSet()
+    return all.filter { it.url in keep }
+}
+
 @Composable
 private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var pages by remember(s.chapterUrl) { mutableStateOf<List<Page>>(emptyList()) }
-    var chapters by remember(s.mangaUrl) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var chapters by remember(s.mangaUrl) { mutableStateOf<List<ReaderChapter>>(emptyList()) }
     var loading by remember(s.chapterUrl) { mutableStateOf(true) }
 
     LaunchedEffect(s.chapterUrl) {
@@ -1146,7 +1163,11 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (S
         withContext(Dispatchers.IO) {
             ReadStore.setRead(s.sourceId, s.mangaUrl, s.chapterUrl, true)
             if (chapters.isEmpty()) {
-                chapters = runCatching { SourceBrowser.details(s.sourceId, s.mangaUrl).chapters.map { it.url to it.name } }.getOrDefault(emptyList())
+                chapters = runCatching {
+                    SourceBrowser.details(s.sourceId, s.mangaUrl).chapters.map {
+                        ReaderChapter(it.url, it.name, runCatching { it.chapter_number }.getOrDefault(-1f), runCatching { it.scanlator }.getOrNull())
+                    }
+                }.getOrDefault(emptyList())
             }
             pages = SourceImage.pageList(s.sourceId, s.chapterUrl)
         }
@@ -1154,9 +1175,12 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (S
         listState.scrollToItem(0)
     }
 
-    val idx = chapters.indexOfFirst { it.first == s.chapterUrl }
-    val prevChapter = chapters.getOrNull(idx + 1)
-    val nextChapter = chapters.getOrNull(idx - 1)
+    // Scanlator-aware prev/next: navigate the de-duplicated list, preferring the current scanlator.
+    val current = chapters.firstOrNull { it.url == s.chapterUrl }
+    val nav = dedupChapters(current, chapters)
+    val idx = nav.indexOfFirst { it.url == s.chapterUrl }
+    val prevChapter = nav.getOrNull(idx + 1)
+    val nextChapter = nav.getOrNull(idx - 1)
     val currentPage by remember { derivedStateOf { listState.firstVisibleItemIndex } }
     val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
 
@@ -1186,9 +1210,9 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenChapter: (S
 
 @Composable
 private fun ReaderSidebar(
-    title: String, chapterName: String, chapters: List<Pair<String, String>>, currentChapterUrl: String,
+    title: String, chapterName: String, chapters: List<ReaderChapter>, currentChapterUrl: String,
     sourceId: Long, mangaUrl: String, pageCount: Int, currentPage: Int,
-    prevChapter: Pair<String, String>?, nextChapter: Pair<String, String>?,
+    prevChapter: ReaderChapter?, nextChapter: ReaderChapter?,
     onOpenChapter: (String, String) -> Unit, onJumpPage: (Int) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -1205,26 +1229,30 @@ private fun ReaderSidebar(
         Spacer(Modifier.height(14.dp))
         Text("CHAPTER", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { prevChapter?.let { onOpenChapter(it.first, it.second) } }, enabled = prevChapter != null) { Text("<") }
+            OutlinedButton(onClick = { prevChapter?.let { onOpenChapter(it.url, it.name) } }, enabled = prevChapter != null) { Text("<") }
             Box(Modifier.weight(1f)) {
                 OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) { Text(chapterName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                    chapters.forEach { (url, name) ->
-                        val read = ReadStore.isRead(sourceId, mangaUrl, url) || url == currentChapterUrl
+                    // Full list (every scanlator) so you can still pick any version manually.
+                    chapters.forEach { ch ->
+                        val read = ReadStore.isRead(sourceId, mangaUrl, ch.url) || ch.url == currentChapterUrl
                         DropdownMenuItem(
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box(Modifier.size(7.dp).clip(RoundedCornerShape(4.dp)).background(if (read) MuTheme.VermilionDim else MuTheme.Vermilion))
                                     Spacer(Modifier.width(8.dp))
-                                    Text(name, color = if (read) MuTheme.Muted else MuTheme.Paper)
+                                    Column {
+                                        Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper)
+                                        ch.scanlator?.takeIf { it.isNotBlank() }?.let { Text(it, color = MuTheme.Muted, fontSize = 10.sp) }
+                                    }
                                 }
                             },
-                            onClick = { menuOpen = false; onOpenChapter(url, name) },
+                            onClick = { menuOpen = false; onOpenChapter(ch.url, ch.name) },
                         )
                     }
                 }
             }
-            OutlinedButton(onClick = { nextChapter?.let { onOpenChapter(it.first, it.second) } }, enabled = nextChapter != null) { Text(">") }
+            OutlinedButton(onClick = { nextChapter?.let { onOpenChapter(it.url, it.name) } }, enabled = nextChapter != null) { Text(">") }
         }
         Spacer(Modifier.height(20.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
