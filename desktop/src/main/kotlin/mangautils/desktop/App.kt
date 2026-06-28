@@ -68,7 +68,6 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -919,13 +918,29 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             inLibrary = LibraryService.isFollowed(s.sourceId, s.url)
             sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${cleanName(it.name)} (${it.lang.uppercase()})" } ?: ""
             val src = runCatching { SourceManager.loadSource(s.sourceId) }.getOrNull() as? HttpSource
-            browseUrl = src?.let { hs ->
-                // Suwayomi logic: let the source build the web URL (sources override getMangaUrl).
-                val seed = SManga.create().apply { url = s.url }
-                runCatching { hs.getMangaUrl(seed) }.getOrNull()?.takeIf { it.isNotBlank() }
-                    ?: if (s.url.startsWith("http")) s.url else hs.baseUrl.trimEnd('/') + "/" + s.url.trimStart('/')
-            } ?: s.url.takeIf { it.startsWith("http") }
-            runCatching { SourceBrowser.details(s.sourceId, s.url) }.onSuccess { details = it }.onFailure { error = it.message }
+            runCatching { SourceBrowser.details(s.sourceId, s.url) }
+                .onSuccess { dd ->
+                    details = dd
+                    // Suwayomi's "realUrl": call getMangaUrl() with a fully-populated SManga (some
+                    // sources need more than the url to build it), wrapped in runCatching.
+                    browseUrl = src?.let { hs ->
+                        runCatching {
+                            hs.getMangaUrl(
+                                SManga.create().apply {
+                                    url = s.url
+                                    title = runCatching { dd.manga.title }.getOrNull() ?: s.title
+                                    thumbnail_url = dd.manga.thumbnail_url
+                                    artist = dd.manga.artist
+                                    author = dd.manga.author
+                                    description = dd.manga.description
+                                    genre = dd.manga.genre
+                                    status = dd.manga.status
+                                },
+                            )
+                        }.getOrNull()?.takeIf { it.isNotBlank() }
+                    } ?: if (s.url.startsWith("http")) s.url else src?.let { it.baseUrl.trimEnd('/') + "/" + s.url.trimStart('/') }
+                }
+                .onFailure { error = it.message }
         }
     }
     val d = details
@@ -1025,11 +1040,6 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                             Icon(Icons.Filled.Favorite, null, tint = acc, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(if (inLibrary) "IN LIBRARY" else "ADD TO LIBRARY", color = acc, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(onClick = {}, shape = BtnShape, border = BorderStroke(1.dp, acc)) {
-                            Icon(Icons.Filled.Sync, null, tint = acc, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("TRACKING", color = acc, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         if (browseUrl != null) {
                             OutlinedButton(onClick = { openInBrowser() }, shape = BtnShape, border = BorderStroke(1.dp, acc), contentPadding = PaddingValues(horizontal = 12.dp)) {
