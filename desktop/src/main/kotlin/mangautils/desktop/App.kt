@@ -114,7 +114,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
@@ -395,6 +397,27 @@ private fun Cover(sourceId: Long, url: String?, seed: String, modifier: Modifier
 private fun coverColor(seed: String): Color {
     val hues = listOf(0xFF3A2F4B, 0xFF2F3D4B, 0xFF4B3A2F, 0xFF2F4B3A, 0xFF4B2F3D)
     return Color(hues[(seed.hashCode().ushr(1)) % hues.size])
+}
+
+/** A representative color of a cover, weighting saturated pixels (for the dynamic page tint). */
+private fun dominantColor(bmp: ImageBitmap): Color {
+    val pm = runCatching { bmp.toPixelMap() }.getOrNull() ?: return Color.Gray
+    var r = 0.0; var g = 0.0; var b = 0.0; var wSum = 0.0
+    val stepX = (pm.width / 28).coerceAtLeast(1)
+    val stepY = (pm.height / 28).coerceAtLeast(1)
+    var x = 0
+    while (x < pm.width) {
+        var y = 0
+        while (y < pm.height) {
+            val c = pm[x, y]
+            val w = 0.08 + (maxOf(c.red, c.green, c.blue) - minOf(c.red, c.green, c.blue)) // boost saturated
+            r += c.red * w; g += c.green * w; b += c.blue * w; wSum += w
+            y += stepY
+        }
+        x += stepX
+    }
+    if (wSum <= 0.0) return Color.Gray
+    return Color((r / wSum).toFloat().coerceIn(0f, 1f), (g / wSum).toFloat().coerceIn(0f, 1f), (b / wSum).toFloat().coerceIn(0f, 1f))
 }
 
 // ---- Library --------------------------------------------------------------------------------
@@ -707,6 +730,15 @@ private fun SettingsScreen() {
             }
             Switch(checked = bg, onCheckedChange = { bg = it; runCatching { SettingsStore.save(SettingsStore.get().copy(mangaThumbnailBackground = it)) } })
         }
+        Spacer(Modifier.height(8.dp))
+        var dyn by remember { mutableStateOf(runCatching { SettingsStore.get().dynamicThemeColors }.getOrDefault(true)) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Dynamic theme colors on manga page", color = MuTheme.Paper)
+                Text("Tint the detail page with the cover's dominant color", color = MuTheme.Muted, fontSize = 12.sp)
+            }
+            Switch(checked = dyn, onCheckedChange = { dyn = it; runCatching { SettingsStore.save(SettingsStore.get().copy(dynamicThemeColors = it)) } })
+        }
     }
 }
 
@@ -842,9 +874,12 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     var sourceLabel by remember(s) { mutableStateOf("") }
     var browseUrl by remember(s) { mutableStateOf<String?>(null) }
     var bgBmp by remember(s) { mutableStateOf<ImageBitmap?>(null) }
+    var coverTint by remember(s) { mutableStateOf<Color?>(null) }
     var readUrls by remember(s) { mutableStateOf(ReadStore.readUrls(s.sourceId, s.url)) }
     var dlVersion by remember(s) { mutableStateOf(0) }
-    val bgEnabled = remember { runCatching { SettingsStore.get().mangaThumbnailBackground }.getOrDefault(true) }
+    val settings = remember { runCatching { SettingsStore.get() }.getOrNull() }
+    val bgEnabled = settings?.mangaThumbnailBackground ?: true
+    val dynColors = settings?.dynamicThemeColors ?: true
     val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
 
     LaunchedEffect(s) {
@@ -862,8 +897,13 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
         }
     }
     val d = details
-    LaunchedEffect(d?.manga?.thumbnail_url, bgEnabled) {
-        if (bgEnabled && d != null) bgBmp = withContext(Dispatchers.IO) { d.manga.thumbnail_url?.let { ImageCache.cover(s.sourceId, it) } }
+    LaunchedEffect(d?.manga?.thumbnail_url) {
+        val url = d?.manga?.thumbnail_url
+        if ((bgEnabled || dynColors) && !url.isNullOrBlank()) {
+            val bmp = withContext(Dispatchers.IO) { ImageCache.cover(s.sourceId, url) }
+            bgBmp = bmp
+            if (bmp != null && dynColors) coverTint = withContext(Dispatchers.Default) { dominantColor(bmp) }
+        }
     }
 
     fun toggleLibrary() {
@@ -906,11 +946,20 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             }
         else -> {
             val continueCh = d.chapters.reversed().firstOrNull { it.url !in readUrls } ?: d.chapters.firstOrNull()
-            Box(Modifier.fillMaxSize()) {
-              // Blurred cover as the page background (Suwayomi-style).
+            val tint = coverTint
+            // Dynamic color: the page background itself takes a hint of the cover color (Suwayomi's
+            // mangaDynamicColorSchemes), so the thumbnail backdrop fades into a tinted surface.
+            val pageBg = if (dynColors && tint != null) lerp(MuTheme.Ink, tint, 0.14f) else MuTheme.Ink
+            Box(Modifier.fillMaxSize().background(pageBg)) {
+              // Suwayomi's manga-thumbnail backdrop: blurred cover dimmed to ~75% brightness, faded
+              // into the page background on all four edges (bottom fully, top/sides by half).
               if (bgEnabled) bgBmp?.let { bmp ->
-                  Image(bmp, null, Modifier.fillMaxSize().blur(55.dp), contentScale = ContentScale.Crop, alpha = 0.40f)
-                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to MuTheme.Ink.copy(alpha = 0.55f), 1f to MuTheme.Ink.copy(alpha = 0.90f))))
+                  Image(bmp, null, Modifier.fillMaxSize().blur(18.dp), contentScale = ContentScale.Crop)
+                  Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
+                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 1f to pageBg)))
+                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to pageBg, 0.5f to Color.Transparent)))
+                  Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to pageBg, 0.5f to Color.Transparent)))
+                  Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.5f to Color.Transparent, 1f to pageBg)))
               }
               Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
@@ -1005,7 +1054,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 var chMenu by remember(ch.url) { mutableStateOf(false) }
                                 Card(
                                     onClick = { onReadChapter(ch.url, ch.name) },
-                                    colors = CardDefaults.cardColors(containerColor = if (read) MuTheme.Ink else MuTheme.Panel),
+                                    colors = CardDefaults.cardColors(containerColor = if (read) MuTheme.Ink else if (dynColors && tint != null) lerp(MuTheme.Panel, tint, 0.25f) else MuTheme.Panel),
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {

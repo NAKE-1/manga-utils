@@ -42,4 +42,6 @@ data class Settings(
     val themeDark: Boolean = true,
     /** Use the manga's blurred cover as the detail-page background. */
     val mangaThumbnailBackground: Boolean = true,
+    /** Tint the detail page with the cover's dominant color. */
+    val dynamicThemeColors: Boolean = true,
 )
