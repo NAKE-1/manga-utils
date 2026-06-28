@@ -20,6 +20,7 @@ import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -360,6 +361,15 @@ private object DownloadQueue {
         }
     }
 
+    fun cancel(item: DlItem) {
+        // Queued items can be removed immediately; an active download finishes its current chapter.
+        if (item.state == DlState.QUEUED) items.remove(item)
+    }
+
+    fun stopAll() {
+        items.removeAll { it.state == DlState.QUEUED }
+    }
+
     val activeCount: Int get() = items.count { it.state == DlState.QUEUED || it.state == DlState.DOWNLOADING }
 
     fun overallProgress(): Float {
@@ -371,6 +381,61 @@ private object DownloadQueue {
     fun speed(): Double = items.filter { it.state == DlState.DOWNLOADING }.sumOf { it.bytesPerSec }
 
     fun clearFinished() = items.removeAll { it.state == DlState.DONE || it.state == DlState.ERROR }
+}
+
+/** A persistent download-status box anchored bottom-left: a pill that expands into the live queue. */
+@Composable
+private fun DownloadWidget(onViewAll: () -> Unit) {
+    val live = DownloadQueue.items.filter { it.state == DlState.DOWNLOADING || it.state == DlState.QUEUED }
+    if (live.isEmpty()) return
+    var expanded by remember { mutableStateOf(false) }
+    val active = DownloadQueue.activeCount
+    Box(Modifier.fillMaxSize().padding(start = 12.dp, bottom = 12.dp), contentAlignment = Alignment.BottomStart) {
+        if (expanded) {
+            Column(Modifier.width(330.dp).heightIn(max = 380.dp).clip(RoundedCornerShape(12.dp)).background(MuTheme.Panel).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Downloading · $active", color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { DownloadQueue.stopAll() }) { Text("Stop all", color = MuTheme.Vermilion, fontSize = 12.sp) }
+                    IconButton(onClick = { expanded = false }, modifier = Modifier.size(28.dp)) { Icon(Icons.Filled.ExpandMore, "Collapse", tint = MuTheme.Muted) }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                Column(Modifier.fillMaxWidth().heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                    live.forEach { dl ->
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(dl.title, color = MuTheme.Paper, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(dl.chapterName, color = MuTheme.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (dl.state == DlState.DOWNLOADING) {
+                                    Text(if (dl.pagesTotal > 0) "${dl.pagesDone}/${dl.pagesTotal}" else "…", color = MuTheme.Muted, fontSize = 11.sp)
+                                } else {
+                                    IconButton(onClick = { DownloadQueue.cancel(dl) }, modifier = Modifier.size(26.dp)) { Icon(Icons.Filled.Close, "Cancel", tint = MuTheme.Muted, modifier = Modifier.size(15.dp)) }
+                                }
+                            }
+                            if (dl.state == DlState.DOWNLOADING) {
+                                LinearProgressIndicator(progress = { if (dl.pagesTotal > 0) dl.pagesDone.toFloat() / dl.pagesTotal else 0f }, modifier = Modifier.fillMaxWidth().height(3.dp).padding(top = 3.dp), color = MuTheme.Vermilion, trackColor = MuTheme.Ink)
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                TextButton(onClick = onViewAll, modifier = Modifier.fillMaxWidth()) { Text("View all downloads", color = MuTheme.Vermilion, fontSize = 12.sp) }
+            }
+        } else {
+            Row(
+                Modifier.clip(RoundedCornerShape(22.dp)).background(MuTheme.Panel).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(22.dp)).clickable { expanded = true }.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(28.dp), Alignment.Center) {
+                    CircularProgressIndicator(progress = { DownloadQueue.overallProgress() }, modifier = Modifier.size(26.dp), color = MuTheme.Vermilion, strokeWidth = 3.dp, trackColor = MuTheme.Ink)
+                    Text("$active", color = MuTheme.Paper, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column { Text("Downloading", color = MuTheme.Paper, fontSize = 12.sp); Text(fmtSpeed(DownloadQueue.speed()), color = MuTheme.Muted, fontSize = 10.sp) }
+            }
+        }
+    }
 }
 
 /** Shared source-browse search state so the top bar (App) and the grid (SourceBrowseScreen) agree. */
@@ -450,6 +515,7 @@ fun App() {
                 }
             }
         }
+        DownloadWidget { backStack.clear(); backStack.add(Screen.Downloads) }
         ToastHost()
       }
     }
@@ -773,6 +839,10 @@ private object ReaderPrefs {
         private set
     var skipDuplicates by mutableStateOf(s?.readerSkipDuplicates ?: true)
         private set
+
+    // Session-only auto-scroll (not persisted).
+    var autoScroll by mutableStateOf(false)
+    var autoScrollSeconds by mutableStateOf(5)
 
     private fun save() {
         runCatching {
@@ -2026,6 +2096,14 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
     val currentPage by remember { derivedStateOf { listState.firstVisibleItemIndex } }
     val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
 
+    // Auto-scroll: continuously scroll while enabled; faster as the seconds value lowers.
+    LaunchedEffect(ReaderPrefs.autoScroll, ReaderPrefs.autoScrollSeconds) {
+        if (ReaderPrefs.autoScroll) {
+            val px = 180f / ReaderPrefs.autoScrollSeconds.coerceAtLeast(1)
+            while (true) { listState.scrollBy(px); delay(33) }
+        }
+    }
+
     Row(Modifier.fillMaxSize()) {
         if (panelOpen) {
             ReaderSidebar(
@@ -2111,10 +2189,25 @@ private fun ReaderSidebar(
         Spacer(Modifier.height(20.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(12.dp))
+        // Inline quick controls (Suwayomi-style).
+        Text("SCALE", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SelChip("Fit width", ReaderPrefs.scaleType == "FIT_WIDTH") { ReaderPrefs.applyScale("FIT_WIDTH") }
+            SelChip("Original", ReaderPrefs.scaleType == "ORIGINAL") { ReaderPrefs.applyScale("ORIGINAL") }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("AUTO SCROLL", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SelChip(if (ReaderPrefs.autoScroll) "On" else "Off", ReaderPrefs.autoScroll) { ReaderPrefs.autoScroll = !ReaderPrefs.autoScroll }
+            OutlinedButton(onClick = { ReaderPrefs.autoScrollSeconds = (ReaderPrefs.autoScrollSeconds - 1).coerceAtLeast(1) }, shape = BtnShape, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("−", color = MuTheme.Vermilion) }
+            Text("${ReaderPrefs.autoScrollSeconds}s", color = MuTheme.Paper)
+            OutlinedButton(onClick = { ReaderPrefs.autoScrollSeconds += 1 }, shape = BtnShape, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("+", color = MuTheme.Vermilion) }
+        }
+        Spacer(Modifier.height(16.dp))
         OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth(), shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion)) {
             Icon(Icons.Filled.Settings, null, tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Reader settings", color = MuTheme.Vermilion)
+            Text("All reader settings", color = MuTheme.Vermilion)
         }
     }
 }
