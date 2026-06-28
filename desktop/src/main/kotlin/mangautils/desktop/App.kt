@@ -951,34 +951,36 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             // mangaDynamicColorSchemes), so the thumbnail backdrop fades into a tinted surface.
             val pageBg = if (dynColors && tint != null) lerp(MuTheme.Ink, tint, 0.14f) else MuTheme.Ink
             Box(Modifier.fillMaxSize().background(pageBg)) {
-              // Suwayomi's manga-thumbnail backdrop: blurred cover dimmed to ~75% brightness, faded
-              // into the page background on all four edges (bottom fully, top/sides by half).
-              if (bgEnabled) bgBmp?.let { bmp ->
-                  Image(bmp, null, Modifier.fillMaxSize().blur(18.dp), contentScale = ContentScale.Crop)
-                  Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
-                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 1f to pageBg)))
-                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to pageBg, 0.5f to Color.Transparent)))
-                  Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to pageBg, 0.5f to Color.Transparent)))
-                  Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.5f to Color.Transparent, 1f to pageBg)))
-              }
               Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
                 Column(Modifier.weight(0.46f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    Row {
-                        // Fixed-size cover (don't let it scale to the column width).
-                        Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.width(210.dp).aspectRatio(0.7f).clip(RoundedCornerShape(12.dp)))
-                        Spacer(Modifier.width(16.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(s.title, color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp))
-                            d.manga.author?.takeIf { it.isNotBlank() }?.let { InfoRow("Author", it) }
-                            d.manga.artist?.takeIf { it.isNotBlank() }?.let { InfoRow("Artist", it) }
-                            InfoRow("Status", SourceBrowser.statusLabel(d.manga.status))
-                            if (sourceLabel.isNotBlank()) InfoRow("Source", sourceLabel)
-                        }
+                  // Header zone with the Suwayomi-style blurred-cover backdrop (confined to here, not
+                  // the chapter list): blurred cover dimmed ~75%, faded into the page bg on all edges.
+                  Box {
+                    if (bgEnabled) bgBmp?.let { bmp ->
+                        Image(bmp, null, Modifier.matchParentSize().blur(18.dp), contentScale = ContentScale.Crop)
+                        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.25f)))
+                        Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color.Transparent, 1f to pageBg)))
+                        Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to pageBg, 0.5f to Color.Transparent)))
+                        Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to pageBg, 0.5f to Color.Transparent)))
+                        Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0.5f to Color.Transparent, 1f to pageBg)))
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Row {
+                            // Fixed-size cover (don't let it scale to the column width).
+                            Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.width(210.dp).aspectRatio(0.7f).clip(RoundedCornerShape(12.dp)))
+                            Spacer(Modifier.width(16.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(s.title, color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(8.dp))
+                                d.manga.author?.takeIf { it.isNotBlank() }?.let { InfoRow("Author", it) }
+                                d.manga.artist?.takeIf { it.isNotBlank() }?.let { InfoRow("Artist", it) }
+                                InfoRow("Status", SourceBrowser.statusLabel(d.manga.status))
+                                if (sourceLabel.isNotBlank()) InfoRow("Source", sourceLabel)
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(
                             onClick = { toggleLibrary() }, shape = BtnShape,
                             border = BorderStroke(1.dp, MuTheme.Vermilion),
@@ -1001,6 +1003,8 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                         OutlinedButton(onClick = { openFolder() }, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion), contentPadding = PaddingValues(horizontal = 12.dp)) {
                             Icon(Icons.Filled.FolderOpen, "Open download folder", tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
                         }
+                        }
+                    }
                     }
                     Spacer(Modifier.height(14.dp))
                     var descExpanded by remember(s) { mutableStateOf(false) }
@@ -1011,7 +1015,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 maxLines = if (descExpanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
                             )
                             if (!descExpanded) {
-                                Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to MuTheme.Ink)))
+                                Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to pageBg)))
                             }
                         }
                         Box(Modifier.fillMaxWidth(), Alignment.Center) {
