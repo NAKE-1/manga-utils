@@ -18,8 +18,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import mangautils.core.config.AppConfig
+import mangautils.core.config.SettingsStore
 import mangautils.core.convert.CbzWriter
 import mangautils.core.convert.ComicInfoData
+import mangautils.core.convert.FolderWriter
 import mangautils.core.convert.ImageFormat
 import mangautils.core.convert.PageImage
 import mangautils.core.source.SourceManager
@@ -69,6 +71,7 @@ class DownloadManager(
     private val listener: DownloadListener? = null,
     private val existingPolicy: ExistingPolicy = ExistingPolicy.SKIP,
     private val existingPrompt: ExistingPrompt? = null,
+    private val downloadAsCbz: Boolean = runCatching { SettingsStore.get().downloadAsCbz }.getOrDefault(false),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -173,7 +176,11 @@ class DownloadManager(
                         downloadPages(cand.source, pages, chapter.name, cand.sourceId)
                     }
                 val dest = destFor(title, chapter)
-                CbzWriter.write(dest, images, comicInfo(title, details, chapter, images.size))
+                if (downloadAsCbz) {
+                    CbzWriter.write(dest, images, comicInfo(title, details, chapter, images.size))
+                } else {
+                    FolderWriter.write(dest, images, comicInfo(title, details, chapter, images.size))
+                }
                 job.attempts.add(
                     JobAttempt(
                         sourceId = cand.sourceId,
@@ -330,7 +337,10 @@ class DownloadManager(
     private fun destFor(
         title: String,
         chapter: SChapter,
-    ): Path = AppConfig.downloadsDir.resolve(sanitize(title)).resolve(sanitize(chapter.name) + ".cbz")
+    ): Path {
+        val base = AppConfig.downloadsDir.resolve(sanitize(title))
+        return if (downloadAsCbz) base.resolve(sanitize(chapter.name) + ".cbz") else base.resolve(sanitize(chapter.name))
+    }
 
     private fun seed(url: String): SManga = SManga.create().apply { this.url = url; title = url }
 
@@ -360,10 +370,16 @@ class DownloadManager(
                 .take(150)
                 .ifBlank { "untitled" }
 
-        /** True if a CBZ for this chapter already exists on disk. */
+        /** True if this chapter is downloaded — as a CBZ file or a (non-empty) image folder. */
         fun isDownloaded(
             title: String,
             chapterName: String,
-        ): Boolean = java.nio.file.Files.exists(AppConfig.downloadsDir.resolve(sanitize(title)).resolve(sanitize(chapterName) + ".cbz"))
+        ): Boolean {
+            val base = AppConfig.downloadsDir.resolve(sanitize(title))
+            if (java.nio.file.Files.exists(base.resolve(sanitize(chapterName) + ".cbz"))) return true
+            val folder = base.resolve(sanitize(chapterName))
+            return java.nio.file.Files.isDirectory(folder) &&
+                runCatching { java.nio.file.Files.list(folder).use { it.findFirst().isPresent } }.getOrDefault(false)
+        }
     }
 }

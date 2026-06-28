@@ -1299,6 +1299,17 @@ private fun SettingsScreen(onOpenReader: () -> Unit) {
             Switch(checked = dyn, onCheckedChange = { dyn = it; runCatching { SettingsStore.save(SettingsStore.get().copy(dynamicThemeColors = it)) } })
         }
         Spacer(Modifier.height(28.dp))
+        Text("Downloads", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        var cbz by remember { mutableStateOf(runCatching { SettingsStore.get().downloadAsCbz }.getOrDefault(false)) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Save as CBZ archive", color = MuTheme.Paper)
+                Text("Off = a folder of page images (like Suwayomi)", color = MuTheme.Muted, fontSize = 12.sp)
+            }
+            Switch(checked = cbz, onCheckedChange = { cbz = it; runCatching { SettingsStore.save(SettingsStore.get().copy(downloadAsCbz = it)) } })
+        }
+        Spacer(Modifier.height(28.dp))
         Text("Reader", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenReader).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {

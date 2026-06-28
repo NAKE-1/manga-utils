@@ -30,6 +30,8 @@ data class Settings(
     val existingBehavior: ExistingPolicy = ExistingPolicy.SKIP,
     /** Output format. Only "cbz" is implemented today; here for forward-compat. */
     val defaultFormat: String = "cbz",
+    /** Save downloads as a CBZ archive; off (default) = a folder of page images (like Suwayomi). */
+    val downloadAsCbz: Boolean = false,
     /** Default language filter for `ext list` and the friendly search picker (null = all). */
     val defaultLanguage: String? = null,
     /** Show NSFW-flagged extensions/sources by default. */
