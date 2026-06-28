@@ -71,6 +71,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
@@ -620,17 +621,49 @@ private fun SourceTab(onOpen: (Long, String, Boolean) -> Unit) {
         }
     }
     if (sources.isEmpty()) { Empty("No sources installed.\nInstall an extension from the Extension tab."); return }
+    var prefsRev by remember { mutableStateOf(0) }
+    val settings = remember(prefsRev) { runCatching { SettingsStore.get() }.getOrNull() }
+    val pinned = settings?.pinnedSources?.toSet() ?: emptySet()
+    val lastUsed = settings?.lastUsedSourceId ?: 0L
+    fun togglePin(id: Long) {
+        runCatching {
+            val cur = SettingsStore.get().pinnedSources.toMutableList()
+            if (id in cur) cur.remove(id) else cur.add(id)
+            SettingsStore.save(SettingsStore.get().copy(pinnedSources = cur))
+        }
+        prefsRev++
+    }
+    fun open(id: Long, name: String, latest: Boolean) {
+        runCatching { SettingsStore.save(SettingsStore.get().copy(lastUsedSourceId = id)) }
+        onOpen(id, name, latest)
+    }
+
+    @Composable
+    fun row(s: Triple<Long, String, String>) = SourceRow(iconBySource[s.first], s.first, s.second, s.third, s.first in nsfwIds, s.first in pinned, ::togglePin, ::open)
+
     val byLang = sources.groupBy { it.third.ifBlank { "other" } }.toSortedMap()
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        sources.firstOrNull { it.first == lastUsed }?.let { last ->
+            item { SectionHeader("Last used") }
+            item { row(last) }
+        }
+        val pins = sources.filter { it.first in pinned }
+        if (pins.isNotEmpty()) {
+            item { SectionHeader("Pinned") }
+            items(pins) { s -> row(s) }
+        }
         byLang.forEach { (lang, group) ->
             item { SectionHeader(lang.uppercase()) }
-            items(group) { s -> SourceRow(iconBySource[s.first], s.first, s.second, s.third, s.first in nsfwIds, onOpen) }
+            items(group) { s -> row(s) }
         }
     }
 }
 
 @Composable
-private fun SourceRow(iconUrl: String?, id: Long, name: String, lang: String, nsfw: Boolean, onOpen: (Long, String, Boolean) -> Unit) {
+private fun SourceRow(
+    iconUrl: String?, id: Long, name: String, lang: String, nsfw: Boolean, pinned: Boolean,
+    onTogglePin: (Long) -> Unit, onOpen: (Long, String, Boolean) -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().clickable { onOpen(id, name, false) }.padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -645,6 +678,7 @@ private fun SourceRow(iconUrl: String?, id: Long, name: String, lang: String, ns
             }
         }
         OutlinedButton(onClick = { onOpen(id, name, true) }, shape = BtnShape) { Text("LATEST", color = MuTheme.Vermilion) }
+        IconButton(onClick = { onTogglePin(id) }) { Icon(Icons.Filled.PushPin, if (pinned) "Unpin" else "Pin", tint = if (pinned) MuTheme.Vermilion else MuTheme.Muted) }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 }

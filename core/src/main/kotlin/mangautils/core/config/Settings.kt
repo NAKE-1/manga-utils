@@ -46,4 +46,8 @@ data class Settings(
     val dynamicThemeColors: Boolean = true,
     /** Library/browse grid density: COMPACT | COMFORTABLE | LIST. */
     val gridMode: String = "COMFORTABLE",
+    /** Most recently opened source (shown in the "Last used" row on Browse). */
+    val lastUsedSourceId: Long = 0,
+    /** Pinned sources, shown at the top of the source list. */
+    val pinnedSources: List<Long> = emptyList(),
 )
