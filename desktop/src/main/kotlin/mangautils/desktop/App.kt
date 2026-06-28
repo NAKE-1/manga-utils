@@ -15,7 +15,10 @@ import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -523,8 +526,13 @@ private fun LibraryCard(e: LibraryEntry, onOpen: () -> Unit, onChanged: () -> Un
 }
 
 @Composable
-private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, onClick: () -> Unit) {
-    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MuTheme.Panel)) {
+private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, allowAdd: Boolean = false, onClick: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    var added by remember(m.url) { mutableStateOf(false) }
+    if (allowAdd) LaunchedEffect(m.url) { added = withContext(Dispatchers.IO) { runCatching { LibraryService.isFollowed(sourceId, m.url) }.getOrDefault(false) } }
+    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MuTheme.Panel), modifier = Modifier.hoverable(interaction)) {
         Box(Modifier.fillMaxWidth().aspectRatio(0.69f)) {
             Cover(sourceId, m.thumb, m.title, Modifier.fillMaxSize())
             // Bottom gradient scrim so the overlaid title stays readable on any cover.
@@ -532,6 +540,14 @@ private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, onClick: (
             Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 8.dp, vertical = 7.dp)) {
                 Text(m.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (subtitle.isNotBlank()) Text(subtitle, color = Color.White.copy(alpha = 0.75f), fontSize = 10.sp)
+            }
+            if (allowAdd && (hovered || added)) {
+                Box(
+                    Modifier.align(Alignment.TopStart).clip(RoundedCornerShape(bottomEnd = 8.dp))
+                        .background(if (added) MuTheme.Muted else MuTheme.Vermilion)
+                        .clickable { if (!added) { scope.launch { withContext(Dispatchers.IO) { runCatching { LibraryService.add(sourceId, m.url) } }; added = true } } }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) { Text(if (added) "IN LIBRARY" else "ADD TO LIBRARY", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
             }
         }
     }
@@ -923,7 +939,7 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    items(items) { m -> MangaCover(s.sourceId, m, "") { onOpen(m) } }
+                    items(items) { m -> MangaCover(s.sourceId, m, "", allowAdd = true) { onOpen(m) } }
                 }
             }
             when {
