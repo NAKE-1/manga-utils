@@ -258,7 +258,7 @@ fun App() {
                 Box(Modifier.fillMaxSize()) {
                     when (val s = current) {
                         Screen.Library -> LibraryScreen { go(Screen.Detail(it.sourceId, it.mangaUrl, it.title)) }
-                        Screen.Browse -> BrowseScreen(dataVersion) { id, name, latest -> go(Screen.SourceBrowse(id, name, latest)) }
+                        Screen.Browse -> BrowseScreen(dataVersion, onOpenConfig = { id, name -> go(Screen.SourceConfig(id, name)) }) { id, name, latest -> go(Screen.SourceBrowse(id, name, latest)) }
                         is Screen.SourceBrowse -> SourceBrowseScreen(s, srcSearch) { m -> go(Screen.Detail(s.sourceId, m.url, m.title)) }
                         is Screen.SourceConfig -> SourceConfigScreen(s.sourceId)
                         is Screen.Detail -> DetailScreen(s) { chUrl, chName -> go(Screen.Reader(s.sourceId, s.url, s.title, chUrl, chName)) }
@@ -585,7 +585,7 @@ private fun MangaRow(sourceId: Long, m: MangaRef, subtitle: String, onClick: () 
 // ---- Browse (tabs: Source / Extension / Migrate) --------------------------------------------
 
 @Composable
-private fun BrowseScreen(dataVersion: Int, onOpenSource: (Long, String, Boolean) -> Unit) {
+private fun BrowseScreen(dataVersion: Int, onOpenConfig: (Long, String) -> Unit, onOpenSource: (Long, String, Boolean) -> Unit) {
     var tab by remember { mutableStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = tab, containerColor = MuTheme.Ink, contentColor = MuTheme.Vermilion) {
@@ -595,7 +595,7 @@ private fun BrowseScreen(dataVersion: Int, onOpenSource: (Long, String, Boolean)
         }
         when (tab) {
             0 -> SourceTab(onOpenSource)
-            1 -> ExtensionTab(dataVersion)
+            1 -> ExtensionTab(dataVersion, onOpenConfig)
             else -> Empty("Migrate — coming soon")
         }
     }
@@ -684,7 +684,7 @@ private fun SourceRow(
 }
 
 @Composable
-private fun ExtensionTab(dataVersion: Int) {
+private fun ExtensionTab(dataVersion: Int, onOpenConfig: (Long, String) -> Unit) {
     val scope = rememberCoroutineScope()
     var installed by remember { mutableStateOf<List<InstalledExtension>>(emptyList()) }
     var allEntries by remember { mutableStateOf<List<Pair<ExtensionRepoEntry, String>>>(emptyList()) }
@@ -732,9 +732,11 @@ private fun ExtensionTab(dataVersion: Int) {
                 if (installedShown.isEmpty()) item { Text("None installed.", color = MuTheme.Muted, modifier = Modifier.padding(vertical = 8.dp)) }
                 items(installedShown) { ext ->
                     val repo = byPkg[ext.pkg]?.second
-                    ExtRow(repo?.let { extIconUrl(it, ext.pkg) }, ext.name, ext.lang, ext.versionName, ext.nsfw, repo?.let { repoShortName(it) }, installed = true) {
-                        removeExtension(ext); refresh++
-                    }
+                    ExtRow(
+                        repo?.let { extIconUrl(it, ext.pkg) }, ext.name, ext.lang, ext.versionName, ext.nsfw, repo?.let { repoShortName(it) },
+                        installed = true,
+                        onSettings = { ext.sources.firstOrNull()?.let { onOpenConfig(it.id, ext.name) } },
+                    ) { removeExtension(ext); refresh++ }
                 }
                 item { SectionHeader("Available (${available.size})") }
                 items(available) { (entry, repo) ->
@@ -762,7 +764,7 @@ private fun repoShortName(url: String): String =
     runCatching { url.substringAfter("://").substringAfter("/").substringBefore("/").ifBlank { url } }.getOrDefault(url)
 
 @Composable
-private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String, nsfw: Boolean, repoShort: String?, installed: Boolean, onAction: () -> Unit) {
+private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String, nsfw: Boolean, repoShort: String?, installed: Boolean, onSettings: (() -> Unit)? = null, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
         IconImage(iconUrl, cleanName(name), Modifier.size(40.dp).clip(BtnShape))
         Spacer(Modifier.width(12.dp))
@@ -781,7 +783,7 @@ private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String
             }
         }
         if (installed) {
-            IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Settings", tint = MuTheme.Muted) }
+            IconButton(onClick = { onSettings?.invoke() }) { Icon(Icons.Filled.Settings, "Settings", tint = MuTheme.Muted) }
             Spacer(Modifier.width(4.dp))
             OutlinedButton(onClick = onAction, shape = BtnShape) { Text("UNINSTALL", color = MuTheme.Vermilion) }
         } else {
