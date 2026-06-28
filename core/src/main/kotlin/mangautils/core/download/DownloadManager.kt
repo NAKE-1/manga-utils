@@ -351,11 +351,19 @@ class DownloadManager(
         SourceManager.loadSource(sourceId) as? HttpSource
             ?: error("Source $sourceId is not installed, or is not an HTTP source")
 
-    private fun sanitize(name: String): String =
-        name
-            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(150)
-            .ifBlank { "untitled" }
+    companion object {
+        fun sanitize(name: String): String =
+            name
+                .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(150)
+                .ifBlank { "untitled" }
+
+        /** True if a CBZ for this chapter already exists on disk. */
+        fun isDownloaded(
+            title: String,
+            chapterName: String,
+        ): Boolean = java.nio.file.Files.exists(AppConfig.downloadsDir.resolve(sanitize(title)).resolve(sanitize(chapterName) + ".cbz"))
+    }
 }

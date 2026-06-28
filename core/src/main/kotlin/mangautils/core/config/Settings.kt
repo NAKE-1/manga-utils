@@ -40,4 +40,6 @@ data class Settings(
     /** Selected GUI theme name + light/dark mode. */
     val themeName: String = "Default",
     val themeDark: Boolean = true,
+    /** Use the manga's blurred cover as the detail-page background. */
+    val mangaThumbnailBackground: Boolean = true,
 )

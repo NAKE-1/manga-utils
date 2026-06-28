@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -69,6 +70,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -84,6 +86,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -97,6 +100,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.online.HttpSource
+import mangautils.core.download.ChapterSelect
+import mangautils.core.download.DownloadManager
+import mangautils.core.download.SourceRef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -621,6 +628,17 @@ private fun SettingsScreen() {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             MuTheme.presets.forEach { p -> ThemeSwatch(p, selected = p.name == themeName) { themeName = p.name; apply() } }
         }
+        Spacer(Modifier.height(28.dp))
+        Text("Display", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        var bg by remember { mutableStateOf(runCatching { SettingsStore.get().mangaThumbnailBackground }.getOrDefault(true)) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Manga thumbnail as background", color = MuTheme.Paper)
+                Text("Use the blurred cover as the detail-page background", color = MuTheme.Muted, fontSize = 12.sp)
+            }
+            Switch(checked = bg, onCheckedChange = { bg = it; runCatching { SettingsStore.save(SettingsStore.get().copy(mangaThumbnailBackground = it)) } })
+        }
     }
 }
 
@@ -749,17 +767,30 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     var error by remember(s) { mutableStateOf<String?>(null) }
     var inLibrary by remember(s) { mutableStateOf(false) }
     var sourceLabel by remember(s) { mutableStateOf("") }
-    val readUrls = remember(s) { ReadStore.readUrls(s.sourceId, s.url) }
+    var browseUrl by remember(s) { mutableStateOf<String?>(null) }
+    var bgBmp by remember(s) { mutableStateOf<ImageBitmap?>(null) }
+    var readUrls by remember(s) { mutableStateOf(ReadStore.readUrls(s.sourceId, s.url)) }
+    var dlVersion by remember(s) { mutableStateOf(0) }
+    val bgEnabled = remember { runCatching { SettingsStore.get().mangaThumbnailBackground }.getOrDefault(true) }
     val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
 
     LaunchedEffect(s) {
         withContext(Dispatchers.IO) {
             inLibrary = LibraryService.isFollowed(s.sourceId, s.url)
             sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${cleanName(it.name)} (${it.lang.uppercase()})" } ?: ""
+            val src = runCatching { SourceManager.loadSource(s.sourceId) }.getOrNull() as? HttpSource
+            browseUrl = when {
+                s.url.startsWith("http") -> s.url
+                src != null -> src.baseUrl.trimEnd('/') + "/" + s.url.trimStart('/')
+                else -> null
+            }
             runCatching { SourceBrowser.details(s.sourceId, s.url) }.onSuccess { details = it }.onFailure { error = it.message }
         }
     }
     val d = details
+    LaunchedEffect(d?.manga?.thumbnail_url, bgEnabled) {
+        if (bgEnabled && d != null) bgBmp = withContext(Dispatchers.IO) { d.manga.thumbnail_url?.let { ImageCache.cover(s.sourceId, it) } }
+    }
 
     fun toggleLibrary() {
         val dd = details ?: return
@@ -773,13 +804,26 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             }
         }
     }
+    fun setChapterRead(url: String, read: Boolean) {
+        scope.launch { withContext(Dispatchers.IO) { ReadStore.setRead(s.sourceId, s.url, url, read) }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
+    }
+    fun downloadChapter(url: String) {
+        scope.launch { withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.Urls(setOf(url))) } }; dlVersion++ }
+    }
+    fun openInBrowser() { browseUrl?.let { u -> runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(u)) } } }
 
     when {
         error != null -> Empty("Couldn't load: $error")
         d == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
         else -> {
             val continueCh = d.chapters.reversed().firstOrNull { it.url !in readUrls } ?: d.chapters.firstOrNull()
-            Row(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize()) {
+              // Blurred cover as the page background (Suwayomi-style).
+              if (bgEnabled) bgBmp?.let { bmp ->
+                  Image(bmp, null, Modifier.fillMaxSize().blur(60.dp), contentScale = ContentScale.Crop, alpha = 0.20f)
+                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to MuTheme.Ink.copy(alpha = 0.82f), 1f to MuTheme.Ink.copy(alpha = 0.97f))))
+              }
+              Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
                 Column(Modifier.weight(0.46f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(16.dp)) {
                     Row {
@@ -796,11 +840,23 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                         }
                     }
                     Spacer(Modifier.height(14.dp))
-                    Button(
-                        onClick = { toggleLibrary() },
-                        shape = BtnShape,
-                        colors = ButtonDefaults.buttonColors(containerColor = if (inLibrary) MuTheme.Vermilion else MuTheme.Panel),
-                    ) { Text(if (inLibrary) "♥  In library" else "♡  Add to library", color = if (inLibrary) Color.White else MuTheme.Paper) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(
+                            onClick = { toggleLibrary() },
+                            shape = BtnShape,
+                            colors = ButtonDefaults.buttonColors(containerColor = if (inLibrary) MuTheme.Vermilion else MuTheme.Panel),
+                        ) {
+                            Icon(Icons.Filled.Favorite, null, tint = if (inLibrary) Color.White else MuTheme.Muted, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (inLibrary) "In library" else "Add", color = if (inLibrary) Color.White else MuTheme.Paper)
+                        }
+                        OutlinedButton(onClick = {}, shape = BtnShape) { Text("Tracking", color = MuTheme.Vermilion) }
+                        if (browseUrl != null) {
+                            OutlinedButton(onClick = { openInBrowser() }, shape = BtnShape) {
+                                Icon(Icons.Filled.OpenInNew, "Open in browser", tint = MuTheme.Paper, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(14.dp))
                     d.manga.description?.takeIf { it.isNotBlank() }?.let { Text(it.trim(), color = MuTheme.Paper.copy(alpha = 0.85f), fontSize = 13.sp) }
                     Spacer(Modifier.height(14.dp))
@@ -821,18 +877,32 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
                             items(d.chapters) { ch ->
                                 val read = ch.url in readUrls
+                                val downloaded = remember(ch.url, dlVersion) { DownloadManager.isDownloaded(s.title, ch.name) }
+                                var chMenu by remember(ch.url) { mutableStateOf(false) }
                                 Card(
                                     onClick = { onReadChapter(ch.url, ch.name) },
                                     colors = CardDefaults.cardColors(containerColor = if (read) MuTheme.Ink else MuTheme.Panel),
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 ) {
-                                    Column(Modifier.padding(14.dp)) {
-                                        Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        val meta = listOfNotNull(
-                                            ch.scanlator?.takeIf { it.isNotBlank() },
-                                            ch.date_upload.takeIf { it > 0 }?.let { dateFmt.format(Date(it)) },
-                                        ).joinToString("  ·  ")
-                                        if (meta.isNotBlank()) Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f).padding(14.dp)) {
+                                            Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Row {
+                                                val meta = listOfNotNull(
+                                                    ch.scanlator?.takeIf { it.isNotBlank() },
+                                                    ch.date_upload.takeIf { it > 0 }?.let { dateFmt.format(Date(it)) },
+                                                ).joinToString("  ·  ")
+                                                if (meta.isNotBlank()) Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
+                                                if (downloaded) Text("  ·  Downloaded", color = MuTheme.Vermilion, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+                                        }
+                                        Box {
+                                            IconButton(onClick = { chMenu = true }) { Icon(Icons.Filled.MoreVert, "Chapter menu", tint = MuTheme.Muted) }
+                                            DropdownMenu(chMenu, onDismissRequest = { chMenu = false }) {
+                                                DropdownMenuItem(text = { Text(if (downloaded) "Downloaded" else "Download") }, enabled = !downloaded, onClick = { chMenu = false; downloadChapter(ch.url) })
+                                                DropdownMenuItem(text = { Text(if (read) "Mark as unread" else "Mark as read") }, onClick = { chMenu = false; setChapterRead(ch.url, !read) })
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -850,6 +920,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                         )
                     }
                 }
+              }
             }
         }
     }
