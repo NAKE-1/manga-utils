@@ -42,8 +42,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
@@ -161,6 +164,14 @@ private sealed interface Screen {
 
 private data class MangaRef(val title: String, val url: String, val thumb: String?)
 
+/** Shared source-browse search state so the top bar (App) and the grid (SourceBrowseScreen) agree. */
+private class BrowseSearchState {
+    var active by mutableStateOf(false)
+    var query by mutableStateOf("")
+    var submitTick by mutableStateOf(0)
+    fun submit() { submitTick++ }
+}
+
 /** Suwayomi-style rounded-rectangle buttons (not Material's default pill shape). */
 private val BtnShape = RoundedCornerShape(8.dp)
 
@@ -177,15 +188,22 @@ fun App() {
     var sidebarOpen by remember { mutableStateOf(true) }
     var showRepos by remember { mutableStateOf(false) }
     var dataVersion by remember { mutableStateOf(0) }
+    val srcSearch = remember(current) { BrowseSearchState() }
     fun go(s: Screen) = backStack.add(s)
     fun back() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
 
     Surface(Modifier.fillMaxSize(), color = MuTheme.Ink) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(titleFor(current), backStack.size > 1, ::back, onMenu = { sidebarOpen = !sidebarOpen }) {
-                // Per-screen actions, remastered into the top bar. Browse: add an extension repo.
-                if (current is Screen.Browse) {
-                    IconButton(onClick = { showRepos = true }) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
+            TopBar(titleFor(current), backStack.size > 1, ::back, onMenu = { sidebarOpen = !sidebarOpen }, search = if (current is Screen.SourceBrowse) srcSearch else null) {
+                // Per-screen actions, remastered into the top bar.
+                when (current) {
+                    is Screen.Browse -> IconButton(onClick = { showRepos = true }) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
+                    is Screen.SourceBrowse -> {
+                        IconButton(onClick = { srcSearch.active = true }) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Paper) }
+                        IconButton(onClick = {}) { Icon(Icons.Filled.GridView, "Layout", tint = MuTheme.Paper) }
+                        IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Source settings", tint = MuTheme.Paper) }
+                    }
+                    else -> {}
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
@@ -198,7 +216,7 @@ fun App() {
                     when (val s = current) {
                         Screen.Library -> LibraryScreen { go(Screen.Detail(it.sourceId, it.mangaUrl, it.title)) }
                         Screen.Browse -> BrowseScreen(dataVersion) { id, name, latest -> go(Screen.SourceBrowse(id, name, latest)) }
-                        is Screen.SourceBrowse -> SourceBrowseScreen(s) { m -> go(Screen.Detail(s.sourceId, m.url, m.title)) }
+                        is Screen.SourceBrowse -> SourceBrowseScreen(s, srcSearch) { m -> go(Screen.Detail(s.sourceId, m.url, m.title)) }
                         is Screen.Detail -> DetailScreen(s) { chUrl, chName -> go(Screen.Reader(s.sourceId, s.url, s.title, chUrl, chName)) }
                         is Screen.Reader -> ReaderScreen(s, sidebarOpen) { chUrl, chName ->
                             backStack[backStack.lastIndex] = Screen.Reader(s.sourceId, s.mangaUrl, s.mangaTitle, chUrl, chName)
@@ -227,7 +245,7 @@ private fun titleFor(s: Screen): String =
 // ---- chrome ---------------------------------------------------------------------------------
 
 @Composable
-private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
+private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu: () -> Unit, search: BrowseSearchState? = null, actions: @Composable RowScope.() -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth().background(MuTheme.Ink).padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -235,9 +253,20 @@ private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu
         IconButton(onClick = onMenu) { Icon(Icons.Filled.Menu, "Menu", tint = MuTheme.Paper) }
         if (canGoBack) IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
         Spacer(Modifier.width(6.dp))
-        Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.weight(1f))
-        actions()
+        if (search != null && search.active) {
+            OutlinedTextField(
+                search.query, { search.query = it },
+                Modifier.weight(1f).padding(end = 8.dp),
+                singleLine = true,
+                placeholder = { Text("Search this source", color = MuTheme.Muted) },
+                trailingIcon = { IconButton(onClick = { search.submit() }) { Icon(Icons.Filled.Search, "Search", tint = MuTheme.Vermilion) } },
+            )
+            IconButton(onClick = { search.query = ""; search.active = false; search.submit() }) { Icon(Icons.Filled.Close, "Close search", tint = MuTheme.Paper) }
+        } else {
+            Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.weight(1f))
+            actions()
+        }
     }
 }
 
@@ -669,7 +698,7 @@ private fun ThemeSwatch(p: MuPalette, selected: Boolean, onClick: () -> Unit) {
 // ---- Source browse (popular / latest / search grid) -----------------------------------------
 
 @Composable
-private fun SourceBrowseScreen(s: Screen.SourceBrowse, onOpen: (MangaRef) -> Unit) {
+private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState, onOpen: (MangaRef) -> Unit) {
     val scope = rememberCoroutineScope()
     var mode by remember(s) { mutableStateOf(if (s.startLatest) "latest" else "popular") }
     var query by remember(s) { mutableStateOf("") }
@@ -709,16 +738,21 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, onOpen: (MangaRef) -> Uni
     }
 
     LaunchedEffect(s, mode) { if (mode != "search") loadNext(true) }
+    // Search is driven from the top bar; run when the user submits.
+    LaunchedEffect(search.submitTick) {
+        if (search.submitTick == 0) return@LaunchedEffect
+        if (search.active && search.query.isNotBlank()) {
+            mode = "search"; query = search.query; loadNext(true)
+        } else {
+            mode = "popular"
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModeChip("Popular", Icons.Filled.Favorite, mode == "popular") { mode = "popular" }
-            Spacer(Modifier.width(8.dp))
             ModeChip("Latest", Icons.Filled.Bolt, mode == "latest") { mode = "latest" }
-            Spacer(Modifier.width(16.dp))
-            OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("Search this source") })
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = { mode = "search"; loadNext(true) }, shape = BtnShape) { Text("Search") }
+            ModeChip("Filter", Icons.Filled.FilterList, false) { /* placeholder — source filters coming next */ }
         }
         Spacer(Modifier.height(12.dp))
         Box(Modifier.weight(1f)) {
