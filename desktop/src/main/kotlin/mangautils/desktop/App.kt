@@ -7,6 +7,7 @@
 
 package mangautils.desktop
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
@@ -52,6 +55,7 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -100,7 +104,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import mangautils.core.config.AppConfig
 import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.SourceRef
@@ -779,11 +785,12 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             inLibrary = LibraryService.isFollowed(s.sourceId, s.url)
             sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${cleanName(it.name)} (${it.lang.uppercase()})" } ?: ""
             val src = runCatching { SourceManager.loadSource(s.sourceId) }.getOrNull() as? HttpSource
-            browseUrl = when {
-                s.url.startsWith("http") -> s.url
-                src != null -> src.baseUrl.trimEnd('/') + "/" + s.url.trimStart('/')
-                else -> null
-            }
+            browseUrl = src?.let { hs ->
+                // Suwayomi logic: let the source build the web URL (sources override getMangaUrl).
+                val seed = SManga.create().apply { url = s.url }
+                runCatching { hs.getMangaUrl(seed) }.getOrNull()?.takeIf { it.isNotBlank() }
+                    ?: if (s.url.startsWith("http")) s.url else hs.baseUrl.trimEnd('/') + "/" + s.url.trimStart('/')
+            } ?: s.url.takeIf { it.startsWith("http") }
             runCatching { SourceBrowser.details(s.sourceId, s.url) }.onSuccess { details = it }.onFailure { error = it.message }
         }
     }
@@ -811,6 +818,13 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
         scope.launch { withContext(Dispatchers.IO) { runCatching { DownloadManager().download(SourceRef(s.sourceId, s.url), select = ChapterSelect.Urls(setOf(url))) } }; dlVersion++ }
     }
     fun openInBrowser() { browseUrl?.let { u -> runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(u)) } } }
+    fun openFolder() {
+        runCatching {
+            val dir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(s.title))
+            val target = if (java.nio.file.Files.exists(dir)) dir else AppConfig.downloadsDir
+            java.awt.Desktop.getDesktop().open(target.toFile())
+        }
+    }
 
     when {
         error != null -> Empty("Couldn't load: $error")
@@ -820,8 +834,8 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             Box(Modifier.fillMaxSize()) {
               // Blurred cover as the page background (Suwayomi-style).
               if (bgEnabled) bgBmp?.let { bmp ->
-                  Image(bmp, null, Modifier.fillMaxSize().blur(60.dp), contentScale = ContentScale.Crop, alpha = 0.20f)
-                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to MuTheme.Ink.copy(alpha = 0.82f), 1f to MuTheme.Ink.copy(alpha = 0.97f))))
+                  Image(bmp, null, Modifier.fillMaxSize().blur(55.dp), contentScale = ContentScale.Crop, alpha = 0.40f)
+                  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to MuTheme.Ink.copy(alpha = 0.55f), 1f to MuTheme.Ink.copy(alpha = 0.90f))))
               }
               Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
@@ -841,20 +855,27 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                     }
                     Spacer(Modifier.height(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Button(
-                            onClick = { toggleLibrary() },
-                            shape = BtnShape,
-                            colors = ButtonDefaults.buttonColors(containerColor = if (inLibrary) MuTheme.Vermilion else MuTheme.Panel),
+                        OutlinedButton(
+                            onClick = { toggleLibrary() }, shape = BtnShape,
+                            border = BorderStroke(1.dp, MuTheme.Vermilion),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (inLibrary) MuTheme.Vermilion.copy(alpha = 0.16f) else Color.Transparent),
                         ) {
-                            Icon(Icons.Filled.Favorite, null, tint = if (inLibrary) Color.White else MuTheme.Muted, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.Favorite, null, tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(if (inLibrary) "In library" else "Add", color = if (inLibrary) Color.White else MuTheme.Paper)
+                            Text(if (inLibrary) "IN LIBRARY" else "ADD TO LIBRARY", color = MuTheme.Vermilion, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                        OutlinedButton(onClick = {}, shape = BtnShape) { Text("Tracking", color = MuTheme.Vermilion) }
+                        OutlinedButton(onClick = {}, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion)) {
+                            Icon(Icons.Filled.Sync, null, tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("TRACKING", color = MuTheme.Vermilion, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                         if (browseUrl != null) {
-                            OutlinedButton(onClick = { openInBrowser() }, shape = BtnShape) {
-                                Icon(Icons.Filled.OpenInNew, "Open in browser", tint = MuTheme.Paper, modifier = Modifier.size(18.dp))
+                            OutlinedButton(onClick = { openInBrowser() }, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                                Icon(Icons.Filled.OpenInNew, "Open in browser", tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
                             }
+                        }
+                        OutlinedButton(onClick = { openFolder() }, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                            Icon(Icons.Filled.FolderOpen, "Open download folder", tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
                         }
                     }
                     Spacer(Modifier.height(14.dp))
