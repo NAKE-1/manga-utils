@@ -6,19 +6,21 @@
 package mangautils.desktop
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import mangautils.core.config.SettingsStore
 
-fun main() =
+fun main() {
+    // Restore the saved theme before the window paints.
+    runCatching { SettingsStore.get() }.getOrNull()?.let { MuTheme.apply(it.themeName, it.themeDark) }
     application {
         val state = rememberWindowState(width = 1180.dp, height = 800.dp)
         Window(onCloseRequest = ::exitApplication, state = state, title = "manga-utils") {
-            val scheme = remember { MuTheme.darkScheme }
-            MaterialTheme(colorScheme = scheme) {
+            MaterialTheme(colorScheme = MuTheme.scheme) {
                 App()
             }
         }
     }
+}

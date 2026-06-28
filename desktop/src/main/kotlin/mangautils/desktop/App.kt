@@ -10,11 +10,13 @@ package mangautils.desktop
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -34,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
@@ -97,6 +100,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import mangautils.core.config.SettingsStore
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.ExtensionRepoClient
 import mangautils.core.extension.ExtensionRepoEntry
@@ -137,6 +141,8 @@ private sealed interface Screen {
         val chapterName: String,
     ) : Screen
 
+    data object Settings : Screen
+
     data class Stub(val label: String) : Screen
 }
 
@@ -156,12 +162,19 @@ fun App() {
     val backStack = remember { mutableStateListOf<Screen>(Screen.Library) }
     val current = backStack.last()
     var sidebarOpen by remember { mutableStateOf(true) }
+    var showRepos by remember { mutableStateOf(false) }
+    var dataVersion by remember { mutableStateOf(0) }
     fun go(s: Screen) = backStack.add(s)
     fun back() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
 
     Surface(Modifier.fillMaxSize(), color = MuTheme.Ink) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(titleFor(current), backStack.size > 1, ::back) { sidebarOpen = !sidebarOpen }
+            TopBar(titleFor(current), backStack.size > 1, ::back, onMenu = { sidebarOpen = !sidebarOpen }) {
+                // Per-screen actions, remastered into the top bar. Browse: add an extension repo.
+                if (current is Screen.Browse) {
+                    IconButton(onClick = { showRepos = true }) { Icon(Icons.Filled.Add, "Add repository", tint = MuTheme.Paper) }
+                }
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Row(Modifier.fillMaxSize()) {
                 if (current !is Screen.Reader && sidebarOpen) {
@@ -171,18 +184,20 @@ fun App() {
                 Box(Modifier.fillMaxSize()) {
                     when (val s = current) {
                         Screen.Library -> LibraryScreen { go(Screen.Detail(it.sourceId, it.mangaUrl, it.title)) }
-                        Screen.Browse -> BrowseScreen { id, name, latest -> go(Screen.SourceBrowse(id, name, latest)) }
+                        Screen.Browse -> BrowseScreen(dataVersion) { id, name, latest -> go(Screen.SourceBrowse(id, name, latest)) }
                         is Screen.SourceBrowse -> SourceBrowseScreen(s) { m -> go(Screen.Detail(s.sourceId, m.url, m.title)) }
                         is Screen.Detail -> DetailScreen(s) { chUrl, chName -> go(Screen.Reader(s.sourceId, s.url, s.title, chUrl, chName)) }
                         is Screen.Reader -> ReaderScreen(s, sidebarOpen) { chUrl, chName ->
                             backStack[backStack.lastIndex] = Screen.Reader(s.sourceId, s.mangaUrl, s.mangaTitle, chUrl, chName)
                         }
+                        Screen.Settings -> SettingsScreen()
                         is Screen.Stub -> Empty("${s.label} — coming soon")
                     }
                 }
             }
         }
     }
+    if (showRepos) RepoDialog { showRepos = false; dataVersion++ }
 }
 
 private fun titleFor(s: Screen): String =
@@ -192,13 +207,14 @@ private fun titleFor(s: Screen): String =
         is Screen.SourceBrowse -> s.name
         is Screen.Detail -> s.title
         is Screen.Reader -> s.mangaTitle
+        Screen.Settings -> "Settings"
         is Screen.Stub -> s.label
     }
 
 // ---- chrome ---------------------------------------------------------------------------------
 
 @Composable
-private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu: () -> Unit) {
+private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth().background(MuTheme.Ink).padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -207,6 +223,8 @@ private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu
         if (canGoBack) IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
         Spacer(Modifier.width(6.dp))
         Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.weight(1f))
+        actions()
     }
 }
 
@@ -221,7 +239,7 @@ private fun Sidebar(current: Screen, onSelect: (Screen) -> Unit) {
             NavItem("History", Icons.Filled.History, Screen.Stub("History")),
             NavItem("Browse", Icons.Filled.Explore, Screen.Browse),
             NavItem("Downloads", Icons.Filled.Download, Screen.Stub("Downloads")),
-            NavItem("Settings", Icons.Filled.Settings, Screen.Stub("Settings")),
+            NavItem("Settings", Icons.Filled.Settings, Screen.Settings),
             NavItem("About", Icons.Filled.Info, Screen.Stub("About")),
         )
     Column(Modifier.width(200.dp).fillMaxHeight().background(MuTheme.Ink).padding(vertical = 8.dp)) {
@@ -368,7 +386,7 @@ private fun MangaCover(sourceId: Long, m: MangaRef, subtitle: String, onClick: (
 // ---- Browse (tabs: Source / Extension / Migrate) --------------------------------------------
 
 @Composable
-private fun BrowseScreen(onOpenSource: (Long, String, Boolean) -> Unit) {
+private fun BrowseScreen(dataVersion: Int, onOpenSource: (Long, String, Boolean) -> Unit) {
     var tab by remember { mutableStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = tab, containerColor = MuTheme.Ink, contentColor = MuTheme.Vermilion) {
@@ -378,7 +396,7 @@ private fun BrowseScreen(onOpenSource: (Long, String, Boolean) -> Unit) {
         }
         when (tab) {
             0 -> SourceTab(onOpenSource)
-            1 -> ExtensionTab()
+            1 -> ExtensionTab(dataVersion)
             else -> Empty("Migrate — coming soon")
         }
     }
@@ -434,16 +452,16 @@ private fun SourceRow(iconUrl: String?, id: Long, name: String, lang: String, ns
 }
 
 @Composable
-private fun ExtensionTab() {
+private fun ExtensionTab(dataVersion: Int) {
     val scope = rememberCoroutineScope()
     var installed by remember { mutableStateOf<List<InstalledExtension>>(emptyList()) }
     var allEntries by remember { mutableStateOf<List<Pair<ExtensionRepoEntry, String>>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var refresh by remember { mutableStateOf(0) }
-    var showRepos by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
+    var selectedRepo by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(refresh) {
+    LaunchedEffect(refresh, dataVersion) {
         loading = true
         withContext(Dispatchers.IO) {
             installed = InstalledStore.list()
@@ -455,31 +473,40 @@ private fun ExtensionTab() {
         loading = false
     }
 
+    val repos = remember(allEntries) { allEntries.map { it.second }.distinct() }
     val byPkg = remember(allEntries) { allEntries.associateBy { it.first.pkg } }
     val have = installed.map { it.pkg }.toSet()
-    val available = allEntries.filter { it.first.pkg !in have && it.first.name.contains(query, ignoreCase = true) }
+    fun inRepo(repo: String?) = selectedRepo == null || repo == selectedRepo
+    val available = allEntries.filter { it.first.pkg !in have && inRepo(it.second) && it.first.name.contains(query, ignoreCase = true) }
+    val installedShown = installed.filter { inRepo(byPkg[it.pkg]?.second) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-            OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("Search extensions") }, leadingIcon = { Icon(Icons.Filled.Search, null) })
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = { showRepos = true }, shape = BtnShape) { Text("R", fontWeight = FontWeight.Black, color = MuTheme.Vermilion) }
+        OutlinedTextField(
+            query, { query = it }, Modifier.fillMaxWidth().padding(vertical = 8.dp), singleLine = true,
+            placeholder = { Text("Search extensions") }, leadingIcon = { Icon(Icons.Filled.Search, null) },
+        )
+        // Per-repo tabs (only when more than one repo is configured).
+        if (repos.size > 1) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RepoChip("All", selectedRepo == null) { selectedRepo = null }
+                repos.forEach { r -> RepoChip(repoShortName(r), selectedRepo == r) { selectedRepo = r } }
+            }
         }
         if (loading) {
             Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
                 item { SectionHeader("Installed") }
-                if (installed.isEmpty()) item { Text("None installed.", color = MuTheme.Muted, modifier = Modifier.padding(vertical = 8.dp)) }
-                items(installed) { ext ->
+                if (installedShown.isEmpty()) item { Text("None installed.", color = MuTheme.Muted, modifier = Modifier.padding(vertical = 8.dp)) }
+                items(installedShown) { ext ->
                     val repo = byPkg[ext.pkg]?.second
-                    ExtRow(repo?.let { extIconUrl(it, ext.pkg) }, ext.name, ext.lang, ext.versionName, ext.nsfw, repo, installed = true) {
+                    ExtRow(repo?.let { extIconUrl(it, ext.pkg) }, ext.name, ext.lang, ext.versionName, ext.nsfw, repo?.let { repoShortName(it) }, installed = true) {
                         removeExtension(ext); refresh++
                     }
                 }
                 item { SectionHeader("Available (${available.size})") }
                 items(available) { (entry, repo) ->
-                    ExtRow(extIconUrl(repo, entry.pkg), entry.name, entry.lang, entry.version, entry.isNsfw, repo, installed = false) {
+                    ExtRow(extIconUrl(repo, entry.pkg), entry.name, entry.lang, entry.version, entry.isNsfw, repoShortName(repo), installed = false) {
                         scope.launch {
                             withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(entry, repo) } }
                             refresh++
@@ -489,12 +516,21 @@ private fun ExtensionTab() {
             }
         }
     }
-
-    if (showRepos) RepoDialog { showRepos = false; refresh++ }
 }
 
 @Composable
-private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String, nsfw: Boolean, repoUrl: String?, installed: Boolean, onAction: () -> Unit) {
+private fun RepoChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.clip(BtnShape).background(if (selected) MuTheme.Vermilion else MuTheme.Panel).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+    ) { Text(label, color = if (selected) Color.White else MuTheme.Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+}
+
+/** Short label for a repo index URL, e.g. ".../keiyoushi/extensions/repo/index.min.json" -> "keiyoushi". */
+private fun repoShortName(url: String): String =
+    runCatching { url.substringAfter("://").substringAfter("/").substringBefore("/").ifBlank { url } }.getOrDefault(url)
+
+@Composable
+private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String, nsfw: Boolean, repoShort: String?, installed: Boolean, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
         IconImage(iconUrl, cleanName(name), Modifier.size(40.dp).clip(BtnShape))
         Spacer(Modifier.width(12.dp))
@@ -506,8 +542,11 @@ private fun ExtRow(iconUrl: String?, name: String, lang: String, version: String
                     Spacer(Modifier.width(6.dp))
                     Text("18+", color = Red18, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
+                repoShort?.let {
+                    Spacer(Modifier.width(6.dp))
+                    Text("· $it", color = MuTheme.Muted.copy(alpha = 0.85f), fontSize = 11.sp)
+                }
             }
-            repoUrl?.let { Text(it, color = MuTheme.Muted.copy(alpha = 0.6f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         if (installed) {
             IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Settings", tint = MuTheme.Muted) }
@@ -555,6 +594,52 @@ private fun RepoDialog(onClose: () -> Unit) {
 @Composable
 private fun SectionHeader(text: String) {
     Text(text, color = MuTheme.Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+}
+
+// ---- Settings (appearance / themes) ---------------------------------------------------------
+
+@Composable
+private fun SettingsScreen() {
+    var themeName by remember { mutableStateOf(MuTheme.palette.name) }
+    var dark by remember { mutableStateOf(MuTheme.dark) }
+    fun apply() {
+        MuTheme.apply(themeName, dark)
+        runCatching { SettingsStore.save(SettingsStore.get().copy(themeName = themeName, themeDark = dark)) }
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        Text("Appearance", color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Theme mode", color = MuTheme.Paper, modifier = Modifier.weight(1f))
+            RepoChip("Dark", dark) { dark = true; apply() }
+            Spacer(Modifier.width(8.dp))
+            RepoChip("Light", !dark) { dark = false; apply() }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("Theme", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            MuTheme.presets.forEach { p -> ThemeSwatch(p, selected = p.name == themeName) { themeName = p.name; apply() } }
+        }
+    }
+}
+
+@Composable
+private fun ThemeSwatch(p: MuPalette, selected: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(120.dp).clickable(onClick = onClick)) {
+        Box(Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(10.dp)).background(p.ink)) {
+            Column(Modifier.fillMaxSize().padding(10.dp)) {
+                Box(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(4.dp)).background(p.accent))
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.size(26.dp).clip(RoundedCornerShape(6.dp)).background(p.panel))
+                Spacer(Modifier.weight(1f))
+                Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(4.dp)).background(p.accent.copy(alpha = 0.55f)))
+            }
+            if (selected) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(12.dp).clip(RoundedCornerShape(6.dp)).background(p.accent))
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(p.name, color = if (selected) MuTheme.Paper else MuTheme.Muted, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 // ---- Source browse (popular / latest / search grid) -----------------------------------------

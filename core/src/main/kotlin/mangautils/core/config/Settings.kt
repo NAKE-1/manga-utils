@@ -35,4 +35,9 @@ data class Settings(
     /** Show NSFW-flagged extensions/sources by default. */
     val nsfwVisible: Boolean = false,
     val imageQuality: ImageQuality? = null,
+    /** Source/extension language filter for the GUI (empty = show all). */
+    val allowedLanguages: List<String> = emptyList(),
+    /** Selected GUI theme name + light/dark mode. */
+    val themeName: String = "Default",
+    val themeDark: Boolean = true,
 )
