@@ -99,7 +99,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -976,20 +975,36 @@ private fun FilterSheet(filters: FilterList?, onApply: () -> Unit, onReset: () -
             } else {
                 var rev by remember { mutableStateOf(0) }
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    key(rev) { list.forEach { f -> FilterControl(f) { rev++ } } }
+                    // Passing `rev` as a param recomposes each control when state changes, while the
+                    // controls' own `remember` (expanded sections) survives.
+                    list.forEach { f -> FilterControl(f, rev) { rev++ } }
                 }
             }
         }
     }
 }
 
+/** A collapsible filter section (header + chevron), expanded on tap — like Suwayomi's filter sheet. */
 @Composable
-private fun FilterControl(f: Filter<*>, bump: () -> Unit) {
+private fun CollapsibleFilter(name: String, content: @Composable () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null, tint = MuTheme.Muted)
+        }
+        if (expanded) Column(Modifier.padding(start = 4.dp, bottom = 8.dp)) { content() }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+    }
+}
+
+@Composable
+private fun FilterControl(f: Filter<*>, rev: Int, bump: () -> Unit) {
     when (f) {
         is Filter.Header -> Text(f.name, color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 6.dp))
         is Filter.Separator -> HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
         is Filter.CheckBox ->
-            Row(Modifier.fillMaxWidth().clickable { f.state = !f.state; bump() }, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable { f.state = !f.state; bump() }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = f.state, onCheckedChange = { f.state = it; bump() })
                 Text(f.name, color = MuTheme.Paper)
             }
@@ -1017,29 +1032,27 @@ private fun FilterControl(f: Filter<*>, bump: () -> Unit) {
                 }
             }
         }
-        is Filter.Sort -> {
-            Text(f.name, color = MuTheme.Paper, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp))
-            f.values.forEachIndexed { i, v ->
-                val sel = f.state
-                val isSel = sel?.index == i
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        f.state = if (isSel) Filter.Sort.Selection(i, !(sel?.ascending ?: false)) else Filter.Sort.Selection(i, false)
-                        bump()
-                    }.padding(vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(if (isSel) (if (sel?.ascending == true) "↑" else "↓") else " ", color = MuTheme.Vermilion, modifier = Modifier.width(18.dp))
-                    Text(v, color = if (isSel) MuTheme.Vermilion else MuTheme.Paper)
+        is Filter.Sort ->
+            CollapsibleFilter(f.name) {
+                f.values.forEachIndexed { i, v ->
+                    val sel = f.state
+                    val isSel = sel?.index == i
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            f.state = if (isSel) Filter.Sort.Selection(i, !(sel?.ascending ?: false)) else Filter.Sort.Selection(i, false)
+                            bump()
+                        }.padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(if (isSel) (if (sel?.ascending == true) "↑" else "↓") else " ", color = MuTheme.Vermilion, modifier = Modifier.width(18.dp))
+                        Text(v, color = if (isSel) MuTheme.Vermilion else MuTheme.Paper)
+                    }
                 }
             }
-        }
-        is Filter.Group<*> -> {
-            Text(f.name, color = MuTheme.Paper, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
-            Column(Modifier.padding(start = 8.dp)) {
-                f.state.filterIsInstance<Filter<*>>().forEach { sub -> FilterControl(sub, bump) }
+        is Filter.Group<*> ->
+            CollapsibleFilter(f.name) {
+                f.state.filterIsInstance<Filter<*>>().forEach { sub -> FilterControl(sub, rev, bump) }
             }
-        }
         else -> {}
     }
 }
