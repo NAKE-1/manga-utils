@@ -308,6 +308,36 @@ private fun ToastRow(t: ToastMsg) {
     }
 }
 
+// ---- Connectivity ---------------------------------------------------------------------------
+
+/** Polls connectivity so the app can switch online/offline live + toast the change. */
+private object Net {
+    var online by mutableStateOf(true)
+        private set
+
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private var started = false
+
+    fun start() {
+        if (started) return
+        started = true
+        scope.launch {
+            online = check()
+            while (true) {
+                delay(5000)
+                val now = check()
+                if (now != online) {
+                    online = now
+                    if (now) Toasts.success("Back online") else Toasts.error("You're offline — check your connection")
+                }
+            }
+        }
+    }
+
+    private fun check(): Boolean =
+        runCatching { java.net.Socket().use { it.connect(java.net.InetSocketAddress("1.1.1.1", 443), 2500) }; true }.getOrDefault(false)
+}
+
 // ---- Download queue -------------------------------------------------------------------------
 
 private enum class DlState { QUEUED, DOWNLOADING, DONE, ERROR }
@@ -467,6 +497,7 @@ fun App() {
     var showRepos by remember { mutableStateOf(false) }
     var dataVersion by remember { mutableStateOf(0) }
     val srcSearch = remember(current) { BrowseSearchState() }
+    LaunchedEffect(Unit) { Net.start() }
     fun go(s: Screen) = backStack.add(s)
     fun back() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
 
@@ -632,22 +663,32 @@ private fun Sidebar(current: Screen, onSelect: (Screen) -> Unit) {
 
 private object ImageCache {
     private val cache = ConcurrentHashMap<String, ImageBitmap>()
+    private val dir by lazy { mangautils.core.config.AppConfig.dataDir.resolve("covers") }
 
-    fun cover(sourceId: Long, url: String): ImageBitmap? {
+    private fun keyFile(url: String): java.nio.file.Path {
+        val hash = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+        return dir.resolve(hash)
+    }
+
+    /** Bytes from the in-memory→disk cache, else fetched + written through (so covers work offline). */
+    private fun cachedBytes(url: String, fetch: () -> ByteArray?): ImageBitmap? {
         cache[url]?.let { return it }
-        val img = SourceImage.coverBytes(sourceId, url)?.let { decode(it) } ?: return null
+        val file = runCatching { keyFile(url) }.getOrNull()
+        val bytes =
+            if (file != null && java.nio.file.Files.exists(file)) {
+                runCatching { java.nio.file.Files.readAllBytes(file) }.getOrNull()
+            } else {
+                fetch()?.also { b -> file?.let { runCatching { java.nio.file.Files.createDirectories(it.parent); java.nio.file.Files.write(it, b) } } }
+            }
+        val img = bytes?.let { decode(it) } ?: return null
         cache[url] = img
         return img
     }
 
+    fun cover(sourceId: Long, url: String): ImageBitmap? = cachedBytes(url) { SourceImage.coverBytes(sourceId, url) }
+
     /** Plain HTTP image (e.g. extension icons from a repo) — no source headers needed. */
-    fun url(u: String): ImageBitmap? {
-        cache[u]?.let { return it }
-        val bytes = runCatching { java.net.URI(u).toURL().openStream().use { it.readBytes() } }.getOrNull() ?: return null
-        val img = decode(bytes) ?: return null
-        cache[u] = img
-        return img
-    }
+    fun url(u: String): ImageBitmap? = cachedBytes(u) { runCatching { java.net.URI(u).toURL().openStream().use { it.readBytes() } }.getOrNull() }
 }
 
 /** Extension icons live next to the index, e.g. <repo>/icon/<pkg>.png. */
@@ -1432,10 +1473,10 @@ private fun SourceBrowseScreen(s: Screen.SourceBrowse, search: BrowseSearchState
                     val cf = error.orEmpty().contains("cloudflare", ignoreCase = true)
                     Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
                         Text(
-                            if (cf) {
-                                "🛡  This source is protected by Cloudflare.\n\nA Cloudflare bypass isn't supported yet — try another source, or open a series and use the open-in-browser button to read it on the site."
-                            } else {
-                                "Couldn't load this source.\n\n$error"
+                            when {
+                                !Net.online -> "📡  You're offline.\n\nConnect to the internet to browse this source."
+                                cf -> "🛡  This source is protected by Cloudflare.\n\nA Cloudflare bypass isn't supported yet — try another source, or open a series and use the open-in-browser button to read it on the site."
+                                else -> "Couldn't load this source.\n\n$error"
                             },
                             color = MuTheme.Muted, textAlign = TextAlign.Center,
                         )
@@ -1780,7 +1821,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     }
 
     when {
-        error != null -> Empty("Couldn't load: $error")
+        error != null -> Empty(if (!Net.online) "📡  You're offline.\n\nThis title isn't in your library, so it can't be loaded right now." else "Couldn't load: $error")
         d == null ->
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2142,6 +2183,14 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
         Box(Modifier.fillMaxSize().background(ReaderPrefs.bg(MuTheme.Ink))) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) { items(pageRefs) { ref -> ReaderPage(ref) } }
             if (loading) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
+            if (!loading && pageRefs.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
+                    Text(
+                        if (!Net.online) "📡  You're offline.\n\nThis chapter isn't downloaded, so it can't be read right now." else "Couldn't load this chapter's pages.",
+                        color = MuTheme.Muted, textAlign = TextAlign.Center,
+                    )
+                }
+            }
             if (showTop) {
                 FloatingActionButton(
                     onClick = { scope.launch { listState.animateScrollToItem(0) } },
