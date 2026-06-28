@@ -267,6 +267,7 @@ private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu
         if (search != null && search.active) {
             val fr = remember { FocusRequester() }
             LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+            Spacer(Modifier.weight(1f))
             Column(Modifier.width(340.dp).padding(end = 8.dp)) {
                 BasicTextField(
                     value = search.query,
@@ -285,7 +286,6 @@ private fun TopBar(title: String, canGoBack: Boolean, onBack: () -> Unit, onMenu
                 )
                 HorizontalDivider(color = MuTheme.Vermilion, thickness = 2.dp)
             }
-            Spacer(Modifier.weight(1f))
             IconButton(onClick = { search.query = ""; search.active = false; search.submit() }, modifier = Modifier.size(40.dp)) { Icon(Icons.Filled.Cancel, "Close search", tint = MuTheme.Paper) }
             actions()
         } else {
