@@ -11,6 +11,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -418,6 +419,12 @@ private fun dominantColor(bmp: ImageBitmap): Color {
     }
     if (wSum <= 0.0) return Color.Gray
     return Color((r / wSum).toFloat().coerceIn(0f, 1f), (g / wSum).toFloat().coerceIn(0f, 1f), (b / wSum).toFloat().coerceIn(0f, 1f))
+}
+
+/** A vibrant accent derived from a cover color (boost saturation, fix brightness) — for buttons etc. */
+private fun vibrant(c: Color): Color {
+    val hsb = java.awt.Color.RGBtoHSB((c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt(), null)
+    return Color(java.awt.Color.HSBtoRGB(hsb[0], (hsb[1] * 1.35f).coerceIn(0.45f, 1f), 0.78f))
 }
 
 // ---- Library --------------------------------------------------------------------------------
@@ -949,7 +956,9 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             val tint = coverTint
             // Dynamic color: the page background itself takes a hint of the cover color (Suwayomi's
             // mangaDynamicColorSchemes), so the thumbnail backdrop fades into a tinted surface.
-            val pageBg = if (dynColors && tint != null) lerp(MuTheme.Ink, tint, 0.14f) else MuTheme.Ink
+            val pageBg = if (dynColors && tint != null) lerp(MuTheme.Ink, tint, 0.12f) else MuTheme.Ink
+            // Dynamic accent: the cover color takes precedence on the manga page (Suwayomi behaviour).
+            val acc = if (dynColors && tint != null) vibrant(tint) else MuTheme.Vermilion
             Box(Modifier.fillMaxSize().background(pageBg)) {
               Row(Modifier.fillMaxSize()) {
                 // LEFT: cover + info + library + description + tags
@@ -983,25 +992,25 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(
                             onClick = { toggleLibrary() }, shape = BtnShape,
-                            border = BorderStroke(1.dp, MuTheme.Vermilion),
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (inLibrary) MuTheme.Vermilion.copy(alpha = 0.16f) else Color.Transparent),
+                            border = BorderStroke(1.dp, acc),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (inLibrary) acc.copy(alpha = 0.16f) else Color.Transparent),
                         ) {
-                            Icon(Icons.Filled.Favorite, null, tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Filled.Favorite, null, tint = acc, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(if (inLibrary) "IN LIBRARY" else "ADD TO LIBRARY", color = MuTheme.Vermilion, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(if (inLibrary) "IN LIBRARY" else "ADD TO LIBRARY", color = acc, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                        OutlinedButton(onClick = {}, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion)) {
-                            Icon(Icons.Filled.Sync, null, tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
+                        OutlinedButton(onClick = {}, shape = BtnShape, border = BorderStroke(1.dp, acc)) {
+                            Icon(Icons.Filled.Sync, null, tint = acc, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("TRACKING", color = MuTheme.Vermilion, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("TRACKING", color = acc, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         if (browseUrl != null) {
-                            OutlinedButton(onClick = { openInBrowser() }, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion), contentPadding = PaddingValues(horizontal = 12.dp)) {
-                                Icon(Icons.Filled.OpenInNew, "Open in browser", tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
+                            OutlinedButton(onClick = { openInBrowser() }, shape = BtnShape, border = BorderStroke(1.dp, acc), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                                Icon(Icons.Filled.OpenInNew, "Open in browser", tint = acc, modifier = Modifier.size(18.dp))
                             }
                         }
-                        OutlinedButton(onClick = { openFolder() }, shape = BtnShape, border = BorderStroke(1.dp, MuTheme.Vermilion), contentPadding = PaddingValues(horizontal = 12.dp)) {
-                            Icon(Icons.Filled.FolderOpen, "Open download folder", tint = MuTheme.Vermilion, modifier = Modifier.size(18.dp))
+                        OutlinedButton(onClick = { openFolder() }, shape = BtnShape, border = BorderStroke(1.dp, acc), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                            Icon(Icons.Filled.FolderOpen, "Open download folder", tint = acc, modifier = Modifier.size(18.dp))
                         }
                         }
                     }
@@ -1049,9 +1058,11 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                 Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline))
                 // RIGHT: chapter list + RESUME
                 Box(Modifier.weight(0.58f).fillMaxHeight()) {
+                    val chapterListState = rememberLazyListState()
                     Column(Modifier.fillMaxSize()) {
                         Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
-                        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+                      Box(Modifier.weight(1f)) {
+                        LazyColumn(state = chapterListState, modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 18.dp)) {
                             items(d.chapters) { ch ->
                                 val read = ch.url in readUrls
                                 val downloaded = remember(ch.url, dlVersion) { DownloadManager.isDownloaded(s.title, ch.name) }
@@ -1070,7 +1081,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                                     ch.date_upload.takeIf { it > 0 }?.let { dateFmt.format(Date(it)) },
                                                 ).joinToString("  ·  ")
                                                 if (meta.isNotBlank()) Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
-                                                if (downloaded) Text("  ·  Downloaded", color = MuTheme.Vermilion, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                if (downloaded) Text("  ·  Downloaded", color = acc, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
                                         Box {
@@ -1085,11 +1096,20 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                             }
                             item { Spacer(Modifier.height(72.dp)) }
                         }
+                        VerticalScrollbar(
+                            rememberScrollbarAdapter(chapterListState),
+                            Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 4.dp),
+                            style = ScrollbarStyle(
+                                minimalHeight = 48.dp, thickness = 8.dp, shape = RoundedCornerShape(4.dp),
+                                hoverDurationMillis = 300, unhoverColor = acc.copy(alpha = 0.45f), hoverColor = acc,
+                            ),
+                        )
+                      }
                     }
                     if (continueCh != null) {
                         ExtendedFloatingActionButton(
                             onClick = { onReadChapter(continueCh.url, continueCh.name) },
-                            containerColor = MuTheme.Vermilion,
+                            containerColor = acc,
                             contentColor = Color.White,
                             icon = { Icon(Icons.Filled.PlayArrow, null) },
                             text = { Text(if (readUrls.isEmpty()) "Start" else "Resume") },
