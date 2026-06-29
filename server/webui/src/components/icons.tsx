@@ -30,6 +30,9 @@ export const IconClock = ({ className }: P) => (
 )
 export const IconBook = S('M4 4h11a3 3 0 013 3v13a2 2 0 00-2-2H4z M7 8h8 M7 12h6')
 export const IconPen = S('M14 4l6 6 M3 21l1-5L16 4l4 4L8 20z')
+export const IconCalendar = S('M7 3v3 M17 3v3 M4 8h16 M5 6h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1z')
+export const IconBookOpen = S('M12 6c-2-1.5-5-1.5-8-1v13c3-.5 6-.5 8 1 2-1.5 5-1.5 8-1V5c-3-.5-6-.5-8 1z M12 6v13')
+export const IconSort = S('M7 4v16 M4 8l3-4 3 4 M17 20V4 M14 16l3 4 3-4')
 export const IconHeart = ({ className, filled }: P & { filled?: boolean }) => (
   <svg viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" className={className}>
     <path d="M12 21s-7-4.5-9.5-9A5 5 0 0112 6a5 5 0 019.5 6c-2.5 4.5-9.5 9-9.5 9z" />

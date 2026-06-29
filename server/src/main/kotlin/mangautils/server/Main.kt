@@ -188,6 +188,11 @@ fun Application.module() {
                 }
                 runCatching {
                     val d = SourceBrowser.details(id, url)
+                    // A manual refresh of a followed manga updates its library snapshot (detects new chapters).
+                    if (refresh && LibraryService.isFollowed(id, url)) {
+                        val title = runCatching { d.manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: url
+                        runCatching { LibraryService.addKnown(id, url, title, d.manga, d.chapters) }
+                    }
                     DetailDto(
                         d.manga.toDto(id),
                         d.chapters.map { ch ->

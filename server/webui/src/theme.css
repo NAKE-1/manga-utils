@@ -1,13 +1,13 @@
 :root {
   color-scheme: dark;
-  --bg: #0e0e10;
-  --bg-2: #131316;
-  --card: #17171a;
-  --card-2: #1d1d21;
-  --border: #26262b;
-  --text: #e9e9ee;
-  --muted: #9a9aa2;
-  --muted-2: #6e6e76;
+  --bg: #1a1a1c;
+  --bg-2: #202023;
+  --card: #252528;
+  --card-2: #2d2d31;
+  --border: #34343a;
+  --text: #ececf1;
+  --muted: #a2a2ab;
+  --muted-2: #72727c;
   --accent: #8a7cf0;
   --accent-press: #7567e0;
   --manga: #8a7cf0;   /* type badges */
@@ -47,7 +47,7 @@ img { display: block; }
   padding-top: var(--safe-t);
   display: flex; align-items: center; gap: 6px;
   padding-left: 16px; padding-right: 8px;
-  background: linear-gradient(var(--bg), rgba(14,14,16,0.86));
+  background: linear-gradient(var(--bg), rgba(26,26,28,0.86));
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
@@ -65,7 +65,7 @@ img { display: block; }
   height: calc(var(--tabbar-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-  background: rgba(14,14,16,0.92);
+  background: rgba(26,26,28,0.94);
   backdrop-filter: blur(10px);
   border-top: 1px solid var(--border);
 }
@@ -185,6 +185,44 @@ img { display: block; }
 .chapter-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chapter-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .chapter-bm { width: 16px; height: 16px; color: var(--accent); flex: 0 0 auto; }
+
+.last-update { padding: 8px 16px 0; font-size: 12px; color: var(--muted); cursor: pointer; }
+.last-update:active { color: var(--accent); }
+
+/* Chapter toolbar: tabs + sort */
+.ch-toolbar { display: flex; align-items: center; gap: 10px; padding: 16px 16px 8px; }
+.ch-tabs { display: flex; gap: 6px; background: var(--card); border-radius: 999px; padding: 4px; flex: 1; }
+.ch-tab { flex: 1; font-size: 13px; font-weight: 700; color: var(--muted); padding: 7px 10px; border-radius: 999px; }
+.ch-tab.active { background: var(--accent); color: #fff; }
+.ch-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted);
+  background: var(--card); border-radius: 999px; padding: 8px 13px; }
+.ch-sort .pi { width: 15px; height: 15px; }
+
+/* Read checkbox on chapter rows */
+.ch-check { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--muted-2); background: transparent; }
+.ch-check.on { background: var(--accent); border-color: var(--accent); position: relative; }
+.ch-check.on::after { content: ''; position: absolute; left: 6px; top: 3px; width: 5px; height: 9px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+/* Detail bottom action bar (above the tab bar) */
+.detail-bottombar {
+  position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--safe-b));
+  z-index: 25; display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  background: rgba(26,26,28,0.96); backdrop-filter: blur(10px); border-top: 1px solid var(--border);
+}
+.bb-bookmark {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 15px; font-weight: 700; padding: 12px; border-radius: 12px;
+  background: var(--card-2); color: var(--text);
+}
+.bb-bookmark.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: #cfc6ff; }
+.bb-bookmark .bi { width: 19px; height: 19px; }
+.bb-book {
+  flex: 0 0 auto; width: 54px; height: 48px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--accent); color: #fff;
+}
+.bb-book svg { width: 24px; height: 24px; }
+.bb-book:active { background: var(--accent-press); }
 
 /* ---- Misc --------------------------------------------------------------- */
 .muted { color: var(--muted); }

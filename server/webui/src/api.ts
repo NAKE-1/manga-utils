@@ -62,8 +62,8 @@ export const api = {
   latest: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`),
   search: (id: string, q: string, page = 1) =>
     getJson<PageResult>(`/api/sources/${id}/search?q=${encodeURIComponent(q)}&page=${page}`),
-  detail: (id: string, url: string) =>
-    getJson<Detail>(`/api/sources/${id}/manga?url=${encodeURIComponent(url)}`),
+  detail: (id: string, url: string, refresh = false) =>
+    getJson<Detail>(`/api/sources/${id}/manga?url=${encodeURIComponent(url)}${refresh ? '&refresh=true' : ''}`),
   mangaState: (id: string, url: string) =>
     getJson<MangaState>(`/api/manga/state?source=${id}&url=${encodeURIComponent(url)}`),
   addLibrary: (id: string, url: string) =>
