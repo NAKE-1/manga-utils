@@ -90,13 +90,13 @@ export function Reader() {
   const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
   const totalCh = (() => { const m = Math.max(0, ...navList.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : navList.length })()
 
-  // Prefetch the next chapter's page list + first images once you pass ~70% of this chapter.
+  // Prefetch the next chapter's page list + first images once you pass ~50% of this chapter.
   const prefetchedNext = useRef('')
   useEffect(() => {
-    if (progress > 0.7 && nextCh && prefetchedNext.current !== nextCh.url) {
+    if (progress > 0.5 && nextCh && prefetchedNext.current !== nextCh.url) {
       prefetchedNext.current = nextCh.url
       api.pages(sourceId, nextCh.url, title, nextCh.name)
-        .then((r) => { for (let i = 0; i < Math.min(2, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) } })
+        .then((r) => { for (let i = 0; i < Math.min(5, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) } })
         .catch(() => {})
     }
   }, [progress, nextCh, sourceId, title])

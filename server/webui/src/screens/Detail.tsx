@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, coverUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState } from '../api'
+import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState } from '../api'
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
@@ -37,12 +37,29 @@ export function Detail() {
   const [asc, setAsc] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
   const [tries, setTries] = useState(0)
+  const [stateLoaded, setStateLoaded] = useState(false)
 
   useEffect(() => {
-    setData(null); setError(false)
+    setData(null); setError(false); setStateLoaded(false)
     api.detail(sourceId, url).then(setData).catch(() => setError(true))
-    api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {})
+    api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {}).finally(() => setStateLoaded(true))
   }, [sourceId, url, tries])
+
+  // Preload the chapter you'd continue from (first unread, or ch.1) so opening it is instant.
+  const prefetchedCont = useRef('')
+  useEffect(() => {
+    if (!data || !stateLoaded) return
+    const key = sourceId + '|' + url
+    if (prefetchedCont.current === key) return
+    prefetchedCont.current = key
+    const ordered = [...data.chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
+    const cont = ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1] || data.chapters[0]
+    if (cont) {
+      api.pages(sourceId, cont.url, data.manga.title, cont.name)
+        .then((r) => { for (let i = 0; i < Math.min(4, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, cont.url, i, data.manga.title, cont.name) } })
+        .catch(() => {})
+    }
+  }, [data, stateLoaded, readSet, sourceId, url])
 
   const chapterTotal = useMemo(() => {
     if (!data) return 0
