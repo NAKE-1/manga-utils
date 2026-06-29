@@ -61,6 +61,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -89,11 +91,14 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -109,6 +114,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -175,6 +182,7 @@ import mangautils.core.extension.ExtensionRepoEntry
 import mangautils.core.extension.InstalledExtension
 import mangautils.core.extension.InstalledStore
 import mangautils.core.extension.RepoStore
+import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryEntry
 import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
@@ -1714,6 +1722,63 @@ private fun ModeChip(label: String, icon: ImageVector, selected: Boolean, onClic
     }
 }
 
+@Composable
+private fun ChapterFilterDialog(
+    fltUnread: Boolean, fltDownloaded: Boolean, fltBookmarked: Boolean, sortMode: String, displayMode: String,
+    onFlt: (String, Boolean) -> Unit, onSort: (String) -> Unit, onDisplay: (String) -> Unit, onDismiss: () -> Unit,
+) {
+    var tab by remember { mutableStateOf(0) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MuTheme.Panel,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done", color = MuTheme.Vermilion) } },
+        text = {
+            Column {
+                TabRow(selectedTabIndex = tab, containerColor = Color.Transparent, contentColor = MuTheme.Paper) {
+                    listOf("FILTER", "SORT", "DISPLAY").forEachIndexed { i, label ->
+                        Tab(selected = tab == i, onClick = { tab = i }, selectedContentColor = MuTheme.Vermilion, unselectedContentColor = MuTheme.Muted) {
+                            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 12.dp))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                when (tab) {
+                    0 -> Column {
+                        CheckRow("Unread", fltUnread) { onFlt("unread", it) }
+                        CheckRow("Downloaded", fltDownloaded) { onFlt("downloaded", it) }
+                        CheckRow("Bookmarked", fltBookmarked) { onFlt("bookmarked", it) }
+                    }
+                    1 -> Column {
+                        RadioRow("By source", sortMode == "SOURCE") { onSort("SOURCE") }
+                        RadioRow("By chapter number", sortMode == "NUMBER") { onSort("NUMBER") }
+                        RadioRow("By upload date", sortMode == "DATE") { onSort("DATE") }
+                    }
+                    else -> Column {
+                        RadioRow("Source title", displayMode == "TITLE") { onDisplay("TITLE") }
+                        RadioRow("Chapter number", displayMode == "NUMBER") { onDisplay("NUMBER") }
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChange, colors = CheckboxDefaults.colors(checkedColor = MuTheme.Vermilion))
+        Text(label, color = MuTheme.Paper)
+    }
+}
+
+@Composable
+private fun RadioRow(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onSelect).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, onClick = onSelect, colors = RadioButtonDefaults.colors(selectedColor = MuTheme.Vermilion))
+        Text(label, color = MuTheme.Paper)
+    }
+}
+
 // ---- Detail (two-column) --------------------------------------------------------------------
 
 /** Build full details from the cached library entry (offline / instant). */
@@ -1753,7 +1818,15 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     var bgBmp by remember(s) { mutableStateOf<ImageBitmap?>(null) }
     var coverTint by remember(s) { mutableStateOf<Color?>(null) }
     var readUrls by remember(s) { mutableStateOf(ReadStore.readUrls(s.sourceId, s.url)) }
+    var bookmarkUrls by remember(s) { mutableStateOf(BookmarkStore.bookmarks(s.sourceId, s.url)) }
     var dlVersion by remember(s) { mutableStateOf(0) }
+    // Chapter Filter / Sort / Display.
+    var fltUnread by remember(s) { mutableStateOf(false) }
+    var fltDownloaded by remember(s) { mutableStateOf(false) }
+    var fltBookmarked by remember(s) { mutableStateOf(false) }
+    var sortMode by remember(s) { mutableStateOf("SOURCE") } // SOURCE | NUMBER | DATE
+    var displayMode by remember(s) { mutableStateOf("TITLE") } // TITLE | NUMBER
+    var showChapterMenu by remember(s) { mutableStateOf(false) }
     val settings = remember { runCatching { SettingsStore.get() }.getOrNull() }
     val bgEnabled = settings?.mangaThumbnailBackground ?: true
     val dynColors = settings?.dynamicThemeColors ?: true
@@ -1828,6 +1901,28 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
         Toasts.info("Queued download")
     }
     fun openInBrowser() { browseUrl?.let { u -> runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(u)) } } }
+    fun toggleBookmark(url: String) {
+        val now = url !in bookmarkUrls
+        scope.launch { withContext(Dispatchers.IO) { BookmarkStore.setBookmarked(s.sourceId, s.url, url, now) }; bookmarkUrls = BookmarkStore.bookmarks(s.sourceId, s.url); Toasts.info(if (now) "Bookmarked" else "Bookmark removed") }
+    }
+    fun markPreviousRead(number: Float) {
+        val chs = details?.chapters ?: return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                chs.filter { runCatching { it.chapter_number }.getOrDefault(-1f) in 0f..number }.forEach { ReadStore.setRead(s.sourceId, s.url, it.url, true) }
+            }
+            readUrls = ReadStore.readUrls(s.sourceId, s.url)
+        }
+    }
+    fun openChapterInBrowser(chapterUrl: String) {
+        scope.launch {
+            val url = withContext(Dispatchers.IO) {
+                val src = runCatching { SourceManager.loadSource(s.sourceId) }.getOrNull() as? HttpSource
+                src?.let { hs -> runCatching { hs.getChapterUrl(SChapter.create().apply { url = chapterUrl }) }.getOrNull()?.takeIf { it.isNotBlank() } ?: if (chapterUrl.startsWith("http")) chapterUrl else hs.baseUrl.trimEnd('/') + "/" + chapterUrl.trimStart('/') }
+            }
+            if (url != null) runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } else Toasts.error("No chapter URL")
+        }
+    }
     fun openFolder() {
         runCatching {
             val dir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(s.title))
@@ -1947,9 +2042,24 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                 // RIGHT: chapter list + RESUME
                 Box(Modifier.weight(0.58f).fillMaxHeight()) {
                     val chapterListState = rememberLazyListState()
+                    // Chapter total = highest chapter number (dual-scanlator dupes inflate the count); fall back to size.
+                    val chapterTotal = remember(d.chapters) {
+                        d.chapters.mapNotNull { runCatching { it.chapter_number }.getOrNull()?.takeIf { n -> n > 0f } }.maxOrNull()
+                            ?.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() } ?: d.chapters.size.toString()
+                    }
+                    val activeFilters = (if (fltUnread) 1 else 0) + (if (fltDownloaded) 1 else 0) + (if (fltBookmarked) 1 else 0)
+                    val shown = d.chapters
+                        .let { if (fltUnread) it.filter { c -> c.url !in readUrls } else it }
+                        .let { if (fltDownloaded) it.filter { c -> DownloadManager.isDownloaded(s.title, c.name) } else it }
+                        .let { if (fltBookmarked) it.filter { c -> c.url in bookmarkUrls } else it }
+                        .let { when (sortMode) {
+                            "NUMBER" -> it.sortedByDescending { c -> runCatching { c.chapter_number }.getOrDefault(-1f) }
+                            "DATE" -> it.sortedByDescending { c -> c.date_upload }
+                            else -> it
+                        } }
                     Column(Modifier.fillMaxSize()) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("${d.chapters.size} chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("$chapterTotal chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             IconButton(onClick = { refresh() }, enabled = !refreshing) {
                                 if (refreshing) CircularProgressIndicator(color = MuTheme.Muted, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                                 else Icon(Icons.Filled.Refresh, "Refresh from source", tint = MuTheme.Muted)
@@ -1961,13 +2071,27 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 DownloadQueue.enqueueAll(s.sourceId, s.url, s.title, d.chapters.map { it.url to it.name })
                                 Toasts.info("Queued ${d.chapters.size} chapters")
                             }) { Icon(Icons.Filled.Download, "Download all", tint = MuTheme.Muted) }
+                            BadgedBox(badge = { if (activeFilters > 0) Badge(containerColor = MuTheme.Vermilion) { Text("$activeFilters") } }) {
+                                IconButton(onClick = { showChapterMenu = true }) { Icon(Icons.Filled.FilterList, "Filter, sort, display", tint = if (activeFilters > 0 || sortMode != "SOURCE") MuTheme.Vermilion else MuTheme.Muted) }
+                            }
+                        }
+                        if (showChapterMenu) {
+                            ChapterFilterDialog(
+                                fltUnread, fltDownloaded, fltBookmarked, sortMode, displayMode,
+                                onFlt = { k, v -> when (k) { "unread" -> fltUnread = v; "downloaded" -> fltDownloaded = v; else -> fltBookmarked = v } },
+                                onSort = { sortMode = it }, onDisplay = { displayMode = it },
+                                onDismiss = { showChapterMenu = false },
+                            )
                         }
                       Box(Modifier.weight(1f)) {
                         LazyColumn(state = chapterListState, modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 18.dp)) {
-                            items(d.chapters) { ch ->
+                            items(shown) { ch ->
                                 val read = ch.url in readUrls
+                                val bookmarked = ch.url in bookmarkUrls
                                 val downloaded = remember(ch.url, DownloadQueue.completedTick) { DownloadManager.isDownloaded(s.title, ch.name) }
                                 val dl = DownloadQueue.items.firstOrNull { it.chapterUrl == ch.url }
+                                val chNum = runCatching { ch.chapter_number }.getOrDefault(-1f)
+                                val displayName = if (displayMode == "NUMBER" && chNum > 0f) "Chapter ${if (chNum % 1f == 0f) chNum.toInt() else chNum}" else ch.name
                                 var chMenu by remember(ch.url) { mutableStateOf(false) }
                                 Card(
                                     onClick = { onReadChapter(ch.url, ch.name) },
@@ -1975,8 +2099,9 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (bookmarked) Icon(Icons.Filled.Bookmark, "Bookmarked", tint = acc, modifier = Modifier.padding(start = 12.dp).size(16.dp))
                                         Column(Modifier.weight(1f).padding(14.dp)) {
-                                            Text(ch.name, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(displayName, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Row {
                                                 val meta = listOfNotNull(
                                                     ch.scanlator?.takeIf { it.isNotBlank() },
@@ -2000,8 +2125,11 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                         Box {
                                             IconButton(onClick = { chMenu = true }) { Icon(Icons.Filled.MoreVert, "Chapter menu", tint = MuTheme.Muted) }
                                             DropdownMenu(chMenu, onDismissRequest = { chMenu = false }) {
-                                                DropdownMenuItem(text = { Text(if (downloaded) "Downloaded" else "Download") }, enabled = !downloaded && dl == null, onClick = { chMenu = false; downloadChapter(ch.url, ch.name) })
-                                                DropdownMenuItem(text = { Text(if (read) "Mark as unread" else "Mark as read") }, onClick = { chMenu = false; setChapterRead(ch.url, !read) })
+                                                DropdownMenuItem(text = { Text("Open in browser") }, leadingIcon = { Icon(Icons.Filled.OpenInNew, null, modifier = Modifier.size(18.dp)) }, onClick = { chMenu = false; openChapterInBrowser(ch.url) })
+                                                DropdownMenuItem(text = { Text(if (downloaded) "Downloaded" else "Download") }, leadingIcon = { Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp)) }, enabled = !downloaded && dl == null, onClick = { chMenu = false; downloadChapter(ch.url, ch.name) })
+                                                DropdownMenuItem(text = { Text(if (bookmarked) "Remove bookmark" else "Add bookmark") }, leadingIcon = { Icon(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, null, modifier = Modifier.size(18.dp)) }, onClick = { chMenu = false; toggleBookmark(ch.url) })
+                                                DropdownMenuItem(text = { Text(if (read) "Mark as unread" else "Mark as read") }, leadingIcon = { Icon(Icons.Filled.Check, null, modifier = Modifier.size(18.dp)) }, onClick = { chMenu = false; setChapterRead(ch.url, !read) })
+                                                DropdownMenuItem(text = { Text("Mark previous as read") }, leadingIcon = { Icon(Icons.Filled.DoneAll, null, modifier = Modifier.size(18.dp)) }, enabled = chNum > 0f, onClick = { chMenu = false; markPreviousRead(chNum) })
                                             }
                                         }
                                     }
