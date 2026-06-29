@@ -22,6 +22,7 @@ export const IconSettings = ({ className }: P) => (
 export const IconDownload = S('M12 3v12 M7 11l5 5 5-5 M5 21h14')
 export const IconMenu = S('M3 6h18 M3 12h18 M3 18h18')
 export const IconChevronRight = S('M9 5l7 7-7 7')
+export const IconChevronDown = S('M6 9l6 6 6-6')
 export const IconChevronLeft = S('M15 5l-7 7 7 7')
 export const IconArrowUp = S('M12 20V5 M5 12l7-7 7 7')
 export const IconArrowLeft = S('M15 5l-7 7 7 7 M8 12h12')

@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import mangautils.core.download.DownloadManager
+import mangautils.core.extension.InstalledStore
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
@@ -50,7 +51,7 @@ private val log = LoggerFactory.getLogger("mangautils.server")
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
-private data class SourceDto(val id: String, val name: String, val lang: String)
+private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean)
 
 @Serializable
 private data class MangaDto(
@@ -176,7 +177,10 @@ fun Application.module() {
         // ---- Sources ----
         get("/api/sources") {
             val sources = withContext(Dispatchers.IO) {
-                SourceManager.listInstalledSources().map { SourceDto(it.id.toString(), it.name, it.lang) }
+                // nsfw lives on the parent extension; flatten so each source carries its 18+ flag.
+                InstalledStore.list()
+                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw) } }
+                    .sortedBy { it.name.lowercase() }
             }
             call.respond(sources)
         }

@@ -3,6 +3,7 @@ import { api, coverUrl, mediaType, Source, Manga } from '../api'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
+import { SourcePicker } from '../components/SourcePicker'
 import { IconSearch } from '../components/icons'
 
 type Mode = 'popular' | 'latest' | 'search'
@@ -74,9 +75,9 @@ export function Search() {
         </div>
       </div>
 
-      {sources.length > 1 && (
-        <div className="chip-row src-chips">
-          {sources.map((s) => <span key={s.id} className={'chip' + (s.id === sourceId ? ' on' : '')} onClick={() => setSourceId(s.id)}>{s.name}</span>)}
+      {sources.length > 0 && (
+        <div className="src-picker-wrap">
+          <SourcePicker sources={sources} value={sourceId} onChange={setSourceId} />
         </div>
       )}
 
