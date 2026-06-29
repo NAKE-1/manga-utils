@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -87,6 +88,7 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Update
@@ -1827,6 +1829,9 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     var sortMode by remember(s) { mutableStateOf("SOURCE") } // SOURCE | NUMBER | DATE
     var displayMode by remember(s) { mutableStateOf("TITLE") } // TITLE | NUMBER
     var showChapterMenu by remember(s) { mutableStateOf(false) }
+    // Multi-select.
+    var selecting by remember(s) { mutableStateOf(false) }
+    val selected = remember(s) { mutableStateListOf<String>() }
     val settings = remember { runCatching { SettingsStore.get() }.getOrNull() }
     val bgEnabled = settings?.mangaThumbnailBackground ?: true
     val dynColors = settings?.dynamicThemeColors ?: true
@@ -2058,6 +2063,17 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                             else -> it
                         } }
                     Column(Modifier.fillMaxSize()) {
+                        if (selecting) {
+                            // Selection action bar.
+                            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { selecting = false; selected.clear() }) { Icon(Icons.Filled.Close, "Cancel selection", tint = MuTheme.Paper) }
+                                Text("${selected.size} selected", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { selected.clear(); selected.addAll(shown.map { it.url }) }) { Icon(Icons.Filled.SelectAll, "Select all", tint = MuTheme.Muted) }
+                                IconButton(onClick = { val urls = selected.toList(); scope.launch { withContext(Dispatchers.IO) { urls.forEach { ReadStore.setRead(s.sourceId, s.url, it, true) } }; readUrls = ReadStore.readUrls(s.sourceId, s.url) } }) { Icon(Icons.Filled.DoneAll, "Mark read", tint = MuTheme.Muted) }
+                                IconButton(onClick = { val picked = shown.filter { it.url in selected }; DownloadQueue.enqueueAll(s.sourceId, s.url, s.title, picked.map { it.url to it.name }); Toasts.info("Queued ${picked.size} chapters") }) { Icon(Icons.Filled.Download, "Download", tint = MuTheme.Muted) }
+                                IconButton(onClick = { val urls = selected.toList(); scope.launch { withContext(Dispatchers.IO) { urls.forEach { BookmarkStore.setBookmarked(s.sourceId, s.url, it, true) } }; bookmarkUrls = BookmarkStore.bookmarks(s.sourceId, s.url) } }) { Icon(Icons.Filled.Bookmark, "Bookmark", tint = MuTheme.Muted) }
+                            }
+                        } else {
                         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("$chapterTotal chapters", color = MuTheme.Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             IconButton(onClick = { refresh() }, enabled = !refreshing) {
@@ -2067,13 +2083,30 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                             IconButton(onClick = {
                                 scope.launch { withContext(Dispatchers.IO) { d.chapters.forEach { ReadStore.setRead(s.sourceId, s.url, it.url, true) } }; readUrls = ReadStore.readUrls(s.sourceId, s.url) }
                             }) { Icon(Icons.Filled.DoneAll, "Mark all read", tint = MuTheme.Muted) }
-                            IconButton(onClick = {
-                                DownloadQueue.enqueueAll(s.sourceId, s.url, s.title, d.chapters.map { it.url to it.name })
-                                Toasts.info("Queued ${d.chapters.size} chapters")
-                            }) { Icon(Icons.Filled.Download, "Download all", tint = MuTheme.Muted) }
+                            // Download dropdown: next N unread / unread / all.
+                            var dlMenu by remember { mutableStateOf(false) }
+                            fun queueUnread(n: Int?) {
+                                val ordered = d.chapters.sortedBy { runCatching { it.chapter_number }.getOrDefault(Float.MAX_VALUE) }
+                                val unread = ordered.filter { it.url !in readUrls && !DownloadManager.isDownloaded(s.title, it.name) }
+                                val pick = if (n == null) unread else unread.take(n)
+                                DownloadQueue.enqueueAll(s.sourceId, s.url, s.title, pick.map { it.url to it.name })
+                                Toasts.info("Queued ${pick.size} chapters"); dlMenu = false
+                            }
+                            Box {
+                                IconButton(onClick = { dlMenu = true }) { Icon(Icons.Filled.Download, "Download", tint = MuTheme.Muted) }
+                                DropdownMenu(dlMenu, onDismissRequest = { dlMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Next chapter") }, onClick = { queueUnread(1) })
+                                    DropdownMenuItem(text = { Text("Next 5 chapters") }, onClick = { queueUnread(5) })
+                                    DropdownMenuItem(text = { Text("Next 10 chapters") }, onClick = { queueUnread(10) })
+                                    DropdownMenuItem(text = { Text("Next 25 chapters") }, onClick = { queueUnread(25) })
+                                    DropdownMenuItem(text = { Text("Unread") }, onClick = { queueUnread(null) })
+                                    DropdownMenuItem(text = { Text("All") }, onClick = { DownloadQueue.enqueueAll(s.sourceId, s.url, s.title, d.chapters.map { it.url to it.name }); Toasts.info("Queued ${d.chapters.size} chapters"); dlMenu = false })
+                                }
+                            }
                             BadgedBox(badge = { if (activeFilters > 0) Badge(containerColor = MuTheme.Vermilion) { Text("$activeFilters") } }) {
                                 IconButton(onClick = { showChapterMenu = true }) { Icon(Icons.Filled.FilterList, "Filter, sort, display", tint = if (activeFilters > 0 || sortMode != "SOURCE") MuTheme.Vermilion else MuTheme.Muted) }
                             }
+                        }
                         }
                         if (showChapterMenu) {
                             ChapterFilterDialog(
@@ -2093,13 +2126,15 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                 val chNum = runCatching { ch.chapter_number }.getOrDefault(-1f)
                                 val displayName = if (displayMode == "NUMBER" && chNum > 0f) "Chapter ${if (chNum % 1f == 0f) chNum.toInt() else chNum}" else ch.name
                                 var chMenu by remember(ch.url) { mutableStateOf(false) }
+                                val isSel = ch.url in selected
                                 Card(
-                                    onClick = { onReadChapter(ch.url, ch.name) },
-                                    colors = CardDefaults.cardColors(containerColor = if (read) MuTheme.Ink else MuTheme.Panel),
+                                    onClick = { if (selecting) { if (isSel) selected.remove(ch.url) else selected.add(ch.url) } else onReadChapter(ch.url, ch.name) },
+                                    colors = CardDefaults.cardColors(containerColor = if (isSel) acc.copy(alpha = 0.25f) else if (read) MuTheme.Ink else MuTheme.Panel),
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (bookmarked) Icon(Icons.Filled.Bookmark, "Bookmarked", tint = acc, modifier = Modifier.padding(start = 12.dp).size(16.dp))
+                                        if (selecting) Checkbox(checked = isSel, onCheckedChange = { if (it) selected.add(ch.url) else selected.remove(ch.url) }, colors = CheckboxDefaults.colors(checkedColor = acc))
+                                        else if (bookmarked) Icon(Icons.Filled.Bookmark, "Bookmarked", tint = acc, modifier = Modifier.padding(start = 12.dp).size(16.dp))
                                         Column(Modifier.weight(1f).padding(14.dp)) {
                                             Text(displayName, color = if (read) MuTheme.Muted else MuTheme.Paper, fontWeight = if (read) FontWeight.Normal else FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Row {
@@ -2125,6 +2160,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                         Box {
                                             IconButton(onClick = { chMenu = true }) { Icon(Icons.Filled.MoreVert, "Chapter menu", tint = MuTheme.Muted) }
                                             DropdownMenu(chMenu, onDismissRequest = { chMenu = false }) {
+                                                DropdownMenuItem(text = { Text("Select") }, leadingIcon = { Icon(Icons.Filled.CheckBoxOutlineBlank, null, modifier = Modifier.size(18.dp)) }, onClick = { chMenu = false; selecting = true; if (ch.url !in selected) selected.add(ch.url) })
                                                 DropdownMenuItem(text = { Text("Open in browser") }, leadingIcon = { Icon(Icons.Filled.OpenInNew, null, modifier = Modifier.size(18.dp)) }, onClick = { chMenu = false; openChapterInBrowser(ch.url) })
                                                 DropdownMenuItem(text = { Text(if (downloaded) "Downloaded" else "Download") }, leadingIcon = { Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp)) }, enabled = !downloaded && dl == null, onClick = { chMenu = false; downloadChapter(ch.url, ch.name) })
                                                 DropdownMenuItem(text = { Text(if (bookmarked) "Remove bookmark" else "Add bookmark") }, leadingIcon = { Icon(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, null, modifier = Modifier.size(18.dp)) }, onClick = { chMenu = false; toggleBookmark(ch.url) })
