@@ -381,5 +381,26 @@ class DownloadManager(
             return java.nio.file.Files.isDirectory(folder) &&
                 runCatching { java.nio.file.Files.list(folder).use { it.findFirst().isPresent } }.getOrDefault(false)
         }
+
+        /** Number of downloaded chapters (CBZ files + image folders) for a series. */
+        fun downloadCount(title: String): Int {
+            val dir = AppConfig.downloadsDir.resolve(sanitize(title))
+            if (!java.nio.file.Files.isDirectory(dir)) return 0
+            return runCatching {
+                java.nio.file.Files.list(dir).use { st ->
+                    st.filter { java.nio.file.Files.isDirectory(it) || it.toString().endsWith(".cbz") }.count().toInt()
+                }
+            }.getOrDefault(0)
+        }
+
+        /** Delete all downloaded files for a series. Returns true if anything was removed. */
+        fun deleteDownloads(title: String): Boolean {
+            val dir = AppConfig.downloadsDir.resolve(sanitize(title))
+            if (!java.nio.file.Files.exists(dir)) return false
+            return runCatching {
+                java.nio.file.Files.walk(dir).use { st -> st.sorted(Comparator.reverseOrder()).forEach { java.nio.file.Files.deleteIfExists(it) } }
+                true
+            }.getOrDefault(false)
+        }
     }
 }

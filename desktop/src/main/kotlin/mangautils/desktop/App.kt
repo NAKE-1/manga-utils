@@ -833,8 +833,13 @@ private fun LibraryScreen(onOpen: (LibraryEntry) -> Unit) {
 private fun LibraryCard(e: LibraryEntry, onOpen: () -> Unit, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmStep by remember { mutableStateOf(0) } // 0 none, 1 delete downloads, 2 confirm remove
+    var dlCount by remember { mutableStateOf(0) }
     fun markAll(read: Boolean) {
         scope.launch { withContext(Dispatchers.IO) { e.knownChapters.forEach { ReadStore.setRead(e.sourceId, e.mangaUrl, it.url, read) } } }
+    }
+    fun doRemove() {
+        scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(e.sourceId, e.mangaUrl) }; onChanged(); Toasts.success("Removed manga from the library") }
     }
     Box {
         MangaCover(e.sourceId, MangaRef(e.title, e.mangaUrl, e.thumbnailUrl), "${e.knownChapters.size} ch") { onOpen() }
@@ -854,10 +859,30 @@ private fun LibraryCard(e: LibraryEntry, onOpen: () -> Unit, onChanged: () -> Un
                     text = { Text("Remove from library", color = MuTheme.Vermilion) },
                     onClick = {
                         menuOpen = false
-                        scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(e.sourceId, e.mangaUrl) }; onChanged(); Toasts.success("Removed manga from the library") }
+                        scope.launch { val n = withContext(Dispatchers.IO) { DownloadManager.downloadCount(e.title) }; dlCount = n; confirmStep = if (n > 0) 1 else 2 }
                     },
                 )
             }
+        }
+        if (confirmStep == 1) {
+            AlertDialog(
+                onDismissRequest = { confirmStep = 0 },
+                containerColor = MuTheme.Panel,
+                title = { Text("Delete downloads?", color = MuTheme.Paper) },
+                text = { Text("“${e.title}” has $dlCount downloaded chapter(s). Delete the downloaded files too?", color = MuTheme.Muted) },
+                confirmButton = { TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { DownloadManager.deleteDownloads(e.title) }; confirmStep = 2 } }) { Text("Delete downloads", color = MuTheme.Vermilion) } },
+                dismissButton = { TextButton(onClick = { confirmStep = 2 }) { Text("Keep downloads", color = MuTheme.Muted) } },
+            )
+        }
+        if (confirmStep == 2) {
+            AlertDialog(
+                onDismissRequest = { confirmStep = 0 },
+                containerColor = MuTheme.Panel,
+                title = { Text("Remove from library?", color = MuTheme.Paper) },
+                text = { Text("Remove “${e.title}” from your library?", color = MuTheme.Muted) },
+                confirmButton = { TextButton(onClick = { confirmStep = 0; doRemove() }) { Text("Remove", color = MuTheme.Vermilion) } },
+                dismissButton = { TextButton(onClick = { confirmStep = 0 }) { Text("Cancel", color = MuTheme.Muted) } },
+            )
         }
     }
 }
@@ -1896,10 +1921,12 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     val selected = remember(s) { mutableStateListOf<String>() }
     var showCover by remember(s) { mutableStateOf(false) }
     var newChapterUrls by remember(s) { mutableStateOf<Set<String>>(emptySet()) }
+    var removeStep by remember(s) { mutableStateOf(0) }
+    var removeDlCount by remember(s) { mutableStateOf(0) }
     val settings = remember { runCatching { SettingsStore.get() }.getOrNull() }
     val bgEnabled = settings?.mangaThumbnailBackground ?: true
     val dynColors = settings?.dynamicThemeColors ?: true
-    val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+    val dateFmt = remember { SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()) }
 
     var refreshTick by remember(s) { mutableStateOf(0) }
     var refreshing by remember(s) { mutableStateOf(false) }
@@ -1954,17 +1981,20 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     }
     DisposableEffect(s) { onDispose { MuTheme.dynamicOverride = null } }
 
+    fun doRemoveLibrary() {
+        scope.launch { withContext(Dispatchers.IO) { LibraryService.remove(s.sourceId, s.url) }; inLibrary = false; Toasts.success("Removed manga from the library") }
+    }
     fun toggleLibrary() {
         val dd = details ?: return
-        scope.launch {
-            inLibrary = withContext(Dispatchers.IO) {
-                if (LibraryService.isFollowed(s.sourceId, s.url)) {
-                    LibraryService.remove(s.sourceId, s.url); false
-                } else {
-                    LibraryService.addKnown(s.sourceId, s.url, s.title, dd.manga, dd.chapters); true
-                }
+        if (inLibrary) {
+            // Removing: confirm download deletion (if any), then confirm removal.
+            scope.launch { val n = withContext(Dispatchers.IO) { DownloadManager.downloadCount(s.title) }; removeDlCount = n; removeStep = if (n > 0) 1 else 2 }
+        } else {
+            scope.launch {
+                withContext(Dispatchers.IO) { LibraryService.addKnown(s.sourceId, s.url, s.title, dd.manga, dd.chapters) }
+                inLibrary = true
+                Toasts.success("Added manga to library!")
             }
-            Toasts.success(if (inLibrary) "Added manga to library!" else "Removed manga from the library")
         }
     }
     fun setChapterRead(url: String, read: Boolean) {
@@ -2003,6 +2033,27 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
             val target = if (java.nio.file.Files.exists(dir)) dir else AppConfig.downloadsDir
             java.awt.Desktop.getDesktop().open(target.toFile())
         }
+    }
+
+    if (removeStep == 1) {
+        AlertDialog(
+            onDismissRequest = { removeStep = 0 },
+            containerColor = MuTheme.Panel,
+            title = { Text("Delete downloads?", color = MuTheme.Paper) },
+            text = { Text("“${s.title}” has $removeDlCount downloaded chapter(s). Delete the downloaded files too?", color = MuTheme.Muted) },
+            confirmButton = { TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { DownloadManager.deleteDownloads(s.title) }; removeStep = 2 } }) { Text("Delete downloads", color = MuTheme.Vermilion) } },
+            dismissButton = { TextButton(onClick = { removeStep = 2 }) { Text("Keep downloads", color = MuTheme.Muted) } },
+        )
+    }
+    if (removeStep == 2) {
+        AlertDialog(
+            onDismissRequest = { removeStep = 0 },
+            containerColor = MuTheme.Panel,
+            title = { Text("Remove from library?", color = MuTheme.Paper) },
+            text = { Text("Remove “${s.title}” from your library?", color = MuTheme.Muted) },
+            confirmButton = { TextButton(onClick = { removeStep = 0; doRemoveLibrary() }) { Text("Remove", color = MuTheme.Vermilion) } },
+            dismissButton = { TextButton(onClick = { removeStep = 0 }) { Text("Cancel", color = MuTheme.Muted) } },
+        )
     }
 
     when {
