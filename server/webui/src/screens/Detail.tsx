@@ -95,15 +95,6 @@ export function Detail() {
     try { setData(await api.detail(sourceId, url, true)) } finally { setChecking(false) }
   }
 
-  function toggleRead(e: React.MouseEvent, chUrl: string) {
-    e.stopPropagation()
-    const now = !readSet.has(chUrl)
-    const next = new Set(readSet)
-    now ? next.add(chUrl) : next.delete(chUrl)
-    setReadSet(next)
-    api.setRead(sourceId, url, chUrl, now)
-  }
-
   function openContinue() {
     if (!data) return
     const ordered = [...data.chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
@@ -146,7 +137,6 @@ export function Detail() {
         </div>
         {c.downloaded && <IconDownload className="chapter-dl" />}
         {bm && <IconBookmarkSm filled className="chapter-bm" />}
-        <button className={'ch-check' + (read ? ' on' : '')} onClick={(e) => toggleRead(e, c.url)} aria-label={read ? 'Mark unread' : 'Mark read'} />
       </div>
     )
   }
