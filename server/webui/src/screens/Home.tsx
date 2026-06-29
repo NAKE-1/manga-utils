@@ -49,7 +49,7 @@ export function Home() {
               sourceId={h.sourceId}
               url={h.mangaUrl}
               title={h.mangaTitle}
-              cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl))}
+              cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)}
               subtitle={h.chapterName}
             />
           ))}
@@ -64,7 +64,7 @@ export function Home() {
               sourceId={e.sourceId}
               url={e.url}
               title={e.title}
-              cover={coverUrl(e.sourceId, e.thumbnailUrl)}
+              cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)}
               badge={e.newChapters}
               subtitle={`${e.newChapters} new`}
             />
@@ -74,7 +74,7 @@ export function Home() {
 
       <GridSection title="Library" to="/list/library">
         {libraryAZ.map((e) => (
-          <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl)} badge={e.newChapters} />
+          <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} badge={e.newChapters} />
         ))}
       </GridSection>
     </>

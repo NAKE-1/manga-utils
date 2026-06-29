@@ -113,8 +113,8 @@ export const STATUS_LABELS: Record<number, string> = {
 }
 
 // Image URLs (streamed by the backend).
-export const coverUrl = (sourceId: string, url?: string | null) =>
-  url ? `/img/cover?source=${sourceId}&url=${encodeURIComponent(url)}` : ''
+export const coverUrl = (sourceId: string, url?: string | null, title?: string) =>
+  url ? `/img/cover?source=${sourceId}&url=${encodeURIComponent(url)}${title ? `&title=${encodeURIComponent(title)}` : ''}` : ''
 
 export const pageUrl = (sourceId: string, chapter: string, index: number, title?: string, name?: string) => {
   let u = `/img/page?source=${sourceId}&chapter=${encodeURIComponent(chapter)}&index=${index}`

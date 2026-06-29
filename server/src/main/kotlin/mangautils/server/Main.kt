@@ -349,8 +349,12 @@ fun Application.module() {
         get("/img/cover") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val title = call.queryParam("title")
             val bytes = coverCache[url] ?: withContext(Dispatchers.IO) {
-                SourceImage.coverBytes(id, url)?.let { CoverImage.thumbnail(it) }?.also { coverCache[url] = it }
+                // Offline-first: a downloaded series' cover on disk wins over the source.
+                val raw = title?.let { t -> DownloadManager.localCover(t)?.let { p -> runCatching { java.nio.file.Files.readAllBytes(p) }.getOrNull() } }
+                    ?: SourceImage.coverBytes(id, url)
+                raw?.let { CoverImage.thumbnail(it) }?.also { coverCache[url] = it }
             }
             if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
                 call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=86400")

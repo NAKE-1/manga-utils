@@ -114,6 +114,9 @@ class DownloadManager(
             if (targets.isEmpty()) error("No chapters matched the selection")
             log.debug("Job {}: {} chapter(s) selected for '{}'", job.id, targets.size, title)
 
+            // Save the cover into the series folder so it's available offline (once per series).
+            runCatching { saveCover(primary.sourceId, title, details) }
+
             // Pre-fetch mirror chapter lists so we can match by chapter number on fallback.
             val mirrorChapters =
                 mirrors.mapNotNull { ref ->
@@ -334,6 +337,26 @@ class DownloadManager(
         }
     }
 
+    /** Fetch + write the manga cover into the series folder as cover.<ext>, once (offline covers). */
+    private fun saveCover(sourceId: Long, title: String, details: SManga) {
+        val url = runCatching { details.thumbnail_url }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
+        if (localCover(title) != null) return
+        val bytes = runCatching { mangautils.core.source.SourceImage.coverBytes(sourceId, url) }.getOrNull() ?: return
+        val dir = AppConfig.downloadsDir.resolve(sanitize(title))
+        runCatching {
+            java.nio.file.Files.createDirectories(dir)
+            java.nio.file.Files.write(dir.resolve("cover." + coverExt(bytes)), bytes)
+        }
+    }
+
+    private fun coverExt(b: ByteArray): String = when {
+        b.size >= 2 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() -> "jpg"
+        b.size >= 4 && b[0] == 0x89.toByte() && b[1] == 0x50.toByte() -> "png"
+        b.size >= 12 && b[8] == 'W'.code.toByte() && b[9] == 'E'.code.toByte() -> "webp"
+        b.size >= 3 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() -> "gif"
+        else -> "jpg"
+    }
+
     private fun destFor(
         title: String,
         chapter: SChapter,
@@ -391,6 +414,15 @@ class DownloadManager(
                     st.filter { java.nio.file.Files.isDirectory(it) || it.toString().endsWith(".cbz") }.count().toInt()
                 }
             }.getOrDefault(0)
+        }
+
+        /** The on-disk cover for a downloaded series (cover.jpg/png/webp/…), or null. */
+        fun localCover(title: String): java.nio.file.Path? {
+            val dir = AppConfig.downloadsDir.resolve(sanitize(title))
+            if (!java.nio.file.Files.isDirectory(dir)) return null
+            return runCatching {
+                java.nio.file.Files.list(dir).use { s -> s.filter { it.fileName.toString().startsWith("cover.") }.findFirst().orElse(null) }
+            }.getOrNull()
         }
 
         /** Delete all downloaded files for a series. Returns true if anything was removed. */

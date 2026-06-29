@@ -162,7 +162,7 @@ export function Detail() {
     <BackWrap nav={nav}>
       <div className="detail-head">
         <div className="detail-cover">
-          {m.thumbnailUrl ? <img src={coverUrl(sourceId, m.thumbnailUrl)} alt="" /> : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
+          {m.thumbnailUrl ? <img src={coverUrl(sourceId, m.thumbnailUrl, m.title)} alt="" /> : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
         </div>
         <h1 className="detail-title">{m.title}</h1>
       </div>
