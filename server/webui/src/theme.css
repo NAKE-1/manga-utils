@@ -295,6 +295,17 @@ img { display: block; }
 .seg-btn.on { background: var(--accent); color: #fff; }
 .slider { width: 100%; accent-color: var(--accent); }
 
+/* ---- Search / Browse ---------------------------------------------------- */
+.search-bar-wrap { padding: 10px 16px 4px; position: sticky; top: calc(var(--topbar-h) + var(--safe-t)); background: var(--bg); z-index: 6; }
+.search-bar { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 0 12px; }
+.search-bar .sb-ic { width: 20px; height: 20px; color: var(--muted); flex: 0 0 auto; }
+.search-bar input { flex: 1; background: none; border: none; outline: none; color: var(--text); font-size: 16px; padding: 12px 0; }
+.sb-clear { color: var(--muted); font-size: 15px; padding: 6px; cursor: pointer; }
+.src-chips { padding: 8px 16px 2px; }
+.chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.recents { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.recents-h { width: 100%; font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+
 /* ---- Misc --------------------------------------------------------------- */
 .muted { color: var(--muted); }
 .center-msg { padding: 48px 24px; text-align: center; color: var(--muted); }

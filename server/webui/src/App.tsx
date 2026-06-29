@@ -5,6 +5,7 @@ import { Home } from './screens/Home'
 import { ListPage } from './screens/ListPage'
 import { Detail } from './screens/Detail'
 import { Reader } from './screens/Reader'
+import { Search } from './screens/Search'
 import { Stub } from './screens/Stub'
 
 export function App() {
@@ -25,7 +26,7 @@ export function App() {
           <Route path="/" element={<Home />} />
           <Route path="/list/:kind" element={<ListPage />} />
           <Route path="/library" element={<ListPage />} />
-          <Route path="/search" element={<Stub name="Search" />} />
+          <Route path="/search" element={<Search />} />
           <Route path="/settings" element={<Stub name="Settings" />} />
           <Route path="/downloads" element={<Stub name="Downloads" />} />
           <Route path="/manga/:sourceId" element={<Detail />} />
