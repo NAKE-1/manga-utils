@@ -135,19 +135,26 @@ export function Reader() {
         <div className="reader-pill">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div>
       ) : null}
 
-      {/* Chrome */}
+      {/* Chrome — free-floating, no full-width bars */}
       {chrome && (
         <>
-          <div className="reader-top" onClick={(e) => e.stopPropagation()}>
+          <div className="reader-left" onClick={(e) => e.stopPropagation()}>
             <button className="r-icon" onClick={() => nav(-1)} aria-label="Back"><IconArrowLeft /></button>
             <button className="r-icon" onClick={() => nav('/')} aria-label="Home"><IconHome /></button>
-            <div className="reader-title">{title}{name ? ` · ${name}` : ''}</div>
           </div>
 
-          <div className="reader-bottom" onClick={(e) => e.stopPropagation()}>
-            <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
-            <div className="reader-chiplabel">{name || 'Chapter'}{count ? ` · ${page}/${count}` : ''}</div>
-            <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
+          <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}{name ? ` · ${name}` : ''}</div>
+
+          <div className="reader-nav" onClick={(e) => e.stopPropagation()}>
+            {count ? <div className="reader-progress">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div> : null}
+            <div className="reader-navrow">
+              <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
+              <div className="reader-chip">{name || `Chapter ${curNum}`}</div>
+              <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
+            </div>
+          </div>
+
+          <div className="reader-tools" onClick={(e) => e.stopPropagation()}>
             <button className="r-icon" onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
             <button className="r-icon" onClick={() => setShowSettings(true)} aria-label="Settings"><IconSettings /></button>
           </div>
