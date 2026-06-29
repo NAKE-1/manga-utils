@@ -106,7 +106,6 @@ export function Reader() {
     // replace: don't pile chapter views onto history, so Back always returns to the manga screen.
     nav(`/reader/${sourceId}?manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(c.url)}&name=${encodeURIComponent(c.name)}&title=${encodeURIComponent(title)}`, { replace: true })
   }
-  const toManga = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(manga)}`)
 
   function onScroll() {
     const el = scrollRef.current
@@ -140,7 +139,7 @@ export function Reader() {
       {chrome && (
         <>
           <div className="reader-top" onClick={(e) => e.stopPropagation()}>
-            <button className="r-icon" onClick={toManga} aria-label="Back to manga"><IconArrowLeft /></button>
+            <button className="r-icon" onClick={() => nav(-1)} aria-label="Back"><IconArrowLeft /></button>
             <button className="r-icon" onClick={() => nav('/')} aria-label="Home"><IconHome /></button>
             <div className="reader-title">{title}{name ? ` · ${name}` : ''}</div>
           </div>
