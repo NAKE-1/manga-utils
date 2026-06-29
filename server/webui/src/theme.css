@@ -99,6 +99,10 @@ img { display: block; }
   border-radius: var(--radius); overflow: hidden; background: var(--card-2);
 }
 .cover-frame img { width: 100%; height: 100%; object-fit: cover; }
+.cover-frame img.cover-img { opacity: 0; transition: opacity .25s ease; position: relative; z-index: 1; }
+.cover-frame img.cover-img.loaded { opacity: 1; }
+.cover-skel { position: absolute; inset: 0; z-index: 0; }
+.sk-line { height: 12px; border-radius: 6px; }
 .cover-title {
   margin-top: 7px; font-size: 13px; line-height: 1.25; color: var(--text);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -249,7 +253,11 @@ img { display: block; }
 .reader { position: fixed; inset: 0; background: #000; }
 .reader-scroll { position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .strip { display: flex; flex-direction: column; align-items: center; min-height: 100%; }
-.page { display: block; }
+.page-slot { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.page-slot.loaded { min-height: 0; }
+.spinner.sm { width: 24px; height: 24px; margin: 0; position: absolute; }
+.page { display: block; opacity: 0; transition: opacity .2s ease; }
+.page.loaded { opacity: 1; }
 .page.clamp { width: 100%; max-width: 720px; height: auto; }
 .page.natural { width: auto; max-width: 100%; height: auto; }
 

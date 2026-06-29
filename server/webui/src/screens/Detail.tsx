@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState } from '../api'
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
+import { DetailSkeleton } from '../components/Skeleton'
 
 function relative(ms: number): string {
   if (!ms) return ''
@@ -112,7 +113,7 @@ export function Detail() {
   }
 
   if (error) return <BackWrap nav={nav}><div className="center-msg">Couldn't load this manga.</div></BackWrap>
-  if (!data) return <BackWrap nav={nav}><div className="spinner" /></BackWrap>
+  if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
 
   const m = data.manga
   const type = mediaType(m.genre)

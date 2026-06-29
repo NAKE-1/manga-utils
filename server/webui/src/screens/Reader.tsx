@@ -11,6 +11,25 @@ const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
  * preferring the chapter being read, then the same scanlator, then the latest. Mirrors the desktop
  * dedupChapters so prev/next move one real chapter at a time. Keeps source order (newest-first).
  */
+/** One page in the strip — reserves height with a spinner until the image loads, then fades it in. */
+function ReaderPage({ src, sizing, eager }: { src: string; sizing: Sizing; eager: boolean }) {
+  const [loaded, setLoaded] = useState(false)
+  return (
+    <div className={'page-slot' + (loaded ? ' loaded' : '')}>
+      {!loaded && <div className="spinner sm" />}
+      <img
+        className={'page ' + sizing + (loaded ? ' loaded' : '')}
+        src={src}
+        alt=""
+        loading={eager ? 'eager' : 'lazy'}
+        draggable={false}
+        onLoad={() => setLoaded(true)}
+        onError={(e) => { const img = e.currentTarget; if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = src + '&r=1' } }}
+      />
+    </div>
+  )
+}
+
 function dedupChapters(current: Chapter | undefined, all: Chapter[]): Chapter[] {
   if (!current) return all
   const byNum = new Map<number, Chapter[]>()
@@ -95,18 +114,7 @@ export function Reader() {
         {count !== null && count > 0 && (
           <div className="strip" style={{ gap: gap + 'px' }}>
             {Array.from({ length: count }, (_, i) => (
-              <img
-                key={i}
-                className={'page ' + sizing}
-                src={pageUrl(sourceId, chapter, i, title, name)}
-                alt=""
-                loading={i < 3 ? 'eager' : 'lazy'}
-                draggable={false}
-                onError={(e) => {
-                  const img = e.currentTarget
-                  if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = pageUrl(sourceId, chapter, i, title, name) + '&r=1' }
-                }}
-              />
+              <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} eager={i < 3} />
             ))}
           </div>
         )}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, coverUrl, LibraryEntry, HistoryItem } from '../api'
 import { Carousel, GridSection } from '../components/Section'
 import { CoverCard } from '../components/CoverCard'
+import { SkeletonGrid } from '../components/Skeleton'
 
 export function Home() {
   const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
@@ -12,7 +13,7 @@ export function Home() {
     api.history().then(setHistory).catch(() => setHistory([]))
   }, [])
 
-  if (library === null) return <div className="spinner" />
+  if (library === null) return <SkeletonGrid />
 
   // History stores no cover, so fall back to the library entry's thumbnail.
   const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
