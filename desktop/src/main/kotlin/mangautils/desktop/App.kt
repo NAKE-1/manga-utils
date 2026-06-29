@@ -28,6 +28,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -85,6 +86,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
@@ -1322,70 +1324,122 @@ private fun QueueRow(dl: DlItem) {
 
 @Composable
 private fun SettingsScreen(onOpenReader: () -> Unit) {
+    var category by remember { mutableStateOf<String?>(null) }
+    when (category) {
+        "Appearance" -> SettingsCategory("Appearance", { category = null }) { AppearanceSettings() }
+        "Library" -> SettingsCategory("Library", { category = null }) { LibrarySettings() }
+        "Downloads" -> SettingsCategory("Downloads", { category = null }) { DownloadsSettings() }
+        else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            SettingsCatRow(Icons.Filled.Palette, "Appearance", "Theme, colors, covers") { category = "Appearance" }
+            SettingsCatRow(Icons.Filled.PlayArrow, "Reader", "Scale, page gap, background, auto-scroll", onOpenReader)
+            SettingsCatRow(Icons.Filled.Home, "Library", "Grid layout") { category = "Library" }
+            SettingsCatRow(Icons.Filled.Download, "Downloads", "Format, parallel downloads") { category = "Downloads" }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCatRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = MuTheme.Vermilion, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(18.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = MuTheme.Paper, fontSize = 16.sp)
+            Text(subtitle, color = MuTheme.Muted, fontSize = 12.sp)
+        }
+        Icon(Icons.Filled.ArrowForward, null, tint = MuTheme.Muted)
+    }
+}
+
+/** A settings sub-screen with a back header. */
+@Composable
+private fun SettingsCategory(title: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back", tint = MuTheme.Paper) }
+            Spacer(Modifier.width(8.dp))
+            Text(title, color = MuTheme.Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(16.dp))
+        content()
+    }
+}
+
+@Composable
+private fun AppearanceSettings() {
     var themeName by remember { mutableStateOf(MuTheme.palette.name) }
     var dark by remember { mutableStateOf(MuTheme.dark) }
     fun apply() {
         MuTheme.apply(themeName, dark)
         runCatching { SettingsStore.save(SettingsStore.get().copy(themeName = themeName, themeDark = dark)) }
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
-        Text("Appearance", color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Theme mode", color = MuTheme.Paper, modifier = Modifier.weight(1f))
-            RepoChip("Dark", dark) { dark = true; apply() }
-            Spacer(Modifier.width(8.dp))
-            RepoChip("Light", !dark) { dark = false; apply() }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Theme mode", color = MuTheme.Paper, modifier = Modifier.weight(1f))
+        RepoChip("Dark", dark) { dark = true; apply() }
+        Spacer(Modifier.width(8.dp))
+        RepoChip("Light", !dark) { dark = false; apply() }
+    }
+    Spacer(Modifier.height(20.dp))
+    Text("Theme", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(10.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        MuTheme.presets.forEach { p -> ThemeSwatch(p, selected = p.name == themeName) { themeName = p.name; apply() } }
+    }
+    Spacer(Modifier.height(28.dp))
+    Text("Covers", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(10.dp))
+    var bg by remember { mutableStateOf(runCatching { SettingsStore.get().mangaThumbnailBackground }.getOrDefault(true)) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Manga thumbnail as background", color = MuTheme.Paper)
+            Text("Use the blurred cover as the detail-page background", color = MuTheme.Muted, fontSize = 12.sp)
         }
-        Spacer(Modifier.height(20.dp))
-        Text("Theme", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(10.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            MuTheme.presets.forEach { p -> ThemeSwatch(p, selected = p.name == themeName) { themeName = p.name; apply() } }
+        Switch(checked = bg, onCheckedChange = { bg = it; runCatching { SettingsStore.save(SettingsStore.get().copy(mangaThumbnailBackground = it)) } })
+    }
+    Spacer(Modifier.height(8.dp))
+    var dyn by remember { mutableStateOf(runCatching { SettingsStore.get().dynamicThemeColors }.getOrDefault(true)) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Dynamic theme colors on manga page", color = MuTheme.Paper)
+            Text("Tint the detail page with the cover's dominant color", color = MuTheme.Muted, fontSize = 12.sp)
         }
-        Spacer(Modifier.height(28.dp))
-        Text("Display", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(10.dp))
-        var bg by remember { mutableStateOf(runCatching { SettingsStore.get().mangaThumbnailBackground }.getOrDefault(true)) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Manga thumbnail as background", color = MuTheme.Paper)
-                Text("Use the blurred cover as the detail-page background", color = MuTheme.Muted, fontSize = 12.sp)
-            }
-            Switch(checked = bg, onCheckedChange = { bg = it; runCatching { SettingsStore.save(SettingsStore.get().copy(mangaThumbnailBackground = it)) } })
+        Switch(checked = dyn, onCheckedChange = { dyn = it; runCatching { SettingsStore.save(SettingsStore.get().copy(dynamicThemeColors = it)) } })
+    }
+}
+
+@Composable
+private fun LibrarySettings() {
+    var mode by remember { mutableStateOf(Display.grid) }
+    Text("Grid layout", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(10.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(GridMode.COMPACT to "Compact", GridMode.COMFORTABLE to "Comfortable", GridMode.LIST to "List").forEach { (m, label) ->
+            RepoChip(label, mode == m) { Display.set(m); mode = m }
         }
-        Spacer(Modifier.height(8.dp))
-        var dyn by remember { mutableStateOf(runCatching { SettingsStore.get().dynamicThemeColors }.getOrDefault(true)) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Dynamic theme colors on manga page", color = MuTheme.Paper)
-                Text("Tint the detail page with the cover's dominant color", color = MuTheme.Muted, fontSize = 12.sp)
-            }
-            Switch(checked = dyn, onCheckedChange = { dyn = it; runCatching { SettingsStore.save(SettingsStore.get().copy(dynamicThemeColors = it)) } })
+    }
+}
+
+@Composable
+private fun DownloadsSettings() {
+    var cbz by remember { mutableStateOf(runCatching { SettingsStore.get().downloadAsCbz }.getOrDefault(false)) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Save as CBZ archive", color = MuTheme.Paper)
+            Text("Off = a folder of page images (like Suwayomi)", color = MuTheme.Muted, fontSize = 12.sp)
         }
-        Spacer(Modifier.height(28.dp))
-        Text("Downloads", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(10.dp))
-        var cbz by remember { mutableStateOf(runCatching { SettingsStore.get().downloadAsCbz }.getOrDefault(false)) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Save as CBZ archive", color = MuTheme.Paper)
-                Text("Off = a folder of page images (like Suwayomi)", color = MuTheme.Muted, fontSize = 12.sp)
-            }
-            Switch(checked = cbz, onCheckedChange = { cbz = it; runCatching { SettingsStore.save(SettingsStore.get().copy(downloadAsCbz = it)) } })
+        Switch(checked = cbz, onCheckedChange = { cbz = it; runCatching { SettingsStore.save(SettingsStore.get().copy(downloadAsCbz = it)) } })
+    }
+    Spacer(Modifier.height(16.dp))
+    var conc by remember { mutableStateOf(runCatching { SettingsStore.get().downloadConcurrency }.getOrDefault(4)) }
+    fun saveConc(v: Int) { conc = v.coerceIn(1, 5); runCatching { SettingsStore.save(SettingsStore.get().copy(downloadConcurrency = conc)) } }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Parallel downloads", color = MuTheme.Paper)
+            Text("Chapters downloading at once (1–5)", color = MuTheme.Muted, fontSize = 12.sp)
         }
-        Spacer(Modifier.height(28.dp))
-        Text("Reader", color = MuTheme.Muted, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenReader).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.PlayArrow, null, tint = MuTheme.Vermilion, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Reader settings", color = MuTheme.Paper)
-                Text("Scale, page gap, background, behaviour", color = MuTheme.Muted, fontSize = 12.sp)
-            }
-            Icon(Icons.Filled.ArrowForward, null, tint = MuTheme.Muted)
-        }
+        OutlinedButton(onClick = { saveConc(conc - 1) }, shape = BtnShape, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("−", color = MuTheme.Vermilion) }
+        Text("$conc", color = MuTheme.Paper, modifier = Modifier.padding(horizontal = 12.dp))
+        OutlinedButton(onClick = { saveConc(conc + 1) }, shape = BtnShape, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("+", color = MuTheme.Vermilion) }
     }
 }
 
