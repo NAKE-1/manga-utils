@@ -1,5 +1,15 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { api } from '../api'
+
+// Warm the detail (server + browser cache) on hover/press so the tap opens instantly.
+const prefetched = new Set<string>()
+function prefetchDetail(sourceId: string, url: string) {
+  const k = sourceId + '|' + url
+  if (prefetched.has(k)) return
+  prefetched.add(k)
+  api.detail(sourceId, url).catch(() => prefetched.delete(k))
+}
 
 type Props = {
   sourceId: string
@@ -17,7 +27,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
   const [loaded, setLoaded] = useState(false)
   const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
   return (
-    <div className={'cover-card' + (grid ? ' full' : '')} onClick={go}>
+    <div className={'cover-card' + (grid ? ' full' : '')} onClick={go} onPointerEnter={() => prefetchDetail(sourceId, url)} onPointerDown={() => prefetchDetail(sourceId, url)}>
       <div className="cover-frame">
         {!loaded && <div className="cover-skel skeleton" />}
         {cover && (
