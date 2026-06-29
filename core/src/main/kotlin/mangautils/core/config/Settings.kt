@@ -53,6 +53,10 @@ data class Settings(
     /** Pinned sources, shown at the top of the source list. */
     val pinnedSources: List<Long> = emptyList(),
     // ---- Reader ----
+    /** Reading mode: WEBTOON | VERTICAL | HORIZONTAL | SINGLE | DOUBLE. */
+    val readerReadingMode: String = "WEBTOON",
+    /** Reading direction for paged/horizontal modes: LTR | RTL. */
+    val readerReadingDirection: String = "LTR",
     /** Page scale in the reader: FIT_WIDTH | ORIGINAL. */
     val readerScaleType: String = "FIT_WIDTH",
     /** Gap between pages (px). */

@@ -20,7 +20,10 @@ import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -933,6 +936,10 @@ private fun gridCell() = GridCells.Adaptive(if (Display.grid == GridMode.COMPACT
 /** Reader preferences (persisted), readable as Compose state so the reader reacts live. */
 private object ReaderPrefs {
     private val s = runCatching { SettingsStore.get() }.getOrNull()
+    var readingMode by mutableStateOf(s?.readerReadingMode ?: "WEBTOON")
+        private set
+    var readingDirection by mutableStateOf(s?.readerReadingDirection ?: "LTR")
+        private set
     var scaleType by mutableStateOf(s?.readerScaleType ?: "FIT_WIDTH")
         private set
     var pageGap by mutableStateOf(s?.readerPageGap ?: 0)
@@ -948,10 +955,13 @@ private object ReaderPrefs {
 
     private fun save() {
         runCatching {
-            SettingsStore.save(SettingsStore.get().copy(readerScaleType = scaleType, readerPageGap = pageGap, readerBackground = background, readerSkipDuplicates = skipDuplicates))
+            SettingsStore.save(SettingsStore.get().copy(readerReadingMode = readingMode, readerReadingDirection = readingDirection, readerScaleType = scaleType, readerPageGap = pageGap, readerBackground = background, readerSkipDuplicates = skipDuplicates))
         }
     }
 
+    val paged: Boolean get() = readingMode == "SINGLE" || readingMode == "DOUBLE"
+    fun applyReadingMode(v: String) { readingMode = v; save() }
+    fun applyReadingDirection(v: String) { readingDirection = v; save() }
     fun applyScale(v: String) { scaleType = v; save() }
     fun applyGap(v: Int) { pageGap = v; save() }
     fun applyBackground(v: String) { background = v; save() }
@@ -2482,29 +2492,80 @@ private fun ReaderScreen(s: Screen.Reader, panelOpen: Boolean, onOpenSettings: (
     val idx = nav.indexOfFirst { it.url == s.chapterUrl }
     val prevChapter = nav.getOrNull(idx + 1)
     val nextChapter = nav.getOrNull(idx - 1)
-    val currentPage by remember { derivedStateOf { listState.firstVisibleItemIndex } }
-    val showTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 1 } }
+    var pageIndex by remember(s.chapterUrl) { mutableStateOf(0) }
+    LaunchedEffect(pageRefs) { pageIndex = pageIndex.coerceIn(0, (pageRefs.size - 1).coerceAtLeast(0)) }
+    val rtl = ReaderPrefs.readingDirection == "RTL"
+    val pageStep = if (ReaderPrefs.readingMode == "DOUBLE") 2 else 1
+    val currentPage by remember { derivedStateOf { if (ReaderPrefs.paged) pageIndex else listState.firstVisibleItemIndex } }
+    val showTop by remember { derivedStateOf { !ReaderPrefs.paged && listState.firstVisibleItemIndex > 1 } }
+    fun goNext() {
+        if (ReaderPrefs.paged) {
+            if (pageIndex + pageStep <= pageRefs.lastIndex) pageIndex = (pageIndex + pageStep).coerceAtMost(pageRefs.lastIndex)
+            else nextChapter?.let { onOpenChapter(it.url, it.name) }
+        } else scope.launch { listState.animateScrollBy(700f) }
+    }
+    fun goPrev() {
+        if (ReaderPrefs.paged) {
+            if (pageIndex > 0) pageIndex = (pageIndex - pageStep).coerceAtLeast(0)
+            else prevChapter?.let { onOpenChapter(it.url, it.name) }
+        } else scope.launch { listState.animateScrollBy(-700f) }
+    }
 
-    // Auto-scroll: continuously scroll while enabled; faster as the seconds value lowers.
-    LaunchedEffect(ReaderPrefs.autoScroll, ReaderPrefs.autoScrollSeconds) {
-        if (ReaderPrefs.autoScroll) {
+    // Auto-scroll: continuous modes only; faster as the seconds value lowers.
+    LaunchedEffect(ReaderPrefs.autoScroll, ReaderPrefs.autoScrollSeconds, ReaderPrefs.readingMode) {
+        if (ReaderPrefs.autoScroll && !ReaderPrefs.paged) {
             val px = 180f / ReaderPrefs.autoScrollSeconds.coerceAtLeast(1)
             while (true) { listState.scrollBy(px); delay(33) }
         }
     }
 
-    Row(Modifier.fillMaxSize()) {
+    val fr = remember { FocusRequester() }
+    LaunchedEffect(s.chapterUrl) { runCatching { fr.requestFocus() } }
+    Row(
+        Modifier.fillMaxSize().focusRequester(fr).focusable().onPreviewKeyEvent { e ->
+            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (e.key) {
+                Key.DirectionRight, Key.PageDown -> { if (rtl) goPrev() else goNext(); true }
+                Key.DirectionLeft, Key.PageUp -> { if (rtl) goNext() else goPrev(); true }
+                Key.Spacebar, Key.DirectionDown -> { goNext(); true }
+                Key.DirectionUp -> { goPrev(); true }
+                else -> false
+            }
+        },
+    ) {
         if (panelOpen) {
             ReaderSidebar(
                 title = s.mangaTitle, chapterName = s.chapterName, chapters = chapters, currentChapterUrl = s.chapterUrl,
                 sourceId = s.sourceId, mangaUrl = s.mangaUrl, pageCount = pageRefs.size, currentPage = currentPage,
                 prevChapter = prevChapter, nextChapter = nextChapter, onOpenChapter = onOpenChapter, onOpenSettings = onOpenSettings,
-                onJumpPage = { i -> scope.launch { listState.animateScrollToItem(i.coerceIn(0, (pageRefs.size - 1).coerceAtLeast(0))) } },
+                onJumpPage = { i -> if (ReaderPrefs.paged) pageIndex = i.coerceIn(0, (pageRefs.size - 1).coerceAtLeast(0)) else scope.launch { listState.animateScrollToItem(i.coerceIn(0, (pageRefs.size - 1).coerceAtLeast(0))) } },
             )
             Box(Modifier.width(1.dp).fillMaxSize().background(MaterialTheme.colorScheme.outline))
         }
         Box(Modifier.fillMaxSize().background(ReaderPrefs.bg(MuTheme.Ink))) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) { items(pageRefs) { ref -> ReaderPage(ref) } }
+            when (ReaderPrefs.readingMode) {
+                "HORIZONTAL" -> LazyRow(state = listState, reverseLayout = rtl, modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) {
+                    items(pageRefs) { ref -> ReaderPage(ref, fitScreen = true, modifier = Modifier.fillParentMaxWidth()) }
+                }
+                "SINGLE", "DOUBLE" -> Box(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxSize()) {
+                        if (ReaderPrefs.readingMode == "DOUBLE") {
+                            val left = if (rtl) pageIndex + 1 else pageIndex
+                            val right = if (rtl) pageIndex else pageIndex + 1
+                            Box(Modifier.weight(1f).fillMaxHeight()) { pageRefs.getOrNull(left)?.let { ReaderPage(it, fitScreen = true) } }
+                            Box(Modifier.weight(1f).fillMaxHeight()) { pageRefs.getOrNull(right)?.let { ReaderPage(it, fitScreen = true) } }
+                        } else {
+                            pageRefs.getOrNull(pageIndex)?.let { ReaderPage(it, fitScreen = true) }
+                        }
+                    }
+                    // Tap zones (respect reading direction).
+                    Row(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f).fillMaxHeight().clickable(remember { MutableInteractionSource() }, indication = null) { if (rtl) goNext() else goPrev() })
+                        Box(Modifier.weight(1f).fillMaxHeight().clickable(remember { MutableInteractionSource() }, indication = null) { if (rtl) goPrev() else goNext() })
+                    }
+                }
+                else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(ReaderPrefs.pageGap.dp)) { items(pageRefs) { ref -> ReaderPage(ref) } }
+            }
             if (loading) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
             if (!loading && pageRefs.isEmpty()) {
                 Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
@@ -2587,6 +2648,19 @@ private fun ReaderSidebar(
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(12.dp))
         // Inline quick controls (Suwayomi-style).
+        Text("READING MODE", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("WEBTOON" to "Webtoon", "HORIZONTAL" to "Horizontal", "SINGLE" to "Single", "DOUBLE" to "Double").forEach { (v, label) ->
+                SelChip(label, ReaderPrefs.readingMode == v) { ReaderPrefs.applyReadingMode(v) }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("DIRECTION", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SelChip("Left → right", ReaderPrefs.readingDirection == "LTR") { ReaderPrefs.applyReadingDirection("LTR") }
+            SelChip("Right → left", ReaderPrefs.readingDirection == "RTL") { ReaderPrefs.applyReadingDirection("RTL") }
+        }
+        Spacer(Modifier.height(12.dp))
         Text("SCALE", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SelChip("Fit width", ReaderPrefs.scaleType == "FIT_WIDTH") { ReaderPrefs.applyScale("FIT_WIDTH") }
@@ -2610,7 +2684,7 @@ private fun ReaderSidebar(
 }
 
 @Composable
-private fun ReaderPage(ref: ReaderPageRef) {
+private fun ReaderPage(ref: ReaderPageRef, fitScreen: Boolean = false, modifier: Modifier = Modifier) {
     var bmp by remember(ref) { mutableStateOf<ImageBitmap?>(null) }
     var failed by remember(ref) { mutableStateOf(false) }
     LaunchedEffect(ref) {
@@ -2625,10 +2699,15 @@ private fun ReaderPage(ref: ReaderPageRef) {
     }
     val b = bmp
     when {
+        b != null && fitScreen -> {
+            // Paged / horizontal: fit the whole page into the available box.
+            Box(modifier.then(Modifier.fillMaxSize()), contentAlignment = Alignment.Center) {
+                Image(b, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            }
+        }
         b != null -> {
             val ar = b.width.toFloat() / b.height.toFloat()
             if (ReaderPrefs.scaleType == "ORIGINAL") {
-                // Natural size, centred; never wider than the column (then it's effectively fit-width).
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Image(b, null, Modifier.widthIn(max = with(LocalDensity.current) { b.width.toDp() }).fillMaxWidth().aspectRatio(ar), contentScale = ContentScale.Fit)
                 }
@@ -2636,8 +2715,8 @@ private fun ReaderPage(ref: ReaderPageRef) {
                 Image(b, null, Modifier.fillMaxWidth().aspectRatio(ar), contentScale = ContentScale.FillWidth)
             }
         }
-        failed -> Box(Modifier.fillMaxWidth().height(120.dp), Alignment.Center) { Text("page failed", color = MuTheme.Muted) }
-        else -> Box(Modifier.fillMaxWidth().height(420.dp), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
+        failed -> Box((if (fitScreen) modifier.then(Modifier.fillMaxSize()) else Modifier.fillMaxWidth().height(120.dp)), Alignment.Center) { Text("page failed", color = MuTheme.Muted) }
+        else -> Box((if (fitScreen) modifier.then(Modifier.fillMaxSize()) else Modifier.fillMaxWidth().height(420.dp)), Alignment.Center) { CircularProgressIndicator(color = MuTheme.Vermilion) }
     }
 }
 
