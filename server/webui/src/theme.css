@@ -165,6 +165,10 @@ img { display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px 2px; }
 .chips.scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 .chips.scroll::-webkit-scrollbar { display: none; }
+/* Two horizontally-scrollable tag rows (some manga have many tags) */
+.chips-2 { display: flex; flex-direction: column; gap: 8px; padding: 14px 0 2px; }
+.chip-row { display: flex; gap: 8px; overflow-x: auto; padding: 0 16px; scrollbar-width: none; }
+.chip-row::-webkit-scrollbar { display: none; }
 .chip {
   flex: 0 0 auto; font-size: 13px; color: #cdcdd4; background: var(--card);
   border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; white-space: nowrap;
@@ -204,19 +208,24 @@ img { display: block; }
 .ch-check.on::after { content: ''; position: absolute; left: 6px; top: 3px; width: 5px; height: 9px;
   border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 
+/* Grouped chapters (duplicate chapters from different scanlators under one "CH. N") */
+.ch-group { background: var(--card); border-radius: var(--radius-sm); margin-bottom: 8px; padding: 4px 0 4px; }
+.ch-group-head { font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: .05em; padding: 8px 14px 2px; }
+.ch-group .chapter-row { background: transparent; margin: 0; border-radius: 0; padding: 9px 14px; }
+@media (hover: hover) { .ch-group .chapter-row:hover { background: var(--card-2); } }
+
 /* Detail bottom action bar (above the tab bar) */
 .detail-bottombar {
   position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--safe-b));
   z-index: 25; display: flex; align-items: center; gap: 12px; padding: 10px 16px;
   background: rgba(26,26,28,0.96); backdrop-filter: blur(10px); border-top: 1px solid var(--border);
 }
-.bb-bookmark {
-  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  font-size: 15px; font-weight: 700; padding: 12px; border-radius: 12px;
+.bb-icon {
+  flex: 0 0 auto; width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
   background: var(--card-2); color: var(--text);
 }
-.bb-bookmark.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: #cfc6ff; }
-.bb-bookmark .bi { width: 19px; height: 19px; }
+.bb-icon svg { width: 21px; height: 21px; }
+.bb-icon.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: #cfc6ff; }
 .bb-book {
   flex: 0 0 auto; width: 54px; height: 48px; border-radius: 12px; display: grid; place-items: center;
   background: var(--accent); color: #fff;

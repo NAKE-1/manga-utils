@@ -29,7 +29,8 @@ export function ListPage() {
   if (kind === 'continue') {
     const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
     const seen = new Set<string>()
-    cards = history
+    cards = [...history]
+      .sort((a, b) => b.readAt - a.readAt)
       .filter((h) => {
         const k = h.sourceId + '|' + h.mangaUrl
         if (seen.has(k)) return false
@@ -40,7 +41,7 @@ export function ListPage() {
         <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl))} subtitle={h.chapterName} />
       ))
   } else {
-    const entries = kind === 'updates' ? library.filter((e) => e.newChapters > 0) : library
+    const entries = (kind === 'updates' ? library.filter((e) => e.newChapters > 0) : [...library]).sort((a, b) => a.title.localeCompare(b.title))
     cards = entries.map((e) => (
       <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl)} badge={e.newChapters} />
     ))

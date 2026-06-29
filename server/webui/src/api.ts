@@ -26,7 +26,7 @@ export interface Chapter {
 
 export interface Detail { manga: Manga; chapters: Chapter[] }
 
-export interface MangaState { inLibrary: boolean; read: string[]; bookmarks: string[] }
+export interface MangaState { inLibrary: boolean; bookmarked: boolean; read: string[]; bookmarks: string[] }
 
 export interface LibraryEntry {
   sourceId: string
@@ -70,6 +70,8 @@ export const api = {
     fetch(`/api/library?source=${id}&url=${encodeURIComponent(url)}`, { method: 'POST' }),
   removeLibrary: (id: string, url: string) =>
     fetch(`/api/library?source=${id}&url=${encodeURIComponent(url)}`, { method: 'DELETE' }),
+  setMangaBookmark: (id: string, url: string, on: boolean) =>
+    fetch(`/api/manga/bookmark?source=${id}&url=${encodeURIComponent(url)}&on=${on}`, { method: 'POST' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>

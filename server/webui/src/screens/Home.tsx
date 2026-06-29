@@ -16,15 +16,18 @@ export function Home() {
 
   // History stores no cover, so fall back to the library entry's thumbnail.
   const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
-  // Continue reading: most-recent history entry per manga.
+  // Continue reading: most-recently read first (leftmost), one entry per manga.
   const seen = new Set<string>()
-  const continueReading = history.filter((h) => {
-    const k = h.sourceId + '|' + h.mangaUrl
-    if (seen.has(k)) return false
-    seen.add(k)
-    return true
-  })
+  const continueReading = [...history]
+    .sort((a, b) => b.readAt - a.readAt)
+    .filter((h) => {
+      const k = h.sourceId + '|' + h.mangaUrl
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
   const updates = library.filter((e) => e.newChapters > 0)
+  const libraryAZ = [...library].sort((a, b) => a.title.localeCompare(b.title))
 
   if (library.length === 0 && continueReading.length === 0) {
     return <div className="center-msg">Your library is empty.<br />Add manga from Search to see them here.</div>
@@ -64,7 +67,7 @@ export function Home() {
       )}
 
       <GridSection title="Library" to="/list/library">
-        {library.map((e) => (
+        {libraryAZ.map((e) => (
           <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl)} badge={e.newChapters} />
         ))}
       </GridSection>

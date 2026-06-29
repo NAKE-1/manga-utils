@@ -24,7 +24,7 @@ export function Detail() {
   const nav = useNavigate()
 
   const [data, setData] = useState<DetailT | null>(null)
-  const [state, setState] = useState<MangaState>({ inLibrary: false, read: [], bookmarks: [] })
+  const [state, setState] = useState<MangaState>({ inLibrary: false, bookmarked: false, read: [], bookmarks: [] })
   const [readSet, setReadSet] = useState<Set<string>>(new Set())
   const [error, setError] = useState(false)
   const [descOpen, setDescOpen] = useState(false)
@@ -56,6 +56,12 @@ export function Detail() {
       if (next) await api.addLibrary(sourceId, url); else await api.removeLibrary(sourceId, url)
       setState((s) => ({ ...s, inLibrary: next }))
     } finally { setBusy(false) }
+  }
+
+  function toggleBookmark() {
+    const next = !state.bookmarked
+    setState((s) => ({ ...s, bookmarked: next }))
+    api.setMangaBookmark(sourceId, url, next)
   }
 
   async function scanUpdates() {
@@ -96,6 +102,29 @@ export function Detail() {
   else if (tab === 'read') chaps = chaps.filter((c) => readSet.has(c.url))
   chaps = [...chaps].sort((a, b) => (asc ? a.number - b.number : b.number - a.number))
 
+  // Group adjacent same-number chapters (duplicate chapters from different scanlators) → "CH. N" card.
+  const groups: { number: number; items: typeof chaps }[] = []
+  for (const c of chaps) {
+    const last = groups[groups.length - 1]
+    if (last && last.number === c.number && c.number > 0) last.items.push(c)
+    else groups.push({ number: c.number, items: [c] })
+  }
+  const renderRow = (c: (typeof chaps)[number]) => {
+    const read = readSet.has(c.url)
+    const bm = state.bookmarks.includes(c.url)
+    const meta = [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
+    return (
+      <div key={c.url} className={'chapter-row' + (read ? ' read' : '')} onClick={() => openChapter(c.url, c.name)}>
+        <div className="chapter-text">
+          <div className="chapter-name">{c.name}</div>
+          {meta && <div className="chapter-meta">{meta}</div>}
+        </div>
+        {bm && <IconBookmarkSm filled className="chapter-bm" />}
+        <button className={'ch-check' + (read ? ' on' : '')} onClick={(e) => toggleRead(e, c.url)} aria-label={read ? 'Mark unread' : 'Mark read'} />
+      </div>
+    )
+  }
+
   return (
     <BackWrap nav={nav}>
       <div className="detail-head">
@@ -106,8 +135,9 @@ export function Detail() {
       </div>
 
       {genres.length > 0 && (
-        <div className="chips">
-          {genres.map((g) => <span className="chip" key={g}>{g}</span>)}
+        <div className="chips-2">
+          <div className="chip-row">{genres.filter((_, i) => i % 2 === 0).map((g) => <span className="chip" key={g}>{g}</span>)}</div>
+          {genres.length > 1 && <div className="chip-row">{genres.filter((_, i) => i % 2 === 1).map((g) => <span className="chip" key={g}>{g}</span>)}</div>}
         </div>
       )}
 
@@ -142,31 +172,29 @@ export function Detail() {
       </div>
 
       <div className="chapters">
-        {chaps.map((c) => {
-          const read = readSet.has(c.url)
-          const bm = state.bookmarks.includes(c.url)
-          const meta = [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
-          return (
-            <div key={c.url} className={'chapter-row' + (read ? ' read' : '')} onClick={() => openChapter(c.url, c.name)}>
-              <div className="chapter-text">
-                <div className="chapter-name">{c.name}</div>
-                {meta && <div className="chapter-meta">{meta}</div>}
-              </div>
-              {bm && <IconBookmarkSm filled className="chapter-bm" />}
-              <button className={'ch-check' + (read ? ' on' : '')} onClick={(e) => toggleRead(e, c.url)} aria-label={read ? 'Mark unread' : 'Mark read'} />
+        {groups.map((g, i) =>
+          g.items.length > 1 ? (
+            <div className="ch-group" key={'g' + i}>
+              <div className="ch-group-head">CH. {Number.isInteger(g.number) ? g.number : g.number}</div>
+              {g.items.map(renderRow)}
             </div>
-          )
-        })}
+          ) : (
+            renderRow(g.items[0])
+          ),
+        )}
         {chaps.length === 0 && <div className="center-msg">No chapters here.</div>}
       </div>
 
       <div style={{ height: 86 }} />
 
       <div className="detail-bottombar">
-        <button className={'bb-bookmark' + (state.inLibrary ? ' on' : '')} onClick={toggleLibrary} disabled={busy}>
-          {state.inLibrary ? <IconHeart filled className="bi" /> : <IconBookmarkSm className="bi" />}
-          {state.inLibrary ? 'Bookmarked' : 'Bookmark'}
+        <button className={'bb-icon' + (state.bookmarked ? ' on' : '')} onClick={toggleBookmark} aria-label="Bookmark">
+          <IconBookmarkSm filled={state.bookmarked} />
         </button>
+        <button className={'bb-icon' + (state.inLibrary ? ' on' : '')} onClick={toggleLibrary} disabled={busy} aria-label="Add to library">
+          <IconHeart filled={state.inLibrary} />
+        </button>
+        <div style={{ flex: 1 }} />
         <button className="bb-book" onClick={openContinue} aria-label="Read"><IconBookOpen /></button>
       </div>
     </BackWrap>

@@ -34,6 +34,7 @@ import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
+import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
@@ -100,7 +101,7 @@ private data class HistoryDto(
 )
 
 @Serializable
-private data class MangaStateDto(val inLibrary: Boolean, val read: List<String>, val bookmarks: List<String>)
+private data class MangaStateDto(val inLibrary: Boolean, val bookmarked: Boolean, val read: List<String>, val bookmarks: List<String>)
 
 @Serializable
 private data class PagesDto(val count: Int)
@@ -228,11 +229,20 @@ fun Application.module() {
             val st = withContext(Dispatchers.IO) {
                 MangaStateDto(
                     LibraryService.isFollowed(id, url),
+                    MangaBookmarkStore.isBookmarked(id, url),
                     ReadStore.readUrls(id, url).toList(),
                     BookmarkStore.bookmarks(id, url).toList(),
                 )
             }
             call.respond(st)
+        }
+
+        post("/api/manga/bookmark") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val url = call.queryParam("url") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val on = call.queryParam("on")?.toBoolean() ?: true
+            withContext(Dispatchers.IO) { MangaBookmarkStore.set(id, url, on) }
+            call.respond(HttpStatusCode.OK)
         }
 
         post("/api/library") {
