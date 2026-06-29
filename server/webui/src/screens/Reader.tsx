@@ -6,6 +6,28 @@ import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp
 type Sizing = 'clamp' | 'natural'
 const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
 
+/**
+ * Collapse duplicate chapters (same number from different scanlators) to one entry per number,
+ * preferring the chapter being read, then the same scanlator, then the latest. Mirrors the desktop
+ * dedupChapters so prev/next move one real chapter at a time. Keeps source order (newest-first).
+ */
+function dedupChapters(current: Chapter | undefined, all: Chapter[]): Chapter[] {
+  if (!current) return all
+  const byNum = new Map<number, Chapter[]>()
+  for (const c of all) {
+    const g = byNum.get(c.number) ?? []
+    g.push(c)
+    byNum.set(c.number, g)
+  }
+  const keep = new Set<string>()
+  for (const [num, g] of byNum) {
+    if (num < 0) { g.forEach((c) => keep.add(c.url)); continue } // unnumbered: don't collapse
+    const pick = g.find((c) => c.url === current.url) || [...g].reverse().find((c) => c.scanlator === current.scanlator) || g[g.length - 1]
+    keep.add(pick.url)
+  }
+  return all.filter((c) => keep.has(c.url))
+}
+
 export function Reader() {
   const { sourceId = '' } = useParams()
   const [sp] = useSearchParams()
@@ -38,15 +60,16 @@ export function Reader() {
     api.recordHistory(sourceId, manga, chapter, title, name)
   }, [sourceId, chapter])
 
-  // Prev/next in reading order (chapters are newest-first from the source).
-  const idx = chapters.findIndex((c) => c.url === chapter)
-  const nextCh = idx > 0 ? chapters[idx - 1] : undefined // newer
-  const prevCh = idx >= 0 && idx < chapters.length - 1 ? chapters[idx + 1] : undefined // older
+  // Navigate the de-duplicated list (scanlator-aware) so prev/next skip duplicate chapters.
+  const cur = chapters.find((c) => c.url === chapter)
+  const navList = dedupChapters(cur, chapters)
+  const idx = navList.findIndex((c) => c.url === chapter)
+  const nextCh = idx > 0 ? navList[idx - 1] : undefined // newer
+  const prevCh = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : undefined // older
 
   // Pill shows current-chapter / total-chapters (highest chapter number), like Atsumaru.
-  const cur = chapters.find((c) => c.url === chapter)
-  const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? chapters.length - idx : 0
-  const totalCh = (() => { const m = Math.max(0, ...chapters.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : chapters.length })()
+  const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
+  const totalCh = (() => { const m = Math.max(0, ...navList.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : navList.length })()
 
   function openChapter(c?: Chapter) {
     if (!c) return
