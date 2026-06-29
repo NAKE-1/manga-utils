@@ -8,6 +8,7 @@ package mangautils.server
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -345,7 +346,10 @@ fun Application.module() {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest)
             val bytes = withContext(Dispatchers.IO) { SourceImage.coverBytes(id, url) }
-            if (bytes == null) call.respond(HttpStatusCode.NotFound) else call.respondBytes(bytes, sniffImageType(bytes))
+            if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
+                call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=86400")
+                call.respondBytes(bytes, sniffImageType(bytes))
+            }
         }
 
         get("/img/page") {
@@ -362,7 +366,10 @@ fun Application.module() {
                     pagesFor(id, chapter).getOrNull(index)?.let { SourceImage.pageBytes(id, it) }
                 }
             }
-            if (bytes == null) call.respond(HttpStatusCode.NotFound) else call.respondBytes(bytes, sniffImageType(bytes))
+            if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
+                call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=604800, immutable")
+                call.respondBytes(bytes, sniffImageType(bytes))
+            }
         }
 
         // ---- Static frontend (built React SPA): serves real files, falls back to index.html ----
