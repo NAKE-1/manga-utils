@@ -315,6 +315,17 @@ fun Application.module() {
             call.respond(items)
         }
 
+        post("/api/history") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val chapter = call.queryParam("chapter") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val mangaTitle = call.queryParam("title") ?: manga
+            val name = call.queryParam("name") ?: ""
+            val thumb = call.queryParam("thumb")
+            withContext(Dispatchers.IO) { HistoryStore.record(id, manga, mangaTitle, chapter, name, thumb) }
+            call.respond(HttpStatusCode.OK)
+        }
+
         // ---- Chapter pages ----
         get("/api/chapter/pages") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest, "bad source id")

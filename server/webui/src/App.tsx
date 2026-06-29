@@ -1,12 +1,22 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { TopBar } from './components/TopBar'
 import { TabBar } from './components/TabBar'
 import { Home } from './screens/Home'
 import { ListPage } from './screens/ListPage'
 import { Detail } from './screens/Detail'
+import { Reader } from './screens/Reader'
 import { Stub } from './screens/Stub'
 
 export function App() {
+  const loc = useLocation()
+  // The reader is full-screen — no top bar / tab bar.
+  if (loc.pathname.startsWith('/reader/')) {
+    return (
+      <Routes>
+        <Route path="/reader/:sourceId" element={<Reader />} />
+      </Routes>
+    )
+  }
   return (
     <div className="app">
       <TopBar />
@@ -19,7 +29,6 @@ export function App() {
           <Route path="/settings" element={<Stub name="Settings" />} />
           <Route path="/downloads" element={<Stub name="Downloads" />} />
           <Route path="/manga/:sourceId" element={<Detail />} />
-          <Route path="/reader/:sourceId" element={<Stub name="Reader" />} />
           <Route path="*" element={<Stub name="Not found" />} />
         </Routes>
       </main>

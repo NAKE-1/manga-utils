@@ -75,6 +75,14 @@ export const api = {
     fetch(`/api/manga/bookmark?source=${id}&url=${encodeURIComponent(url)}&on=${on}`, { method: 'POST' }),
   downloadCount: (title: string) => getJson<{ count: number }>(`/api/downloads/count?title=${encodeURIComponent(title)}`),
   deleteDownloads: (title: string) => fetch(`/api/downloads?title=${encodeURIComponent(title)}`, { method: 'DELETE' }),
+  pages: (id: string, chapter: string, title?: string, name?: string) => {
+    let u = `/api/chapter/pages?source=${id}&chapter=${encodeURIComponent(chapter)}`
+    if (title) u += `&title=${encodeURIComponent(title)}`
+    if (name) u += `&name=${encodeURIComponent(name)}`
+    return getJson<{ count: number }>(u)
+  },
+  recordHistory: (id: string, manga: string, chapter: string, title: string, name: string) =>
+    fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&title=${encodeURIComponent(title)}&name=${encodeURIComponent(name)}`, { method: 'POST' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>

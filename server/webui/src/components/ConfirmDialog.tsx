@@ -5,12 +5,13 @@ export type ConfirmSpec = {
   cancelLabel?: string
   danger?: boolean
   onConfirm: () => void
-  onCancel: () => void // must close or transition the dialog (handlers own dialog state)
+  onCancel: () => void // cancel BUTTON (must close or transition the dialog)
+  onDismiss?: () => void // clicking outside/scrim; defaults to onCancel
 }
 
 export function ConfirmDialog({ spec }: { spec: ConfirmSpec }) {
   return (
-    <div className="modal-scrim" onClick={spec.onCancel}>
+    <div className="modal-scrim" onClick={spec.onDismiss ?? spec.onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">{spec.title}</div>
         {spec.message && <div className="modal-msg">{spec.message}</div>}

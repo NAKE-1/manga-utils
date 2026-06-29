@@ -78,7 +78,8 @@ export function Detail() {
             message: `“${title()}” has ${count} downloaded chapter(s). Delete the downloaded files too?`,
             confirmLabel: 'Delete downloads', cancelLabel: 'Keep downloads', danger: true,
             onConfirm: () => { api.deleteDownloads(title()); askRemove() },
-            onCancel: askRemove,
+            onCancel: askRemove, // "Keep downloads" → still remove from library
+            onDismiss: close, // tapping outside → abort removal entirely
           })
         } else askRemove()
       })
