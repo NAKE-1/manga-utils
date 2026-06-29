@@ -3,7 +3,7 @@ REM ===========================================================================
 REM  manga-utils dev console.
 REM    Double-click (or run `start.bat` with no args) for the interactive menu.
 REM    Or use it directly:  start.bat build | test | run <args> | mu <args>
-REM                         | clean | android-jar
+REM                         | clean | android-jar | desktop | web
 REM ===========================================================================
 setlocal enabledelayedexpansion
 set "ROOT=%~dp0"
@@ -59,6 +59,7 @@ echo     %Y%[7]%R%  Regenerate android.jar stub    %D%[asks for confirmation]%R%
 echo.
 echo     %Y%[8]%R%  Launch test GUI                %D%(basic Swing window with all features)%R%
 echo     %Y%[9]%R%  Launch desktop app             %D%(modern Compose UI - the real app)%R%
+echo     %Y%[w]%R%  Launch web server              %D%(phone/Tailscale UI - http://localhost:8080)%R%
 echo.
 echo     %Y%[0]%R%  Exit
 echo.
@@ -74,6 +75,7 @@ if "%choice%"=="6" goto :m_clean
 if "%choice%"=="7" goto :m_androidjar
 if "%choice%"=="8" goto :m_gui
 if "%choice%"=="9" goto :m_desktop
+if /I "%choice%"=="w" goto :m_web
 if "%choice%"=="0" goto :end
 echo.
 echo   "%choice%" is not a valid option.
@@ -160,6 +162,16 @@ echo --- Building and launching the desktop app (close the window to return)... 
 call "%GRADLE%" :desktop:run
 goto :after
 
+:m_web
+echo.
+echo --- Building + launching the web server (press Ctrl+C to stop)... ---
+echo     On this PC:        %C%http://localhost:8080%R%
+echo     On your phone:     %C%http://^<this-PC-tailscale-ip^>:8080%R%   %D%(must be on the same tailnet)%R%
+echo     %D%Tip: set MANGA_WEB_PORT to change the port.%R%
+echo.
+call "%GRADLE%" :server:run
+goto :after
+
 :after
 echo.
 echo ---------------------------------------------------------------
@@ -190,6 +202,7 @@ if /I "%CMD%"=="gui" (
     goto :end
 )
 if /I "%CMD%"=="desktop" ( call "%GRADLE%" :desktop:run & goto :end )
+if /I "%CMD%"=="web" ( call "%GRADLE%" :server:run & goto :end )
 if /I "%CMD%"=="run"         ( call "%GRADLE%" -q :cli:run --args="!REST!" & goto :end )
 if /I "%CMD%"=="mu" (
     call "%GRADLE%" -q :cli:installDist || goto :fail
