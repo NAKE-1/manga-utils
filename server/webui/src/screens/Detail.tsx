@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState } from '../api'
-import { IconArrowLeft, IconHeart, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort } from '../components/icons'
+import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload } from '../components/icons'
+import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
 function relative(ms: number): string {
   if (!ms) return ''
@@ -32,6 +33,7 @@ export function Detail() {
   const [checking, setChecking] = useState(false)
   const [tab, setTab] = useState<Tab>('all')
   const [asc, setAsc] = useState(false)
+  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
 
   useEffect(() => {
     setData(null); setError(false)
@@ -48,20 +50,39 @@ export function Detail() {
   const year = dates.length ? new Date(Math.min(...dates)).getFullYear() : null
   const lastUpdate = dates.length ? Math.max(...dates) : 0
 
-  async function toggleLibrary() {
-    if (busy) return
-    setBusy(true)
-    const next = !state.inLibrary
-    try {
-      if (next) await api.addLibrary(sourceId, url); else await api.removeLibrary(sourceId, url)
-      setState((s) => ({ ...s, inLibrary: next }))
-    } finally { setBusy(false) }
+  const title = () => data?.manga.title || url
+  const close = () => setConfirm(null)
+  async function doAdd() {
+    close(); setBusy(true)
+    try { await api.addLibrary(sourceId, url); setState((s) => ({ ...s, inLibrary: true })) } finally { setBusy(false) }
   }
-
-  function toggleBookmark() {
-    const next = !state.bookmarked
-    setState((s) => ({ ...s, bookmarked: next }))
-    api.setMangaBookmark(sourceId, url, next)
+  async function doRemove() {
+    close(); setBusy(true)
+    try { await api.removeLibrary(sourceId, url); setState((s) => ({ ...s, inLibrary: false })) } finally { setBusy(false) }
+  }
+  function askRemove() {
+    setConfirm({ title: 'Remove from library?', message: `Remove “${title()}” from your library?`, confirmLabel: 'Remove', danger: true, onConfirm: doRemove, onCancel: close })
+  }
+  function toggleLibrary() {
+    if (busy) return
+    if (!state.inLibrary) {
+      setConfirm({ title: 'Add to library?', message: `Add “${title()}” to your library?`, confirmLabel: 'Add', onConfirm: doAdd, onCancel: close })
+      return
+    }
+    // Removing: if there are downloads, offer to delete them first, then confirm removal.
+    api.downloadCount(title())
+      .then(({ count }) => {
+        if (count > 0) {
+          setConfirm({
+            title: 'Delete downloads?',
+            message: `“${title()}” has ${count} downloaded chapter(s). Delete the downloaded files too?`,
+            confirmLabel: 'Delete downloads', cancelLabel: 'Keep downloads', danger: true,
+            onConfirm: () => { api.deleteDownloads(title()); askRemove() },
+            onCancel: askRemove,
+          })
+        } else askRemove()
+      })
+      .catch(askRemove)
   }
 
   async function scanUpdates() {
@@ -119,6 +140,7 @@ export function Detail() {
           <div className="chapter-name">{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
+        {c.downloaded && <IconDownload className="chapter-dl" />}
         {bm && <IconBookmarkSm filled className="chapter-bm" />}
         <button className={'ch-check' + (read ? ' on' : '')} onClick={(e) => toggleRead(e, c.url)} aria-label={read ? 'Mark unread' : 'Mark read'} />
       </div>
@@ -188,15 +210,14 @@ export function Detail() {
       <div style={{ height: 86 }} />
 
       <div className="detail-bottombar">
-        <button className={'bb-icon' + (state.bookmarked ? ' on' : '')} onClick={toggleBookmark} aria-label="Bookmark">
-          <IconBookmarkSm filled={state.bookmarked} />
-        </button>
-        <button className={'bb-icon' + (state.inLibrary ? ' on' : '')} onClick={toggleLibrary} disabled={busy} aria-label="Add to library">
-          <IconHeart filled={state.inLibrary} />
+        <button className={'bb-icon' + (state.inLibrary ? ' on' : '')} onClick={toggleLibrary} disabled={busy} aria-label="Bookmark / library">
+          <IconBookmarkSm filled={state.inLibrary} />
         </button>
         <div style={{ flex: 1 }} />
         <button className="bb-book" onClick={openContinue} aria-label="Read"><IconBookOpen /></button>
       </div>
+
+      {confirm && <ConfirmDialog spec={confirm} />}
     </BackWrap>
   )
 }

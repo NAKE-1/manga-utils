@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import mangautils.core.download.DownloadManager
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
@@ -73,6 +74,7 @@ private data class ChapterDto(
     val scanlator: String? = null,
     val dateUpload: Long = 0,
     val number: Float = -1f,
+    val downloaded: Boolean = false,
 )
 
 @Serializable
@@ -104,6 +106,9 @@ private data class HistoryDto(
 private data class MangaStateDto(val inLibrary: Boolean, val bookmarked: Boolean, val read: List<String>, val bookmarks: List<String>)
 
 @Serializable
+private data class CountDto(val count: Int)
+
+@Serializable
 private data class PagesDto(val count: Int)
 
 // ---- mappers --------------------------------------------------------------------------------
@@ -130,7 +135,9 @@ private val detailCache = ConcurrentHashMap<String, DetailDto>()
 /** Build details from a cached library entry — instant + offline (mirrors the desktop). */
 private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
     MangaDto(e.sourceId.toString(), e.mangaUrl, e.title, e.thumbnailUrl, e.author, e.artist, e.description, e.genre, e.status),
-    e.knownChapters.map { ChapterDto(it.url, it.name, it.scanlator, it.dateUpload, it.number) },
+    e.knownChapters.map {
+        ChapterDto(it.url, it.name, it.scanlator, it.dateUpload, it.number, runCatching { DownloadManager.isDownloaded(e.title, it.name) }.getOrDefault(false))
+    },
 )
 
 private fun pagesFor(sourceId: Long, chapterUrl: String): List<Page> =
@@ -189,20 +196,22 @@ fun Application.module() {
                 }
                 runCatching {
                     val d = SourceBrowser.details(id, url)
+                    val mangaTitle = runCatching { d.manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: url
                     // A manual refresh of a followed manga updates its library snapshot (detects new chapters).
                     if (refresh && LibraryService.isFollowed(id, url)) {
-                        val title = runCatching { d.manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: url
-                        runCatching { LibraryService.addKnown(id, url, title, d.manga, d.chapters) }
+                        runCatching { LibraryService.addKnown(id, url, mangaTitle, d.manga, d.chapters) }
                     }
                     DetailDto(
                         d.manga.toDto(id),
                         d.chapters.map { ch ->
+                            val chName = runCatching { ch.name }.getOrDefault("")
                             ChapterDto(
                                 url = runCatching { ch.url }.getOrDefault(""),
-                                name = runCatching { ch.name }.getOrDefault(""),
+                                name = chName,
                                 scanlator = runCatching { ch.scanlator }.getOrNull(),
                                 dateUpload = runCatching { ch.date_upload }.getOrDefault(0),
                                 number = runCatching { ch.chapter_number }.getOrDefault(-1f),
+                                downloaded = runCatching { DownloadManager.isDownloaded(mangaTitle, chName) }.getOrDefault(false),
                             )
                         },
                     ).also { detailCache[key] = it }
@@ -263,6 +272,19 @@ fun Application.module() {
             val id = call.querySourceId() ?: return@delete call.respond(HttpStatusCode.BadRequest)
             val url = call.queryParam("url") ?: return@delete call.respond(HttpStatusCode.BadRequest)
             withContext(Dispatchers.IO) { LibraryService.remove(id, url) }
+            call.respond(HttpStatusCode.OK)
+        }
+
+        // Downloaded-files management for a series (used by the remove-from-library confirm flow).
+        get("/api/downloads/count") {
+            val title = call.queryParam("title") ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val n = withContext(Dispatchers.IO) { DownloadManager.downloadCount(title) }
+            call.respond(CountDto(n))
+        }
+
+        delete("/api/downloads") {
+            val title = call.queryParam("title") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { DownloadManager.deleteDownloads(title) }
             call.respond(HttpStatusCode.OK)
         }
 

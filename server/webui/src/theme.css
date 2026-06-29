@@ -189,6 +189,18 @@ img { display: block; }
 .chapter-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chapter-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .chapter-bm { width: 16px; height: 16px; color: var(--accent); flex: 0 0 auto; }
+.chapter-dl { width: 16px; height: 16px; color: #4cd07d; flex: 0 0 auto; }
+
+/* Confirm modal */
+.modal-scrim { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.62); display: grid; place-items: center; padding: 24px; animation: fade-in .14s ease; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.modal { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; animation: fade-up .18s ease both; }
+.modal-title { font-size: 18px; font-weight: 800; }
+.modal-msg { margin-top: 8px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.modal-btn { font-size: 14px; font-weight: 700; padding: 10px 16px; border-radius: 10px; background: var(--card-2); color: var(--text); cursor: pointer; }
+.modal-btn.primary { background: var(--accent); color: #fff; }
+.modal-btn.danger { background: #e0464b; color: #fff; }
 
 .last-update { padding: 8px 16px 0; font-size: 12px; color: var(--muted); cursor: pointer; }
 .last-update:active { color: var(--accent); }

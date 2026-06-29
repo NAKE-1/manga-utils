@@ -22,6 +22,7 @@ export interface Chapter {
   scanlator?: string | null
   dateUpload: number
   number: number
+  downloaded: boolean
 }
 
 export interface Detail { manga: Manga; chapters: Chapter[] }
@@ -72,6 +73,8 @@ export const api = {
     fetch(`/api/library?source=${id}&url=${encodeURIComponent(url)}`, { method: 'DELETE' }),
   setMangaBookmark: (id: string, url: string, on: boolean) =>
     fetch(`/api/manga/bookmark?source=${id}&url=${encodeURIComponent(url)}&on=${on}`, { method: 'POST' }),
+  downloadCount: (title: string) => getJson<{ count: number }>(`/api/downloads/count?title=${encodeURIComponent(title)}`),
+  deleteDownloads: (title: string) => fetch(`/api/downloads?title=${encodeURIComponent(title)}`, { method: 'DELETE' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>
