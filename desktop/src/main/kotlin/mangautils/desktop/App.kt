@@ -86,6 +86,9 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
@@ -2525,19 +2528,33 @@ private fun ReaderSidebar(
         Text(title, color = MuTheme.Paper, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         val curScan = chapters.firstOrNull { it.url == currentChapterUrl }?.scanlator?.takeIf { it.isNotBlank() }
         Text(if (curScan != null) "$chapterName  ·  $curScan" else chapterName, color = MuTheme.Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(16.dp))
-        Text("PAGE", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { onJumpPage(currentPage - 1) }, enabled = currentPage > 0) { Text("<") }
-            Text("${(currentPage + 1).coerceAtMost(pageCount.coerceAtLeast(1))} / $pageCount", color = MuTheme.Paper, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-            OutlinedButton(onClick = { onJumpPage(currentPage + 1) }, enabled = currentPage < pageCount - 1) { Text(">") }
+        Spacer(Modifier.height(18.dp))
+        // Page selector — arrow / field+caret / arrow (Suwayomi-style).
+        var pageMenu by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NavArrow(left = true, enabled = currentPage > 0) { onJumpPage(currentPage - 1) }
+            Box(Modifier.weight(1f)) {
+                NavFieldBox("Page", onClick = { pageMenu = true }) {
+                    Text("${(currentPage + 1).coerceAtMost(pageCount.coerceAtLeast(1))}", color = MuTheme.Paper, modifier = Modifier.weight(1f), maxLines = 1)
+                    Icon(Icons.Filled.KeyboardArrowDown, null, tint = MuTheme.Muted, modifier = Modifier.size(18.dp))
+                }
+                DropdownMenu(pageMenu, onDismissRequest = { pageMenu = false }, modifier = Modifier.heightIn(max = 380.dp)) {
+                    (1..pageCount.coerceAtLeast(1)).forEach { p ->
+                        DropdownMenuItem(text = { Text("Page $p", color = if (p == currentPage + 1) MuTheme.Vermilion else MuTheme.Paper) }, onClick = { pageMenu = false; onJumpPage(p - 1) })
+                    }
+                }
+            }
+            NavArrow(left = false, enabled = currentPage < pageCount - 1) { onJumpPage(currentPage + 1) }
         }
         Spacer(Modifier.height(14.dp))
-        Text("CHAPTER", color = MuTheme.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { prevChapter?.let { onOpenChapter(it.url, it.name) } }, enabled = prevChapter != null) { Text("<") }
+        // Chapter selector.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NavArrow(left = true, enabled = prevChapter != null) { prevChapter?.let { onOpenChapter(it.url, it.name) } }
             Box(Modifier.weight(1f)) {
-                OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) { Text(chapterName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                NavFieldBox("Chapter", onClick = { menuOpen = true }) {
+                    Text(chapterName, color = MuTheme.Paper, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Filled.KeyboardArrowDown, null, tint = MuTheme.Muted, modifier = Modifier.size(18.dp))
+                }
                 DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
                     // Full list (every scanlator) so you can still pick any version manually,
                     // opened scrolled to — and highlighting — the chapter you're currently on.
@@ -2569,7 +2586,7 @@ private fun ReaderSidebar(
                     }
                 }
             }
-            OutlinedButton(onClick = { nextChapter?.let { onOpenChapter(it.url, it.name) } }, enabled = nextChapter != null) { Text(">") }
+            NavArrow(left = false, enabled = nextChapter != null) { nextChapter?.let { onOpenChapter(it.url, it.name) } }
         }
         Spacer(Modifier.height(20.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
@@ -2590,6 +2607,33 @@ private fun ReaderSidebar(
             Spacer(Modifier.width(8.dp))
             Text("All reader settings", color = MuTheme.Vermilion)
         }
+    }
+}
+
+/** Square accent arrow flanking a reader nav field (disabled = dim). */
+@Composable
+private fun NavArrow(left: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.size(width = 46.dp, height = 54.dp).clip(RoundedCornerShape(10.dp))
+            .background(if (enabled) MuTheme.Vermilion else Color.White.copy(alpha = 0.06f))
+            .clickable(enabled = enabled, onClick = onClick),
+        Alignment.Center,
+    ) {
+        Icon(if (left) Icons.Filled.KeyboardArrowLeft else Icons.Filled.KeyboardArrowRight, if (left) "Previous" else "Next", tint = if (enabled) Color.White else MuTheme.Muted, modifier = Modifier.size(26.dp))
+    }
+}
+
+/** Bordered reader nav field with a floating label (Page / Chapter). */
+@Composable
+private fun NavFieldBox(label: String, onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+    Box {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick).padding(start = 14.dp, end = 10.dp, top = 16.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
+        Text(label, color = MuTheme.Muted, fontSize = 11.sp, modifier = Modifier.offset(x = 12.dp, y = (-7).dp).background(MuTheme.Panel).padding(horizontal = 4.dp))
     }
 }
 
