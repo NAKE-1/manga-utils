@@ -53,7 +53,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -85,6 +87,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
@@ -835,6 +838,11 @@ private fun LibraryCard(e: LibraryEntry, onOpen: () -> Unit, onChanged: () -> Un
     }
     Box {
         MangaCover(e.sourceId, MangaRef(e.title, e.mangaUrl, e.thumbnailUrl), "${e.knownChapters.size} ch") { onOpen() }
+        if (e.newChapters.isNotEmpty()) {
+            Box(Modifier.align(Alignment.TopStart).padding(6.dp).size(22.dp).clip(CircleShape).background(MuTheme.Vermilion), Alignment.Center) {
+                Text("!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
         Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
             Box(
                 Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.45f)).clickable { menuOpen = true }.padding(4.dp),
@@ -1886,6 +1894,8 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
     // Multi-select.
     var selecting by remember(s) { mutableStateOf(false) }
     val selected = remember(s) { mutableStateListOf<String>() }
+    var showCover by remember(s) { mutableStateOf(false) }
+    var newChapterUrls by remember(s) { mutableStateOf<Set<String>>(emptySet()) }
     val settings = remember { runCatching { SettingsStore.get() }.getOrNull() }
     val bgEnabled = settings?.mangaThumbnailBackground ?: true
     val dynColors = settings?.dynamicThemeColors ?: true
@@ -1897,6 +1907,11 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
         withContext(Dispatchers.IO) {
             val cached = LibraryStore.find(s.sourceId, s.url)
             inLibrary = cached != null
+            // Capture new-chapter highlights for this session, then clear the badge (seen).
+            if (refreshTick == 0 && cached != null && cached.newChapters.isNotEmpty()) {
+                newChapterUrls = cached.newChapters.toSet()
+                LibraryService.markSeen(s.sourceId, s.url)
+            }
             sourceLabel = SourceManager.listInstalledSources().firstOrNull { it.id == s.sourceId }?.let { "${cleanName(it.name)} (${it.lang.uppercase()})" } ?: ""
             val src = runCatching { SourceManager.loadSource(s.sourceId) }.getOrNull() as? HttpSource
             val forceNetwork = refreshTick > 0
@@ -2023,8 +2038,26 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                     }
                     Column {
                         Row {
-                            // Fixed-size cover (don't let it scale to the column width).
-                            Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.width(210.dp).aspectRatio(0.7f).clip(RoundedCornerShape(12.dp)))
+                            // Fixed-size cover (don't let it scale to the column width). Hover → expand → lightbox.
+                            val coverHover = remember { MutableInteractionSource() }
+                            val coverHovered by coverHover.collectIsHoveredAsState()
+                            Box(Modifier.width(210.dp).aspectRatio(0.7f).clip(RoundedCornerShape(12.dp)).hoverable(coverHover).clickable { showCover = true }) {
+                                Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.fillMaxSize())
+                                if (coverHovered) {
+                                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)), Alignment.Center) {
+                                        Box(Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)).padding(10.dp)) {
+                                            Icon(Icons.Filled.OpenInFull, "Expand cover", tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                }
+                            }
+                            if (showCover) {
+                                Dialog(onDismissRequest = { showCover = false }) {
+                                    Box(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, indication = null) { showCover = false }, Alignment.Center) {
+                                        Cover(s.sourceId, d.manga.thumbnail_url, s.title, Modifier.fillMaxHeight(0.92f).aspectRatio(0.7f).clip(RoundedCornerShape(10.dp)))
+                                    }
+                                }
+                            }
                             Spacer(Modifier.width(16.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(s.title, color = MuTheme.Paper, fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -2197,6 +2230,7 @@ private fun DetailScreen(s: Screen.Detail, onReadChapter: (String, String) -> Un
                                                     ch.date_upload.takeIf { it > 0 }?.let { dateFmt.format(Date(it)) },
                                                 ).joinToString("  ·  ")
                                                 if (meta.isNotBlank()) Text(meta, color = MuTheme.Muted, fontSize = 11.sp)
+                                                if (ch.url in newChapterUrls && !read) Text("  ·  ✓ NEW", color = Red18, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                                 if (downloaded) Text("  ·  Downloaded", color = acc, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }

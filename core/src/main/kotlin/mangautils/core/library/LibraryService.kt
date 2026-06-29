@@ -119,10 +119,21 @@ object LibraryService {
             val knownUrls = entry.knownChapters.map { it.url }.toSet()
             val newChapters = current.filter { it.url !in knownUrls }.map { it.toRef() }
             entry.knownChapters = current.map { it.toRef() }.toMutableList()
+            // Accumulate unseen new-chapter urls for the badge (only after the first snapshot exists).
+            if (knownUrls.isNotEmpty()) newChapters.forEach { if (it.url !in entry.newChapters) entry.newChapters.add(it.url) }
             entry.lastCheckedAt = System.currentTimeMillis()
             LibraryStore.upsert(entry)
             UpdateResult(entry, newChapters)
         }
+
+    /** Clear the "new chapters" flag for a series (called when the user opens it). */
+    fun markSeen(sourceId: Long, mangaUrl: String) {
+        val entry = LibraryStore.find(sourceId, mangaUrl) ?: return
+        if (entry.newChapters.isNotEmpty()) {
+            entry.newChapters = mutableListOf()
+            LibraryStore.upsert(entry)
+        }
+    }
 
     private fun SChapter.toRef() =
         ChapterRef(

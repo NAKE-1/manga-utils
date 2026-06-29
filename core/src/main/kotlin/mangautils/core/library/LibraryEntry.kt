@@ -60,6 +60,8 @@ data class LibraryEntry(
     val addedAt: Long = System.currentTimeMillis(),
     var lastCheckedAt: Long = 0,
     var knownChapters: MutableList<ChapterRef> = mutableListOf(),
+    /** URLs of chapters detected as new since last seen — drives the "!" badge + red check. */
+    var newChapters: MutableList<String> = mutableListOf(),
 ) {
     val key: String get() = "$sourceId:$mangaUrl"
 }
