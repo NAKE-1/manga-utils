@@ -43,6 +43,11 @@ export function Reader() {
   const nextCh = idx > 0 ? chapters[idx - 1] : undefined // newer
   const prevCh = idx >= 0 && idx < chapters.length - 1 ? chapters[idx + 1] : undefined // older
 
+  // Pill shows current-chapter / total-chapters (highest chapter number), like Atsumaru.
+  const cur = chapters.find((c) => c.url === chapter)
+  const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? chapters.length - idx : 0
+  const totalCh = (() => { const m = Math.max(0, ...chapters.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : chapters.length })()
+
   function openChapter(c?: Chapter) {
     if (!c) return
     nav(`/reader/${sourceId}?manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(c.url)}&name=${encodeURIComponent(c.name)}&title=${encodeURIComponent(title)}`)
@@ -80,7 +85,7 @@ export function Reader() {
 
       {/* Minimal progress pill when chrome hidden */}
       {!chrome && count ? (
-        <div className="reader-pill">{Math.round(progress * 100)}% · {page}/{count}</div>
+        <div className="reader-pill">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div>
       ) : null}
 
       {/* Chrome */}
