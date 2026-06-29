@@ -14,6 +14,8 @@ export function Home() {
 
   if (library === null) return <div className="spinner" />
 
+  // History stores no cover, so fall back to the library entry's thumbnail.
+  const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
   // Continue reading: most-recent history entry per manga.
   const seen = new Set<string>()
   const continueReading = history.filter((h) => {
@@ -38,7 +40,7 @@ export function Home() {
               sourceId={h.sourceId}
               url={h.mangaUrl}
               title={h.mangaTitle}
-              cover={coverUrl(h.sourceId, h.thumbnailUrl)}
+              cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl))}
               subtitle={h.chapterName}
             />
           ))}

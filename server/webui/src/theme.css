@@ -92,8 +92,8 @@ img { display: block; }
 .carousel > * { scroll-snap-align: start; flex: 0 0 auto; }
 
 /* ---- Cover card --------------------------------------------------------- */
-.cover-card { width: 124px; }
-.cover-card.grid { width: 100%; }
+.cover-card { width: 138px; }
+.cover-card.full { width: 100%; }
 .cover-frame {
   position: relative; width: 100%; aspect-ratio: 70 / 100;
   border-radius: var(--radius); overflow: hidden; background: var(--card-2);

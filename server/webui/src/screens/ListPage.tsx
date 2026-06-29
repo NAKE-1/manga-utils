@@ -27,6 +27,7 @@ export function ListPage() {
 
   let cards
   if (kind === 'continue') {
+    const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
     const seen = new Set<string>()
     cards = history
       .filter((h) => {
@@ -36,7 +37,7 @@ export function ListPage() {
         return true
       })
       .map((h) => (
-        <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl)} subtitle={h.chapterName} />
+        <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl))} subtitle={h.chapterName} />
       ))
   } else {
     const entries = kind === 'updates' ? library.filter((e) => e.newChapters > 0) : library

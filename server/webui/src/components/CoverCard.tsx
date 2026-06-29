@@ -15,7 +15,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
   const nav = useNavigate()
   const go = () => nav(`/manga/${sourceId}/${encodeURIComponent(url)}`)
   return (
-    <div className={'cover-card' + (grid ? ' grid' : '')} onClick={go}>
+    <div className={'cover-card' + (grid ? ' full' : '')} onClick={go}>
       <div className="cover-frame">
         {cover ? <img src={cover} alt="" loading="lazy" /> : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
         {type && <span className={'type-badge ' + type}>{type}</span>}
