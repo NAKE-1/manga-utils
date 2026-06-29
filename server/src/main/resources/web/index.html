@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>manga-utils</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #0e0e10; color: #e7e7ea; font-family: system-ui, sans-serif; }
+      .wrap { max-width: 560px; margin: 0 auto; padding: 28px 18px; }
+      h1 { font-size: 22px; }
+      .accent { color: #8a7cf0; }
+      code { background: #1a1a1e; padding: 2px 6px; border-radius: 6px; }
+      a { color: #8a7cf0; }
+      pre { background: #17171a; padding: 12px; border-radius: 10px; overflow:auto; }
+      .ok { color: #4cd07d; }
+      .err { color: #ff6b6b; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>manga-utils <span class="accent">web</span></h1>
+      <p>The backend is running. The React frontend isn't built yet — this is a placeholder.</p>
+      <p>API check (sources): <span id="status">…</span></p>
+      <pre id="out">loading…</pre>
+    </div>
+    <script>
+      fetch('/api/sources')
+        .then(r => r.json())
+        .then(d => {
+          document.getElementById('status').innerHTML = '<span class="ok">OK — ' + d.length + ' source(s)</span>';
+          document.getElementById('out').textContent = JSON.stringify(d, null, 2);
+        })
+        .catch(e => {
+          document.getElementById('status').innerHTML = '<span class="err">failed</span>';
+          document.getElementById('out').textContent = String(e);
+        });
+    </script>
+  </body>
+</html>

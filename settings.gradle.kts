@@ -28,4 +28,5 @@ include(
     "cli",
     "gui",
     "desktop",
+    "server",
 )
