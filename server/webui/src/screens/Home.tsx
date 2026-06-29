@@ -3,16 +3,21 @@ import { api, coverUrl, LibraryEntry, HistoryItem } from '../api'
 import { Carousel, GridSection } from '../components/Section'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
+import { ErrorPanel } from '../components/ErrorPanel'
 
 export function Home() {
   const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
+  const [failed, setFailed] = useState(false)
 
-  useEffect(() => {
-    api.library().then(setLibrary).catch(() => setLibrary([]))
-    api.history().then(setHistory).catch(() => setHistory([]))
-  }, [])
+  function load() {
+    setFailed(false); setLibrary(null)
+    api.library().then(setLibrary).catch(() => setFailed(true))
+    api.history().then(setHistory).catch(() => {})
+  }
+  useEffect(load, [])
 
+  if (failed) return <ErrorPanel onRetry={load} message="Couldn't load your library." />
   if (library === null) return <SkeletonGrid />
 
   // History stores no cover, so fall back to the library entry's thumbnail.

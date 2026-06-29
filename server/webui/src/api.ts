@@ -49,10 +49,29 @@ export interface HistoryItem {
   readAt: number
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`${r.status} ${url}`)
-  return r.json() as Promise<T>
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Fetch JSON with a timeout and a couple of retries (transient network / 5xx) for resilience.
+async function getJson<T>(url: string, retries = 2, timeoutMs = 15000): Promise<T> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const r = await fetch(url, { signal: ctrl.signal })
+      if (!r.ok) {
+        if (r.status >= 500 && attempt < retries) { await sleep(400 * (attempt + 1)); continue }
+        throw new Error(`${r.status} ${url}`)
+      }
+      return (await r.json()) as T
+    } catch (e) {
+      lastErr = e
+      if (attempt < retries) { await sleep(400 * (attempt + 1)); continue }
+    } finally {
+      clearTimeout(t)
+    }
+  }
+  throw lastErr
 }
 
 export const api = {

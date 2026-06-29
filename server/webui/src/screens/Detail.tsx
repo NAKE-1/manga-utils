@@ -4,6 +4,7 @@ import { api, coverUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState 
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
+import { ErrorPanel } from '../components/ErrorPanel'
 
 function relative(ms: number): string {
   if (!ms) return ''
@@ -35,12 +36,13 @@ export function Detail() {
   const [tab, setTab] = useState<Tab>('all')
   const [asc, setAsc] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
+  const [tries, setTries] = useState(0)
 
   useEffect(() => {
     setData(null); setError(false)
     api.detail(sourceId, url).then(setData).catch(() => setError(true))
     api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {})
-  }, [sourceId, url])
+  }, [sourceId, url, tries])
 
   const chapterTotal = useMemo(() => {
     if (!data) return 0
@@ -112,7 +114,7 @@ export function Detail() {
     nav(`/reader/${sourceId}?manga=${encodeURIComponent(url)}&chapter=${encodeURIComponent(chUrl)}&name=${encodeURIComponent(name)}&title=${encodeURIComponent(data!.manga.title)}`)
   }
 
-  if (error) return <BackWrap nav={nav}><div className="center-msg">Couldn't load this manga.</div></BackWrap>
+  if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message="Couldn't load this manga." /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
 
   const m = data.manga
