@@ -26,6 +26,8 @@ export interface Chapter {
 
 export interface Detail { manga: Manga; chapters: Chapter[] }
 
+export interface MangaState { inLibrary: boolean; read: string[]; bookmarks: string[] }
+
 export interface LibraryEntry {
   sourceId: string
   url: string
@@ -62,6 +64,20 @@ export const api = {
     getJson<PageResult>(`/api/sources/${id}/search?q=${encodeURIComponent(q)}&page=${page}`),
   detail: (id: string, url: string) =>
     getJson<Detail>(`/api/sources/${id}/manga?url=${encodeURIComponent(url)}`),
+  mangaState: (id: string, url: string) =>
+    getJson<MangaState>(`/api/manga/state?source=${id}&url=${encodeURIComponent(url)}`),
+  addLibrary: (id: string, url: string) =>
+    fetch(`/api/library?source=${id}&url=${encodeURIComponent(url)}`, { method: 'POST' }),
+  removeLibrary: (id: string, url: string) =>
+    fetch(`/api/library?source=${id}&url=${encodeURIComponent(url)}`, { method: 'DELETE' }),
+  setRead: (id: string, manga: string, chapter: string, read: boolean) =>
+    fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
+  setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>
+    fetch(`/api/bookmarks?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&on=${on}`, { method: 'POST' }),
+}
+
+export const STATUS_LABELS: Record<number, string> = {
+  0: '', 1: 'Ongoing', 2: 'Completed', 3: 'Licensed', 4: 'Publishing finished', 5: 'Cancelled', 6: 'Hiatus',
 }
 
 // Image URLs (streamed by the backend).

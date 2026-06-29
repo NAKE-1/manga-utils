@@ -3,6 +3,7 @@ import { TopBar } from './components/TopBar'
 import { TabBar } from './components/TabBar'
 import { Home } from './screens/Home'
 import { ListPage } from './screens/ListPage'
+import { Detail } from './screens/Detail'
 import { Stub } from './screens/Stub'
 
 export function App() {
@@ -17,7 +18,8 @@ export function App() {
           <Route path="/search" element={<Stub name="Search" />} />
           <Route path="/settings" element={<Stub name="Settings" />} />
           <Route path="/downloads" element={<Stub name="Downloads" />} />
-          <Route path="/manga/:sourceId/:url" element={<Stub name="Manga detail" />} />
+          <Route path="/manga/:sourceId" element={<Detail />} />
+          <Route path="/reader/:sourceId" element={<Stub name="Reader" />} />
           <Route path="*" element={<Stub name="Not found" />} />
         </Routes>
       </main>

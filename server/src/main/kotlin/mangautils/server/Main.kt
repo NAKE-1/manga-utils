@@ -21,14 +21,18 @@ import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryService
+import mangautils.core.library.ReadStore
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
 import mangautils.core.source.SourceImage
@@ -92,6 +96,9 @@ private data class HistoryDto(
     val chapterName: String,
     val readAt: Long,
 )
+
+@Serializable
+private data class MangaStateDto(val inLibrary: Boolean, val read: List<String>, val bookmarks: List<String>)
 
 @Serializable
 private data class PagesDto(val count: Int)
@@ -189,6 +196,59 @@ fun Application.module() {
                 }
             }
             call.respond(entries)
+        }
+
+        // ---- Per-manga state for the detail page (in-library + read + bookmarked) ----
+        get("/api/manga/state") {
+            val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val st = withContext(Dispatchers.IO) {
+                MangaStateDto(
+                    LibraryService.isFollowed(id, url),
+                    ReadStore.readUrls(id, url).toList(),
+                    BookmarkStore.bookmarks(id, url).toList(),
+                )
+            }
+            call.respond(st)
+        }
+
+        post("/api/library") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val url = call.queryParam("url") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val d = SourceBrowser.details(id, url)
+                    val title = runCatching { d.manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: url
+                    LibraryService.addKnown(id, url, title, d.manga, d.chapters)
+                    true
+                }.getOrDefault(false)
+            }
+            call.respond(if (ok) HttpStatusCode.OK else HttpStatusCode.BadGateway)
+        }
+
+        delete("/api/library") {
+            val id = call.querySourceId() ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            val url = call.queryParam("url") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { LibraryService.remove(id, url) }
+            call.respond(HttpStatusCode.OK)
+        }
+
+        post("/api/read") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val chapter = call.queryParam("chapter") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val read = call.queryParam("read")?.toBoolean() ?: true
+            withContext(Dispatchers.IO) { ReadStore.setRead(id, manga, chapter, read) }
+            call.respond(HttpStatusCode.OK)
+        }
+
+        post("/api/bookmarks") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val chapter = call.queryParam("chapter") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val on = call.queryParam("on")?.toBoolean() ?: true
+            withContext(Dispatchers.IO) { BookmarkStore.setBookmarked(id, manga, chapter, on) }
+            call.respond(HttpStatusCode.OK)
         }
 
         get("/api/history") {

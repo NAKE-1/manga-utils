@@ -22,3 +22,14 @@ export const IconSettings = ({ className }: P) => (
 export const IconDownload = S('M12 3v12 M7 11l5 5 5-5 M5 21h14')
 export const IconMenu = S('M3 6h18 M3 12h18 M3 18h18')
 export const IconChevronRight = S('M9 5l7 7-7 7')
+export const IconArrowLeft = S('M15 5l-7 7 7 7 M8 12h12')
+export const IconHeart = ({ className, filled }: P & { filled?: boolean }) => (
+  <svg viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" className={className}>
+    <path d="M12 21s-7-4.5-9.5-9A5 5 0 0112 6a5 5 0 019.5 6c-2.5 4.5-9.5 9-9.5 9z" />
+  </svg>
+)
+export const IconBookmarkSm = ({ className, filled }: P & { filled?: boolean }) => (
+  <svg viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" className={className}>
+    <path d="M6 3h12a1 1 0 011 1v17l-7-5-7 5V4a1 1 0 011-1z" />
+  </svg>
+)

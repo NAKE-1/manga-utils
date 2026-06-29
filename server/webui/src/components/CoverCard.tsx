@@ -13,7 +13,7 @@ type Props = {
 
 export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid }: Props) {
   const nav = useNavigate()
-  const go = () => nav(`/manga/${sourceId}/${encodeURIComponent(url)}`)
+  const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
   return (
     <div className={'cover-card' + (grid ? ' full' : '')} onClick={go}>
       <div className="cover-frame">
