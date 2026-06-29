@@ -13,22 +13,21 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
-import io.ktor.server.http.content.staticResources
+import io.ktor.server.http.content.singlePageApplication
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
-import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
-import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryService
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
@@ -81,6 +80,17 @@ private data class LibraryDto(
     val author: String? = null,
     val status: Int = 0,
     val newChapters: Int = 0,
+)
+
+@Serializable
+private data class HistoryDto(
+    val sourceId: String,
+    val mangaUrl: String,
+    val mangaTitle: String,
+    val thumbnailUrl: String? = null,
+    val chapterUrl: String,
+    val chapterName: String,
+    val readAt: Long,
 )
 
 @Serializable
@@ -181,6 +191,15 @@ fun Application.module() {
             call.respond(entries)
         }
 
+        get("/api/history") {
+            val items = withContext(Dispatchers.IO) {
+                HistoryStore.list().map {
+                    HistoryDto(it.sourceId.toString(), it.mangaUrl, it.mangaTitle, it.thumbnailUrl, it.chapterUrl, it.chapterName, it.readAt)
+                }
+            }
+            call.respond(items)
+        }
+
         // ---- Chapter pages ----
         get("/api/chapter/pages") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest, "bad source id")
@@ -220,17 +239,11 @@ fun Application.module() {
             if (bytes == null) call.respond(HttpStatusCode.NotFound) else call.respondBytes(bytes, sniffImageType(bytes))
         }
 
-        // ---- Static frontend (built React app) + SPA fallback ----
-        staticResources("/", "web", index = "index.html")
-        get("/{path...}") {
-            // SPA deep-link fallback: anything not matched above and not under /api or /img → index.
-            val p = call.request.path()
-            if (p.startsWith("/api") || p.startsWith("/img")) {
-                call.respond(HttpStatusCode.NotFound)
-            } else {
-                val html = Application::class.java.classLoader.getResourceAsStream("web/index.html")?.readBytes()
-                if (html == null) call.respondText("manga-utils web server (frontend not built yet)") else call.respondBytes(html, ContentType.Text.Html)
-            }
+        // ---- Static frontend (built React SPA): serves real files, falls back to index.html ----
+        singlePageApplication {
+            useResources = true
+            filesPath = "web"
+            defaultPage = "index.html"
         }
     }
 }

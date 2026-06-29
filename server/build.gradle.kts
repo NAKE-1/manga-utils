@@ -29,3 +29,31 @@ dependencies {
 application {
     mainClass = "mangautils.server.MainKt"
 }
+
+// ---- Frontend build: compile the Vite/React app in webui/ into resources/web -----------------
+// Runs as part of processResources so `gradlew :server:run` / `start.bat web` always serve a fresh
+// UI. Incremental via inputs/outputs (skips when the frontend source is unchanged). Requires Node.
+val webuiDir = layout.projectDirectory.dir("webui")
+val webOut = layout.projectDirectory.dir("src/main/resources/web")
+val npmExe = if (System.getProperty("os.name").lowercase().contains("win")) "npm.cmd" else "npm"
+
+val webInstall by tasks.registering(Exec::class) {
+    workingDir = webuiDir.asFile
+    inputs.file(webuiDir.file("package.json"))
+    outputs.dir(webuiDir.dir("node_modules"))
+    commandLine(npmExe, "install", "--no-fund", "--no-audit")
+}
+
+val webBuild by tasks.registering(Exec::class) {
+    dependsOn(webInstall)
+    workingDir = webuiDir.asFile
+    inputs.dir(webuiDir.dir("src"))
+    inputs.file(webuiDir.file("package.json"))
+    inputs.file(webuiDir.file("vite.config.ts"))
+    inputs.file(webuiDir.file("index.html"))
+    outputs.dir(webOut)
+    commandLine(npmExe, "run", "build")
+}
+
+tasks.named("processResources") { dependsOn(webBuild) }
+
