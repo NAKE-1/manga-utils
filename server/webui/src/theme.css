@@ -131,17 +131,28 @@ img { display: block; }
   background: rgba(20,20,24,0.7); backdrop-filter: blur(6px); color: var(--text);
 }
 .detail-back svg { width: 22px; height: 22px; }
-.detail-head { display: flex; gap: 14px; padding: 6px 16px 0; }
+.detail-head { display: flex; gap: 16px; padding: 8px 16px 0; align-items: flex-end; }
 .detail-cover {
-  position: relative; flex: 0 0 120px; width: 120px; aspect-ratio: 70/100;
+  position: relative; flex: 0 0 130px; width: 130px; aspect-ratio: 70/100;
   border-radius: var(--radius); overflow: hidden; background: var(--card-2);
+  box-shadow: 0 8px 24px rgba(0,0,0,.45);
 }
 .detail-cover img { width: 100%; height: 100%; object-fit: cover; }
-.detail-info { flex: 1; min-width: 0; padding-top: 2px; }
-.detail-title { font-size: 20px; font-weight: 800; line-height: 1.2; margin: 0 0 8px; }
-.detail-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.detail-title { font-size: 27px; font-weight: 800; line-height: 1.12; margin: 0 0 4px; flex: 1; min-width: 0; }
 
-.actions { display: flex; gap: 10px; padding: 14px 16px 4px; }
+/* Meta pills row (type / status / chapters / author) */
+.pills { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 2px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+  color: #d6d6dd; background: var(--card-2); border-radius: 999px; padding: 7px 13px;
+}
+.pill .pi { width: 15px; height: 15px; }
+.pill.accent { background: var(--accent); color: #fff; }
+.pill.manga { background: var(--manga); color: #fff; }
+.pill.manhwa { background: var(--manhwa); color: #fff; }
+.pill.manhua { background: var(--manhua); color: #fff; }
+
+.actions { display: flex; gap: 10px; padding: 12px 16px 4px; }
 .btn {
   display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700;
   padding: 10px 16px; border-radius: 999px; background: var(--card-2); color: var(--text);
@@ -151,10 +162,12 @@ img { display: block; }
 .btn.primary { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); color: #cfc6ff; }
 .btn:active { opacity: .8; }
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px 2px; }
+.chips.scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.chips.scroll::-webkit-scrollbar { display: none; }
 .chip {
-  font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--border);
-  border-radius: 8px; padding: 5px 10px;
+  flex: 0 0 auto; font-size: 13px; color: #cdcdd4; background: var(--card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; white-space: nowrap;
 }
 
 .synopsis { color: #c9c9d0; font-size: 14px; line-height: 1.5; padding: 12px 16px 0; white-space: pre-wrap; }
@@ -185,3 +198,32 @@ img { display: block; }
 .skeleton { background: linear-gradient(90deg,#1a1a1e,#222,#1a1a1e); background-size: 200% 100%;
   animation: sk 1.2s ease-in-out infinite; }
 @keyframes sk { to { background-position: -200% 0; } }
+
+/* Content fade-in on route change for a livelier feel */
+main > * { animation: fade-up .22s ease both; }
+@keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---- Interactivity: cursor + transitions; hover effects only on pointer devices ---- */
+.cover-card, .chapter-row, .chip, .pill, .btn, .iconbtn, .section-head.tappable, .detail-back, .tabbar a, .type-badge {
+  cursor: pointer;
+}
+.cover-card { transition: transform .16s ease; }
+.cover-frame img, .detail-cover img { transition: transform .28s ease; }
+.chip, .pill, .btn, .iconbtn, .detail-back, .chapter-row { transition: background .14s ease, border-color .14s ease, transform .12s ease, color .14s ease; }
+.cover-card:active { transform: scale(.97); }
+.btn:active, .pill:active, .chip:active { transform: scale(.96); }
+
+@media (hover: hover) {
+  .cover-card:hover { transform: translateY(-5px); }
+  .cover-card:hover .cover-frame img { transform: scale(1.06); }
+  .chip:hover { background: var(--card-2); border-color: var(--accent); }
+  .pill:hover { filter: brightness(1.12); }
+  .btn:hover { border-color: var(--accent); background: var(--card-2); }
+  .btn.primary:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .chapter-row:hover { background: var(--card-2); transform: translateX(3px); }
+  .iconbtn:hover { background: var(--card-2); }
+  .detail-back:hover { background: var(--card-2); }
+  .tabbar a:hover { color: var(--text); }
+  .section-head.tappable:hover { color: var(--accent); }
+  .section-head.tappable:hover .chev { color: var(--accent); }
+}

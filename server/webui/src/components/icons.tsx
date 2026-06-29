@@ -23,6 +23,13 @@ export const IconDownload = S('M12 3v12 M7 11l5 5 5-5 M5 21h14')
 export const IconMenu = S('M3 6h18 M3 12h18 M3 18h18')
 export const IconChevronRight = S('M9 5l7 7-7 7')
 export const IconArrowLeft = S('M15 5l-7 7 7 7 M8 12h12')
+export const IconClock = ({ className }: P) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+  </svg>
+)
+export const IconBook = S('M4 4h11a3 3 0 013 3v13a2 2 0 00-2-2H4z M7 8h8 M7 12h6')
+export const IconPen = S('M14 4l6 6 M3 21l1-5L16 4l4 4L8 20z')
 export const IconHeart = ({ className, filled }: P & { filled?: boolean }) => (
   <svg viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" className={className}>
     <path d="M12 21s-7-4.5-9.5-9A5 5 0 0112 6a5 5 0 019.5 6c-2.5 4.5-9.5 9-9.5 9z" />

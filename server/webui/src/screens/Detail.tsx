@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState } from '../api'
-import { IconArrowLeft, IconHeart, IconBookmarkSm } from '../components/icons'
+import { IconArrowLeft, IconHeart, IconBookmarkSm, IconClock, IconBook, IconPen } from '../components/icons'
 
 const dateFmt = (ms: number) => (ms > 0 ? new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' }) : '')
 
@@ -57,13 +57,21 @@ export function Detail() {
       <div className="detail-head">
         <div className="detail-cover">
           {m.thumbnailUrl ? <img src={coverUrl(sourceId, m.thumbnailUrl)} alt="" /> : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
-          {type && <span className={'type-badge ' + type}>{type}</span>}
         </div>
-        <div className="detail-info">
-          <h1 className="detail-title">{m.title}</h1>
-          {m.author && <div className="detail-meta">{m.author}</div>}
-          {status && <div className="detail-meta">{status}</div>}
+        <h1 className="detail-title">{m.title}</h1>
+      </div>
+
+      {genres.length > 0 && (
+        <div className="chips scroll">
+          {genres.map((g) => <span className="chip" key={g}>{g}</span>)}
         </div>
+      )}
+
+      <div className="pills">
+        {type && <span className={'pill ' + type}>{type[0].toUpperCase() + type.slice(1)}</span>}
+        {status && <span className="pill accent"><IconClock className="pi" />{status}</span>}
+        <span className="pill"><IconBook className="pi" />{chapterTotal}</span>
+        {m.author && <span className="pill"><IconPen className="pi" />{m.author}</span>}
       </div>
 
       <div className="actions">
@@ -72,12 +80,6 @@ export function Detail() {
           {state.inLibrary ? 'In library' : 'Add to library'}
         </button>
       </div>
-
-      {genres.length > 0 && (
-        <div className="chips">
-          {genres.map((g) => <span className="chip" key={g}>{g}</span>)}
-        </div>
-      )}
 
       {m.description && (
         <div className={'synopsis' + (descOpen ? '' : ' clamp')} onClick={() => setDescOpen((v) => !v)}>

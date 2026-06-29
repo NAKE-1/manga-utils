@@ -31,7 +31,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
+import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
+import mangautils.core.library.LibraryStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
@@ -121,6 +123,15 @@ private fun SManga.toDto(sourceId: Long) = MangaDto(
 
 private val pageCache = ConcurrentHashMap<String, List<Page>>()
 
+// Cache fetched details so navigating back to a manga is instant (the source does ~3 slow calls).
+private val detailCache = ConcurrentHashMap<String, DetailDto>()
+
+/** Build details from a cached library entry — instant + offline (mirrors the desktop). */
+private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
+    MangaDto(e.sourceId.toString(), e.mangaUrl, e.title, e.thumbnailUrl, e.author, e.artist, e.description, e.genre, e.status),
+    e.knownChapters.map { ChapterDto(it.url, it.name, it.scanlator, it.dateUpload, it.number) },
+)
+
 private fun pagesFor(sourceId: Long, chapterUrl: String): List<Page> =
     pageCache.getOrPut("$sourceId|$chapterUrl") { SourceImage.pageList(sourceId, chapterUrl) }
 
@@ -167,7 +178,14 @@ fun Application.module() {
         get("/api/sources/{id}/manga") {
             val id = call.sourceId() ?: return@get call.respond(HttpStatusCode.BadRequest, "bad source id")
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest, "missing url")
+            val refresh = call.queryParam("refresh")?.toBoolean() == true
+            val key = "$id|$url"
             val detail = withContext(Dispatchers.IO) {
+                if (!refresh) {
+                    // Library entries serve from cache instantly (no network); else reuse a recent fetch.
+                    LibraryStore.find(id, url)?.takeIf { it.knownChapters.isNotEmpty() }?.let { return@withContext cachedDetail(it) }
+                    detailCache[key]?.let { return@withContext it }
+                }
                 runCatching {
                     val d = SourceBrowser.details(id, url)
                     DetailDto(
@@ -181,7 +199,7 @@ fun Application.module() {
                                 number = runCatching { ch.chapter_number }.getOrDefault(-1f),
                             )
                         },
-                    )
+                    ).also { detailCache[key] = it }
                 }.getOrNull()
             }
             if (detail == null) call.respond(HttpStatusCode.BadGateway, "couldn't load manga")
