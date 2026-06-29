@@ -133,6 +133,9 @@ private val pageCache = ConcurrentHashMap<String, List<Page>>()
 // Cache fetched details so navigating back to a manga is instant (the source does ~3 slow calls).
 private val detailCache = ConcurrentHashMap<String, DetailDto>()
 
+// Cache thumbnailed cover bytes (per cover url) so the grid isn't re-fetching + re-resizing.
+private val coverCache = ConcurrentHashMap<String, ByteArray>()
+
 /** Build details from a cached library entry — instant + offline (mirrors the desktop). */
 private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
     MangaDto(e.sourceId.toString(), e.mangaUrl, e.title, e.thumbnailUrl, e.author, e.artist, e.description, e.genre, e.status),
@@ -154,6 +157,7 @@ private fun sniffImageType(b: ByteArray): ContentType = when {
 }
 
 fun main() {
+    javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
@@ -345,7 +349,9 @@ fun Application.module() {
         get("/img/cover") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest)
-            val bytes = withContext(Dispatchers.IO) { SourceImage.coverBytes(id, url) }
+            val bytes = coverCache[url] ?: withContext(Dispatchers.IO) {
+                SourceImage.coverBytes(id, url)?.let { CoverImage.thumbnail(it) }?.also { coverCache[url] = it }
+            }
             if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
                 call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=86400")
                 call.respondBytes(bytes, sniffImageType(bytes))

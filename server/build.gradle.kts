@@ -14,6 +14,9 @@ dependencies {
     implementation(libs.coroutines.core)
     implementation(libs.serialization.json)
 
+    // ImageIO WebP decode + JPEG encode, for server-side cover thumbnailing.
+    implementation(libs.bundles.twelvemonkeys)
+
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
