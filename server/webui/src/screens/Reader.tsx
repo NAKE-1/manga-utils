@@ -100,8 +100,12 @@ export function Reader() {
                 className={'page ' + sizing}
                 src={pageUrl(sourceId, chapter, i, title, name)}
                 alt=""
-                loading={i < 2 ? 'eager' : 'lazy'}
+                loading={i < 3 ? 'eager' : 'lazy'}
                 draggable={false}
+                onError={(e) => {
+                  const img = e.currentTarget
+                  if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = pageUrl(sourceId, chapter, i, title, name) + '&r=1' }
+                }}
               />
             ))}
           </div>
