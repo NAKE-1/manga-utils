@@ -357,7 +357,7 @@ private fun fmtSpeed(bps: Double): String = when {
     else -> "—"
 }
 
-/** Global, sequential download queue with live per-chapter progress + speed. */
+/** Global concurrent download queue with live per-chapter progress + speed. */
 private object DownloadQueue {
     private val scope = CoroutineScope(Dispatchers.Default)
     val items = mutableStateListOf<DlItem>()
@@ -365,7 +365,10 @@ private object DownloadQueue {
         private set
     private var counter = 0L
 
-    @Volatile private var running = false
+    /** Max chapters downloading at once (each also fetches its pages concurrently). */
+    private val maxWorkers get() = runCatching { SettingsStore.get().downloadConcurrency.coerceIn(1, 5) }.getOrDefault(3)
+    private val lock = Any()
+    private var activeWorkers = 0
 
     fun enqueue(sourceId: Long, mangaUrl: String, title: String, chapterUrl: String, chapterName: String) {
         if (items.any { it.chapterUrl == chapterUrl && (it.state == DlState.QUEUED || it.state == DlState.DOWNLOADING) }) return
@@ -379,20 +382,28 @@ private object DownloadQueue {
     }
 
     private fun pump() {
-        if (running) return
-        running = true
-        scope.launch {
-            while (true) {
-                val next = items.firstOrNull { it.state == DlState.QUEUED } ?: break
-                next.state = DlState.DOWNLOADING
-                val listener = DownloadListener { p -> next.pagesDone = p.pagesDone; next.pagesTotal = p.pagesTotal; next.bytesPerSec = p.bytesPerSecond }
-                val ok = runCatching {
-                    DownloadManager(listener = listener).download(SourceRef(next.sourceId, next.mangaUrl), select = ChapterSelect.Urls(setOf(next.chapterUrl))).state.toString() == "DONE"
-                }.getOrDefault(false)
-                next.state = if (ok) DlState.DONE else DlState.ERROR
-                completedTick++
+        synchronized(lock) {
+            while (activeWorkers < maxWorkers && items.any { it.state == DlState.QUEUED }) {
+                activeWorkers++
+                scope.launch { worker() }
             }
-            running = false
+        }
+    }
+
+    private suspend fun worker() {
+        while (true) {
+            // Atomically claim the next queued item so two workers never grab the same one.
+            val next = synchronized(lock) { items.firstOrNull { it.state == DlState.QUEUED }?.also { it.state = DlState.DOWNLOADING } }
+            if (next == null) {
+                synchronized(lock) { activeWorkers-- }
+                return
+            }
+            val listener = DownloadListener { p -> next.pagesDone = p.pagesDone; next.pagesTotal = p.pagesTotal; next.bytesPerSec = p.bytesPerSecond }
+            val ok = runCatching {
+                DownloadManager(listener = listener).download(SourceRef(next.sourceId, next.mangaUrl), select = ChapterSelect.Urls(setOf(next.chapterUrl))).state.toString() == "DONE"
+            }.getOrDefault(false)
+            next.state = if (ok) DlState.DONE else DlState.ERROR
+            completedTick++
         }
     }
 
