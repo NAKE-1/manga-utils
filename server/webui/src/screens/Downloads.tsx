@@ -83,11 +83,15 @@ export function Downloads() {
 
 function TaskCard({ t, onStop, onRetry }: { t: DlTask; onStop: () => void; onRetry: () => void }) {
   const running = t.state === 'running' || t.state === 'queued'
+  const queued = t.state === 'queued'
   const failed = t.state === 'failed'
   // Bar = finished chapters + the fraction of the chapter in progress.
   const cur = t.pagesTotal > 0 ? t.pagesDone / t.pagesTotal : 0
   const pct = t.total > 0 ? Math.round(((t.done + (running ? cur : 0)) / t.total) * 100) : 0
-  const stateLabel = t.state === 'stopped' ? 'Stopped' : failed ? `${t.failed} failed` : 'Done'
+  // Which chapter we're on: finished count + the one in progress.
+  const chapterNo = Math.min(t.total, t.done + (t.currentChapter ? 1 : 0))
+  const failedNames = t.failedChapters.map((c) => c.name).filter(Boolean)
+  const failedList = failedNames.slice(0, 4).join(', ') + (failedNames.length > 4 ? `, +${failedNames.length - 4} more` : '')
   return (
     <div className="dlc">
       <div className="dlc-top">
@@ -96,17 +100,18 @@ function TaskCard({ t, onStop, onRetry }: { t: DlTask; onStop: () => void; onRet
           ? <button className="dl-link" onClick={onStop}>Stop</button>
           : failed && t.failedChapters.length
             ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
-            : <span className={'dl-state ' + (failed ? 'failed' : 'done')}>{stateLabel}</span>}
+            : <span className={'dl-state ' + (failed ? 'failed' : t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : 'Done'}</span>}
       </div>
       <div className="dlc-sub">
         <span>
-          {t.done}/{t.total} chapter{t.total === 1 ? '' : 's'}
-          {running && t.currentChapter ? ` · ${t.currentChapter}${t.pagesTotal > 0 ? ` (${t.pagesDone}/${t.pagesTotal})` : ''}` : ''}
+          {queued ? 'Queued' : running
+            ? `Chapter ${chapterNo} of ${t.total}${t.currentChapter ? ` · ${t.currentChapter}` : ''}`
+            : `${t.done}/${t.total} chapter${t.total === 1 ? '' : 's'}${failed ? ` · ${t.failed} failed` : ' done'}`}
         </span>
-        {running && t.kbps > 0 && <span className="dlc-count">{fmtSpeed(t.kbps)}</span>}
+        {running && t.pagesTotal > 0 && <span className="dlc-count">{t.pagesDone}/{t.pagesTotal}{t.kbps > 0 ? ` · ${fmtSpeed(t.kbps)}` : ''}</span>}
       </div>
       <div className="dlc-bar"><div className={'dlc-fill ' + (failed ? 'failed' : '')} style={{ width: pct + '%' }} /></div>
-      {failed && t.error && <div className="dlc-foot err">{t.error}</div>}
+      {failed && (failedList || t.error) && <div className="dlc-foot err">{failedList ? `Failed: ${failedList}` : t.error}</div>}
     </div>
   )
 }
