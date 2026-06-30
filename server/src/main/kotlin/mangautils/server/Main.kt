@@ -52,6 +52,10 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val log = LoggerFactory.getLogger("mangautils.server")
 
+/** Whether a Cloudflare bypass (e.g. FlareSolverr) is wired up. Not yet — sources behind
+ *  Cloudflare currently fail with a 403, so the UI marks them black until this is true. */
+const val CLOUDFLARE_BYPASS = false
+
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
@@ -115,6 +119,8 @@ private data class SettingsDto(
     val dataDir: String,
     val downloadAsCbz: Boolean,
     val downloadConcurrency: Int,
+    val englishSourcesOnly: Boolean,
+    val cloudflareBypass: Boolean,
 )
 
 @Serializable
@@ -122,6 +128,7 @@ private data class SettingsPatch(
     val downloadDir: String? = null,
     val downloadAsCbz: Boolean? = null,
     val downloadConcurrency: Int? = null,
+    val englishSourcesOnly: Boolean? = null,
 )
 
 @Serializable
@@ -211,10 +218,12 @@ fun Application.module() {
     routing {
         // ---- Sources ----
         get("/api/sources") {
+            val enOnly = SettingsStore.get().englishSourcesOnly
             val sources = withContext(Dispatchers.IO) {
                 // nsfw lives on the parent extension; flatten so each source carries its 18+ flag.
                 InstalledStore.list()
                     .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw) } }
+                    .filter { !enOnly || it.lang.isBlank() || it.lang.equals("en", true) || it.lang.equals("all", true) }
                     .sortedBy { it.name.lowercase() }
             }
             call.respond(sources)
@@ -381,7 +390,7 @@ fun Application.module() {
         // ---- Settings + diagnostics ----
         get("/api/settings") {
             val s = SettingsStore.get()
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.englishSourcesOnly, CLOUDFLARE_BYPASS))
         }
         post("/api/settings") {
             val body = call.receive<SettingsPatch>()
@@ -400,9 +409,10 @@ fun Application.module() {
             }
             body.downloadAsCbz?.let { s = s.copy(downloadAsCbz = it) }
             body.downloadConcurrency?.let { s = s.copy(downloadConcurrency = it.coerceIn(1, 32)) }
+            body.englishSourcesOnly?.let { s = s.copy(englishSourcesOnly = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.englishSourcesOnly, CLOUDFLARE_BYPASS))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)

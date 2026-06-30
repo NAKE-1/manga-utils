@@ -34,6 +34,8 @@ data class Settings(
     val downloadAsCbz: Boolean = false,
     /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
     val downloadDir: String? = null,
+    /** Show only English (+ language-agnostic) sources in the web UI source lists. */
+    val englishSourcesOnly: Boolean = false,
     /** Default language filter for `ext list` and the friendly search picker (null = all). */
     val defaultLanguage: String? = null,
     /** Show NSFW-flagged extensions/sources by default. */

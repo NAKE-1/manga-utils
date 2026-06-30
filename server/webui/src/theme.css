@@ -333,6 +333,8 @@ img { display: block; }
 .src-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .src-lang { font-size: 11px; font-weight: 700; color: var(--muted); }
 .src-18 { flex: 0 0 auto; font-size: 10px; font-weight: 800; color: #fff; background: #c1432f; padding: 2px 6px; border-radius: 6px; letter-spacing: .02em; }
+.src-cf { flex: 0 0 auto; width: 17px; height: 17px; color: #4a4a4f; }
+.src-cf.on { color: #f6821f; }
 .src-caret { width: 18px; height: 18px; color: var(--muted); transition: transform .16s ease; flex: 0 0 auto; }
 .src-caret.up { transform: rotate(180deg); }
 .src-menu { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20; max-height: 60vh; overflow-y: auto;
