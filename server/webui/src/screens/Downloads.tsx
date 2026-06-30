@@ -58,6 +58,15 @@ export function Downloads() {
     for (const t of s.tasks) if (t.state === 'running' || t.state === 'queued') await api.stopDownload(t.id)
     setData(await api.downloads().catch(() => data))
   }
+  // Re-queue only the chapters that failed/stopped (mangaKey is "sourceId|mangaUrl").
+  async function retrySeries(s: Series) {
+    const i = s.key.indexOf('|'); const sid = s.key.slice(0, i); const mangaUrl = s.key.slice(i + 1)
+    const chs = s.tasks.filter((t) => t.state === 'failed' || t.state === 'stopped').map((t) => ({ url: t.chapterUrl, name: t.chapterName }))
+    if (!chs.length) return
+    await api.clearDownloads().catch(() => {}) // drop the finished/failed rows so the retried ones don't double-count
+    await api.enqueueDownload(sid, mangaUrl, s.title, chs).catch(() => {})
+    setData(await api.downloads().catch(() => data))
+  }
 
   if (!data) return <div className="spinner" />
 
@@ -77,31 +86,38 @@ export function Downloads() {
       {series.length === 0 ? (
         <div className="center-msg">No downloads. Use the download button on a manga.</div>
       ) : (
-        <div className="dl-list">{series.map((s) => <SeriesCard key={s.key} s={s} onStop={() => stopSeries(s)} />)}</div>
+        <div className="dl-list">{series.map((s) => <SeriesCard key={s.key} s={s} onStop={() => stopSeries(s)} onRetry={() => retrySeries(s)} />)}</div>
       )}
     </>
   )
 }
 
-function SeriesCard({ s, onStop }: { s: Series; onStop: () => void }) {
+function SeriesCard({ s, onStop, onRetry }: { s: Series; onStop: () => void; onRetry: () => void }) {
   const total = s.tasks.length
   const done = s.tasks.filter((t) => t.state === 'done').length
   const running = s.tasks.some((t) => t.state === 'running' || t.state === 'queued')
-  const failed = s.tasks.some((t) => t.state === 'failed' || t.state === 'stopped')
+  const failedCount = s.tasks.filter((t) => t.state === 'failed' || t.state === 'stopped').length
+  const failed = failedCount > 0 && !running
   const frac = s.tasks.reduce((a, t) => a + (t.state === 'done' ? 1 : t.pagesTotal > 0 ? t.pagesDone / t.pagesTotal : 0), 0) / total
   const pct = Math.round(frac * 100)
   const speed = s.tasks.filter((t) => t.state === 'running').reduce((a, t) => a + t.kbps, 0)
+  const reason = s.tasks.find((t) => t.error)?.error
   return (
     <div className="dlc">
       <div className="dlc-top">
         <div className="dlc-title">{s.title}</div>
-        {running ? <button className="dl-link" onClick={onStop}>Stop</button> : <span className={'dl-state ' + (failed ? 'failed' : 'done')}>{failed ? 'Incomplete' : 'Done'}</span>}
+        {running
+          ? <button className="dl-link" onClick={onStop}>Stop</button>
+          : failed
+            ? <button className="dl-link" onClick={onRetry}>Retry {failedCount}</button>
+            : <span className="dl-state done">Done</span>}
       </div>
       <div className="dlc-sub">
-        <span>{done}/{total} chapter{total === 1 ? '' : 's'}{running ? ' · downloading' : ''}</span>
+        <span>{done}/{total} chapter{total === 1 ? '' : 's'}{running ? ' · downloading' : failed ? ` · ${failedCount} failed` : ''}</span>
         {running && speed > 0 && <span className="dlc-count">{fmtSpeed(speed)}</span>}
       </div>
-      <div className="dlc-bar"><div className={'dlc-fill ' + (failed && !running ? 'failed' : '')} style={{ width: pct + '%' }} /></div>
+      <div className="dlc-bar"><div className={'dlc-fill ' + (failed ? 'failed' : '')} style={{ width: pct + '%' }} /></div>
+      {failed && reason && <div className="dlc-foot err">{reason}</div>}
     </div>
   )
 }
