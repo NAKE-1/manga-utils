@@ -34,7 +34,7 @@ export function Search() {
   const busy = useRef(false)
 
   const isGlobal = sourceId === GLOBAL
-  const pickerSources = useMemo(() => [{ id: GLOBAL, name: 'Global', lang: '', nsfw: false } as Source, ...sources], [sources])
+  const pickerSources = useMemo(() => [{ id: GLOBAL, name: 'Global', lang: '', nsfw: false, cfState: 'green' } as Source, ...sources], [sources])
 
   useEffect(() => {
     api.sources().then((s) => {

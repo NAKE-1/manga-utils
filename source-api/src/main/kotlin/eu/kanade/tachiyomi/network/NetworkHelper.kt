@@ -8,6 +8,7 @@ package eu.kanade.tachiyomi.network
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import android.content.Context
+import eu.kanade.tachiyomi.network.interceptor.CloudflareClientMarker
 import eu.kanade.tachiyomi.network.interceptor.CloudflareDetectInterceptor
 import eu.kanade.tachiyomi.network.interceptor.IgnoreGzipInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
@@ -112,5 +113,7 @@ class NetworkHelper(
 //    val client by lazy { baseClientBuilder.cache(Cache(cacheDir, cacheSize)).build() }
     val client by lazy { baseClientBuilder.build() }
 
-    val cloudflareClient by lazy { client }
+    // Distinct from [client] only by a no-op marker, so we can tell which sources opted into it
+    // (i.e. which the extension author flagged as Cloudflare-protected).
+    val cloudflareClient by lazy { client.newBuilder().addInterceptor(CloudflareClientMarker()).build() }
 }

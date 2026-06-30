@@ -42,6 +42,7 @@ import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
 import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
+import mangautils.core.source.CloudflareState
 import mangautils.core.source.Diagnostics
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
@@ -59,7 +60,7 @@ const val CLOUDFLARE_BYPASS = false
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
-private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean)
+private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String)
 
 @Serializable
 private data class MangaDto(
@@ -119,7 +120,7 @@ private data class SettingsDto(
     val dataDir: String,
     val downloadAsCbz: Boolean,
     val downloadConcurrency: Int,
-    val englishSourcesOnly: Boolean,
+    val visibleLanguages: List<String>,
     val cloudflareBypass: Boolean,
 )
 
@@ -128,7 +129,7 @@ private data class SettingsPatch(
     val downloadDir: String? = null,
     val downloadAsCbz: Boolean? = null,
     val downloadConcurrency: Int? = null,
-    val englishSourcesOnly: Boolean? = null,
+    val visibleLanguages: List<String>? = null,
 )
 
 @Serializable
@@ -201,6 +202,8 @@ fun main() {
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     // Honor a custom downloads directory chosen in Settings.
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
+    // Detect Cloudflare-protected sources in the background (loads each source once).
+    Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
@@ -218,15 +221,23 @@ fun Application.module() {
     routing {
         // ---- Sources ----
         get("/api/sources") {
-            val enOnly = SettingsStore.get().englishSourcesOnly
+            val visible = SettingsStore.get().visibleLanguages
             val sources = withContext(Dispatchers.IO) {
                 // nsfw lives on the parent extension; flatten so each source carries its 18+ flag.
                 InstalledStore.list()
-                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw) } }
-                    .filter { !enOnly || it.lang.isBlank() || it.lang.equals("en", true) || it.lang.equals("all", true) }
+                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id)) } }
+                    .filter { langVisible(it.lang, visible) }
                     .sortedBy { it.name.lowercase() }
             }
             call.respond(sources)
+        }
+
+        // Distinct languages across all installed sources (for the visibility picker).
+        get("/api/languages") {
+            val langs = withContext(Dispatchers.IO) {
+                InstalledStore.list().flatMap { it.sources }.map { it.lang }.filter { it.isNotBlank() }.distinct().sorted()
+            }
+            call.respond(langs)
         }
 
         get("/api/sources/{id}/popular") { browse(call) { id, page -> SourceBrowser.popular(id, page) } }
@@ -272,7 +283,7 @@ fun Application.module() {
             }
             detail.fold(
                 onSuccess = { call.respond(it) },
-                onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+                onFailure = { noteIfCloudflare(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
             )
         }
 
@@ -390,7 +401,7 @@ fun Application.module() {
         // ---- Settings + diagnostics ----
         get("/api/settings") {
             val s = SettingsStore.get()
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.englishSourcesOnly, CLOUDFLARE_BYPASS))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.visibleLanguages, CLOUDFLARE_BYPASS))
         }
         post("/api/settings") {
             val body = call.receive<SettingsPatch>()
@@ -409,10 +420,10 @@ fun Application.module() {
             }
             body.downloadAsCbz?.let { s = s.copy(downloadAsCbz = it) }
             body.downloadConcurrency?.let { s = s.copy(downloadConcurrency = it.coerceIn(1, 32)) }
-            body.englishSourcesOnly?.let { s = s.copy(englishSourcesOnly = it) }
+            body.visibleLanguages?.let { s = s.copy(visibleLanguages = it.map { l -> l.lowercase() }.distinct()) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.englishSourcesOnly, CLOUDFLARE_BYPASS))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.visibleLanguages, CLOUDFLARE_BYPASS))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
@@ -502,7 +513,7 @@ private suspend fun browse(
     }
     result.fold(
         onSuccess = { call.respond(it) },
-        onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+        onFailure = { noteIfCloudflare(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
     )
 }
 
@@ -510,3 +521,16 @@ private suspend fun browse(
  *  (e.g. "Cloudflare protection is blocking this source (HTTP 403)…", "HTTP error 522"). */
 private fun sourceErrorMessage(e: Throwable): String =
     e.message?.takeIf { it.isNotBlank() } ?: (e::class.simpleName ?: "The source is unavailable")
+
+/** If a failure was a Cloudflare block, remember it so the UI can mark that source. */
+private fun noteIfCloudflare(sourceId: Long, e: Throwable) {
+    if (e.message?.contains("Cloudflare", ignoreCase = true) == true) CloudflareState.mark(sourceId)
+}
+
+/** green = no Cloudflare seen; red = behind Cloudflare, no bypass; orange = behind CF + bypass. */
+private fun cfState(sourceId: Long): String =
+    if (!CloudflareState.isBlocked(sourceId)) "green" else if (CLOUDFLARE_BYPASS) "orange" else "red"
+
+/** A source's language is visible if no filter is set, it's language-agnostic, or it's selected. */
+private fun langVisible(lang: String, visible: List<String>): Boolean =
+    visible.isEmpty() || lang.isBlank() || lang.equals("all", true) || visible.any { it.equals(lang, true) }

@@ -5,9 +5,11 @@
  */
 package mangautils.core.source
 
+import eu.kanade.tachiyomi.network.interceptor.CloudflareClientMarker
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
+import eu.kanade.tachiyomi.source.online.HttpSource
 import mangautils.core.extension.InstalledExtension
 import mangautils.core.extension.InstalledSource
 import mangautils.core.extension.InstalledStore
@@ -50,4 +52,19 @@ object SourceManager {
         }
 
     fun langOf(source: Source): String = (source as? CatalogueSource)?.lang ?: ""
+
+    /** True if the extension built this source on the Cloudflare client (its CF-protected flag). */
+    fun usesCloudflare(source: Source): Boolean =
+        (source as? HttpSource)?.client?.interceptors?.any { it is CloudflareClientMarker } == true
+
+    /**
+     * Load every installed source once and record which are Cloudflare-protected. Mirrors how
+     * Suwayomi knows (the extension's client choice). Safe to run in the background at startup.
+     */
+    fun detectCloudflare() {
+        InstalledStore.list().forEach { ext ->
+            runCatching { loadSourcesOf(ext).forEach { if (usesCloudflare(it)) CloudflareState.mark(it.id) } }
+                .onFailure { log.debug("CF detect failed for {}: {}", ext.name, it.message) }
+        }
+    }
 }

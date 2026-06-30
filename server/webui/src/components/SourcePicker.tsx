@@ -17,10 +17,17 @@ const Avatar = ({ name }: { name: string }) => (
 
 /** Source dropdown → a bottom sheet (portaled to body so it's immune to ancestor
  *  transforms/stacking that broke the old absolute menu on mobile). */
-export function SourcePicker({ sources, value, onChange, cfBypass = false }: { sources: Source[]; value: string; onChange: (id: string) => void; cfBypass?: boolean }) {
+const CF_TITLE: Record<string, string> = {
+  green: 'No Cloudflare protection',
+  red: 'Behind Cloudflare — no bypass installed',
+  orange: 'Behind Cloudflare — bypass active',
+}
+
+export function SourcePicker({ sources, value, onChange }: { sources: Source[]; value: string; onChange: (id: string) => void }) {
   const [open, setOpen] = useState(false)
   const cur = sources.find((s) => s.id === value)
-  const cf = (s: Source) => s.id !== GLOBAL && <IconCloudflare className={'src-cf' + (cfBypass ? ' on' : '')} />
+  const cf = (s: Source) => s.id !== GLOBAL && <IconCloudflare className={'src-cf ' + s.cfState} aria-label={CF_TITLE[s.cfState]} />
+
 
   useEffect(() => {
     if (!open) return

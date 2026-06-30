@@ -1,6 +1,6 @@
 // Typed client for the Ktor backend. IDs are strings (the server serializes Longs as strings).
 
-export interface Source { id: string; name: string; lang: string; nsfw: boolean }
+export interface Source { id: string; name: string; lang: string; nsfw: boolean; cfState: 'green' | 'red' | 'orange' }
 
 export interface Manga {
   sourceId: string
@@ -81,6 +81,7 @@ async function getJson<T>(url: string, retries = 2, timeoutMs = 15000): Promise<
 
 export const api = {
   sources: () => getJson<Source[]>('/api/sources'),
+  languages: () => getJson<string[]>('/api/languages'),
   library: () => getJson<LibraryEntry[]>('/api/library'),
   history: () => getJson<HistoryItem[]>('/api/history'),
   popular: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`),
@@ -113,7 +114,7 @@ export const api = {
     fetch(`/api/bookmarks?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&on=${on}`, { method: 'POST' }),
 
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
-  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; englishSourcesOnly: boolean }>): Promise<SettingsInfo> => {
+  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; visibleLanguages: string[] }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed')
     return r.json()
@@ -123,7 +124,7 @@ export const api = {
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
 }
 
-export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; englishSourcesOnly: boolean; cloudflareBypass: boolean }
+export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; visibleLanguages: string[]; cloudflareBypass: boolean }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
 
 export const STATUS_LABELS: Record<number, string> = {

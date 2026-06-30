@@ -11,11 +11,21 @@ export function Settings() {
   const [diagSource, setDiagSource] = useState(localStorage.getItem('browse.source') || '')
   const [diag, setDiag] = useState<DiagResult | null>(null)
   const [diagRunning, setDiagRunning] = useState(false)
+  const [languages, setLanguages] = useState<string[]>([])
 
   useEffect(() => {
     api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
+    api.languages().then(setLanguages).catch(() => {})
   }, [])
+
+  async function toggleLang(code: string) {
+    if (!info) return
+    const set = new Set(info.visibleLanguages)
+    set.has(code) ? set.delete(code) : set.add(code)
+    const s = await api.saveSettings({ visibleLanguages: [...set] }).catch(() => null)
+    if (s) setInfo(s)
+  }
 
   async function saveDir() {
     setSavingDir(true); setDirMsg(null)
@@ -30,12 +40,6 @@ export function Settings() {
   async function toggleCbz() {
     if (!info) return
     const s = await api.saveSettings({ downloadAsCbz: !info.downloadAsCbz }).catch(() => null)
-    if (s) setInfo(s)
-  }
-
-  async function toggleEnglish() {
-    if (!info) return
-    const s = await api.saveSettings({ englishSourcesOnly: !info.englishSourcesOnly }).catch(() => null)
     if (s) setInfo(s)
   }
 
@@ -64,13 +68,13 @@ export function Settings() {
       </div>
 
       <div className="set-card">
-        <button className="set-toggle" onClick={toggleEnglish}>
-          <div>
-            <div className="set-row-label">English sources only</div>
-            <div className="set-hint">Hide non-English sources everywhere (e.g. a multi-language source's other languages).</div>
-          </div>
-          <span className={'switch' + (info?.englishSourcesOnly ? ' on' : '')}><span className="knob" /></span>
-        </button>
+        <div className="set-row-label">Source languages</div>
+        <div className="set-hint">Show sources in these languages. None selected = all.</div>
+        <div className="lang-chips">
+          {languages.map((code) => (
+            <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
+          ))}
+        </div>
       </div>
 
       <div className="set-card">
@@ -86,7 +90,7 @@ export function Settings() {
       <div className="set-card">
         <div className="set-row-label">Connection test</div>
         <div className="set-hint">Ping + download speed to a source, measured from the server.</div>
-        <div className="set-diag-row"><SourcePicker sources={sources} value={diagSource} onChange={setDiagSource} cfBypass={!!info?.cloudflareBypass} /></div>
+        <div className="set-diag-row"><SourcePicker sources={sources} value={diagSource} onChange={setDiagSource} /></div>
         <div className="set-actions">
           <button className="btn primary" disabled={diagRunning || !diagSource} onClick={runDiag}>{diagRunning ? 'Testing…' : 'Run test'}</button>
         </div>
