@@ -41,7 +41,7 @@ export function Search() {
   }
 
   const isGlobal = sourceId === GLOBAL
-  const pickerSources = useMemo(() => [{ id: GLOBAL, name: 'Global', lang: '', nsfw: false, cfState: 'green' } as Source, ...sources], [sources])
+  const pickerSources = useMemo(() => [{ id: GLOBAL, name: 'Global', lang: '', nsfw: false, cfState: 'green', down: false } as Source, ...sources], [sources])
   // Stable signature of the source *set* — so refreshing cloud colors (which replaces the sources
   // array with the same ids) doesn't re-trigger the global search in a loop.
   const sourceKey = useMemo(() => sources.map((s) => s.id).join(','), [sources])
@@ -65,10 +65,8 @@ export function Search() {
       setItems((prev) => (p === 1 ? r.mangas : [...prev, ...r.mangas]))
       setHasNext(r.hasNextPage); setPage(p)
     }).catch((e) => {
-      const msg = e instanceof Error ? e.message : "Couldn't load results."
-      if (p === 1) setErrorMsg(msg)
-      if (/cloudflare/i.test(msg)) refreshSourcesSoon()
-    }).finally(() => { busy.current = false; setLoading(false) })
+      if (p === 1) setErrorMsg(e instanceof Error ? e.message : "Couldn't load results.")
+    }).finally(() => { busy.current = false; setLoading(false); refreshSourcesSoon() })
   }
 
   useEffect(() => { if (sourceId && !isGlobal) { setItems([]); setHasNext(false); setPage(1); fetchPage(1) } }, [sourceId, mode, query])
@@ -93,8 +91,8 @@ export function Search() {
         .catch((e) => {
           const msg = e instanceof Error ? e.message : 'Unavailable'
           setGlobalRows((prev) => prev.map((g) => (g.src.id === s.id ? { ...g, error: msg, loading: false } : g)))
-          if (/cloudflare/i.test(msg)) refreshSourcesSoon()
         })
+        .finally(refreshSourcesSoon)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the source SET, not its array identity
   }, [isGlobal, query, sourceKey])

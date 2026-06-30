@@ -30,6 +30,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
   const startY = useRef<number | null>(null)
   const cur = sources.find((s) => s.id === value)
   const cf = (s: Source) => s.id !== GLOBAL && <IconCloudflare className={'src-cf ' + s.cfState} aria-label={CF_TITLE[s.cfState]} />
+  const down = (s: Source) => s.down && <span className="src-down" title="Source unreachable">DOWN</span>
 
   // Lock background scroll + Esc-to-close while the sheet is open.
   useEffect(() => {
@@ -59,6 +60,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
       <button className="src-current" onClick={() => setOpen(true)} aria-haspopup="listbox" aria-expanded={open}>
         <Avatar name={cur.name} />
         <span className="src-name">{cur.name}</span>
+        {down(cur)}
         {cf(cur)}
         {cur.nsfw && <span className="src-18">18+</span>}
         <IconChevronDown className="src-caret" />
@@ -76,6 +78,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
                 <button key={s.id} role="option" aria-selected={s.id === value} className={'src-item' + (s.id === value ? ' on' : '')} onClick={() => { onChange(s.id); setOpen(false) }}>
                   <Avatar name={s.name} />
                   <span className="src-name">{s.name}</span>
+                  {down(s)}
                   {cf(s)}
                   {s.lang && s.id !== GLOBAL && <span className="src-lang">{s.lang.toUpperCase()}</span>}
                   {s.nsfw && <span className="src-18">18+</span>}

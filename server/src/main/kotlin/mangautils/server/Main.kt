@@ -44,6 +44,7 @@ import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.CloudflareState
 import mangautils.core.source.Diagnostics
+import mangautils.core.source.SourceHealth
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
 import mangautils.core.source.SourceImage
@@ -60,7 +61,7 @@ const val CLOUDFLARE_BYPASS = false
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
-private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String)
+private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String, val down: Boolean)
 
 @Serializable
 private data class MangaDto(
@@ -225,7 +226,7 @@ fun Application.module() {
             val sources = withContext(Dispatchers.IO) {
                 // nsfw lives on the parent extension; flatten so each source carries its 18+ flag.
                 InstalledStore.list()
-                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id)) } }
+                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id), SourceHealth.isDown(it.id)) } }
                     .filter { langVisible(it.lang, visible) }
                     .sortedBy { it.name.lowercase() }
             }
@@ -282,8 +283,8 @@ fun Application.module() {
                 }
             }
             detail.fold(
-                onSuccess = { call.respond(it) },
-                onFailure = { noteIfCloudflare(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+                onSuccess = { SourceHealth.markUp(id); call.respond(it) },
+                onFailure = { markFailure(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
             )
         }
 
@@ -512,8 +513,8 @@ private suspend fun browse(
         }
     }
     result.fold(
-        onSuccess = { call.respond(it) },
-        onFailure = { noteIfCloudflare(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+        onSuccess = { SourceHealth.markUp(id); call.respond(it) },
+        onFailure = { markFailure(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
     )
 }
 
@@ -522,9 +523,14 @@ private suspend fun browse(
 private fun sourceErrorMessage(e: Throwable): String =
     e.message?.takeIf { it.isNotBlank() } ?: (e::class.simpleName ?: "The source is unavailable")
 
-/** If a failure was a Cloudflare block, remember it so the UI can mark that source. */
-private fun noteIfCloudflare(sourceId: Long, e: Throwable) {
-    if (e.message?.contains("Cloudflare", ignoreCase = true) == true) CloudflareState.mark(sourceId)
+/** Record a failure: Cloudflare blocks stay "up but blocked"; anything else marks the source down. */
+private fun markFailure(sourceId: Long, e: Throwable) {
+    if (e.message?.contains("Cloudflare", ignoreCase = true) == true) {
+        CloudflareState.mark(sourceId)
+        SourceHealth.markUp(sourceId)
+    } else {
+        SourceHealth.markDown(sourceId)
+    }
 }
 
 /** green = no Cloudflare seen; red = behind Cloudflare, no bypass; orange = behind CF + bypass. */
