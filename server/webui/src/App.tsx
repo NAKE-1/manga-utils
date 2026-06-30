@@ -9,6 +9,7 @@ import { Search } from './screens/Search'
 import { Settings } from './screens/Settings'
 import { Extensions } from './screens/Extensions'
 import { Downloads } from './screens/Downloads'
+import { DownloadsManager } from './screens/DownloadsManager'
 import { Stub } from './screens/Stub'
 
 export function App() {
@@ -33,6 +34,7 @@ export function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/extensions" element={<Extensions />} />
           <Route path="/downloads" element={<Downloads />} />
+          <Route path="/downloads/manage" element={<DownloadsManager />} />
           <Route path="/manga/:sourceId" element={<Detail />} />
           <Route path="*" element={<Stub name="Not found" />} />
         </Routes>

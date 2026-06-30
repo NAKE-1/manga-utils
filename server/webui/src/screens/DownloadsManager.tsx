@@ -1,0 +1,101 @@
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api, ManagedSeries, ManagedChapter } from '../api'
+import { IconArrowLeft, IconChevronDown, IconDownload } from '../components/icons'
+import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
+
+const fmtSize = (b: number) => (b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
+
+export function DownloadsManager() {
+  const nav = useNavigate()
+  const [series, setSeries] = useState<ManagedSeries[] | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  const [chapters, setChapters] = useState<Record<string, ManagedChapter[]>>({})
+  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
+  const [msg, setMsg] = useState('')
+
+  const load = () => api.manageDownloads().then(setSeries).catch(() => setSeries([]))
+  useEffect(() => { load() }, [])
+
+  function toggle(title: string) {
+    if (open === title) { setOpen(null); return }
+    setOpen(title)
+    if (!chapters[title]) api.manageChapters(title).then((c) => setChapters((m) => ({ ...m, [title]: c }))).catch(() => {})
+  }
+  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500) }
+
+  function delChapter(title: string, ch: ManagedChapter) {
+    setConfirm({
+      title: 'Delete chapter?', message: `Delete "${ch.name}" from ${title}? You can re-download it later.`,
+      confirmLabel: 'Delete', danger: true, onCancel: () => setConfirm(null),
+      onConfirm: async () => {
+        setConfirm(null)
+        await api.deleteDownloadChapter(title, ch.name).catch(() => {})
+        const c = await api.manageChapters(title).catch(() => [])
+        setChapters((m) => ({ ...m, [title]: c }))
+        load()
+      },
+    })
+  }
+  function delSeries(s: ManagedSeries) {
+    setConfirm({
+      title: 'Delete all downloads?', message: `Delete all ${s.chapters} downloaded chapter${s.chapters === 1 ? '' : 's'} of ${s.title} (${fmtSize(s.bytes)})?`,
+      confirmLabel: 'Delete all', danger: true, onCancel: () => setConfirm(null),
+      onConfirm: async () => { setConfirm(null); await api.deleteDownloads(s.title).catch(() => {}); setOpen(null); load() },
+    })
+  }
+  async function markUnread(s: ManagedSeries) {
+    const r = await api.markSeriesUnread(s.title).catch(() => ({ count: 0 }))
+    flash(r.count > 0 ? `Marked ${s.title} unread` : 'Not in your library — can’t mark unread')
+  }
+
+  return (
+    <div className="ext-page">
+      <div className="ext-top">
+        <button className="iconbtn" onClick={() => nav('/settings')} aria-label="Back"><IconArrowLeft /></button>
+        <span className="ext-title">Downloaded content</span>
+      </div>
+
+      {series === null ? <div className="spinner" /> : series.length === 0 ? (
+        <div className="center-msg">Nothing downloaded yet.</div>
+      ) : (
+        <>
+          <div className="update-msg">{series.length} series · {fmtSize(series.reduce((a, s) => a + s.bytes, 0))} on disk</div>
+          {series.map((s) => (
+            <div key={s.title} className="dm-series">
+              <button className="dm-row" onClick={() => toggle(s.title)}>
+                <IconChevronDown className={'dm-caret' + (open === s.title ? ' open' : '')} />
+                <div className="ext-info">
+                  <div className="ext-name">{s.title}</div>
+                  <div className="ext-sub">{s.chapters} chapter{s.chapters === 1 ? '' : 's'} · {fmtSize(s.bytes)}</div>
+                </div>
+                <IconDownload className="dm-dl" />
+              </button>
+              {open === s.title && (
+                <div className="dm-body">
+                  <div className="dm-actions">
+                    <button className="btn sm" onClick={() => markUnread(s)}>Mark unread</button>
+                    <button className="btn sm danger" onClick={() => delSeries(s)}>Delete all</button>
+                  </div>
+                  {(chapters[s.title] ?? []).map((ch) => (
+                    <div className="dm-chapter" key={ch.name}>
+                      <div className="ext-info">
+                        <div className="dm-ch-name">{ch.name}</div>
+                        <div className="ext-sub">{ch.pages} page{ch.pages === 1 ? '' : 's'} · {fmtSize(ch.bytes)}{ch.cbz ? ' · CBZ' : ''}</div>
+                      </div>
+                      <button className="btn sm danger" onClick={() => delChapter(s.title, ch)}>Delete</button>
+                    </div>
+                  ))}
+                  {chapters[s.title] && chapters[s.title].length === 0 && <div className="center-msg">No chapters.</div>}
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+
+      {msg && <div className="dl-toast">{msg}</div>}
+      {confirm && <ConfirmDialog spec={confirm} />}
+    </div>
+  )
+}

@@ -104,6 +104,11 @@ export function Settings() {
           </div>
         </div>
         <div className="set-card">
+          <div className="set-row-label">Downloaded content</div>
+          <div className="set-hint">Browse what's on disk per series, delete chapters to re-download, or mark a series unread.</div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/downloads/manage')}>Manage downloads</button></div>
+        </div>
+        <div className="set-card">
           <button className="set-toggle" onClick={togglePerSource}>
             <div>
               <div className="set-row-label">Allow same-source parallel</div>

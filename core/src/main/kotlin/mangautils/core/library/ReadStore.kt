@@ -64,4 +64,14 @@ object ReadStore {
         if (read) set.add(chapterUrl) else set.remove(chapterUrl)
         save(map)
     }
+
+    /** Mark every chapter of a manga unread (drop its read set). */
+    @Synchronized
+    fun clear(
+        sourceId: Long,
+        mangaUrl: String,
+    ) {
+        val map = load()
+        if (map.remove(key(sourceId, mangaUrl)) != null) save(map)
+    }
 }

@@ -34,6 +34,7 @@ import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.DownloadManager
+import mangautils.core.download.DownloadStore
 import mangautils.core.extension.ExtensionIcons
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.ExtensionRepoClient
@@ -130,6 +131,8 @@ private data class LibraryDto(
     val kbps: Double, val error: String, val failedChapters: List<DlChapterReq>,
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
+@Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val bytes: Long, val hasCover: Boolean)
+@Serializable private data class ManagedChapterDto(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean)
 
 @Serializable
 private data class HistoryDto(
@@ -434,6 +437,36 @@ fun Application.module() {
         }
         post("/api/downloads/stop-all") { DownloadQueue.stopAll(); call.respond(downloadsSnapshot()) }
         post("/api/downloads/clear") { DownloadQueue.clearFinished(); call.respond(downloadsSnapshot()) }
+
+        // ---- Download manager (browse / delete on-disk content) ----
+        get("/api/downloads/manage") {
+            val list = withContext(Dispatchers.IO) {
+                DownloadStore.listSeries().map { ManagedSeriesDto(it.title, it.chapters, it.bytes, it.hasCover) }
+            }
+            call.respond(list)
+        }
+        get("/api/downloads/manage/chapters") {
+            val title = call.queryParam("title") ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val list = withContext(Dispatchers.IO) {
+                DownloadStore.listChapters(title).map { ManagedChapterDto(it.name, it.pages, it.bytes, it.cbz) }
+            }
+            call.respond(list)
+        }
+        delete("/api/downloads/chapter") {
+            val title = call.queryParam("title") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            val chapter = call.queryParam("chapter") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { DownloadStore.deleteChapter(title, chapter) }
+            call.respond(HttpStatusCode.OK)
+        }
+        // Mark a downloaded series unread — resolves the manga via the library by (sanitized) title.
+        post("/api/downloads/manage/mark-unread") {
+            val title = call.queryParam("title") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val matched = withContext(Dispatchers.IO) {
+                LibraryStore.list().filter { DownloadManager.sanitize(it.title) == title }
+                    .onEach { ReadStore.clear(it.sourceId, it.mangaUrl) }.size
+            }
+            call.respond(CountDto(matched))
+        }
 
         // Downloaded-files management for a series (used by the remove-from-library confirm flow).
         get("/api/downloads/count") {
