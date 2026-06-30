@@ -38,7 +38,7 @@ export function ListPage() {
         return true
       })
       .map((h) => (
-        <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)} subtitle={h.chapterName} />
+        <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)} subtitle={h.chapterName} onRemove={() => { api.deleteHistory(h.sourceId, h.mangaUrl); setHistory((prev) => prev.filter((x) => !(x.sourceId === h.sourceId && x.mangaUrl === h.mangaUrl))) }} />
       ))
   } else {
     const entries = (kind === 'updates' ? library.filter((e) => e.newChapters > 0) : [...library]).sort((a, b) => a.title.localeCompare(b.title))

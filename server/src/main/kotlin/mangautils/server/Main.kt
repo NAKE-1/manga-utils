@@ -235,8 +235,8 @@ fun Application.module() {
             val detail = withContext(Dispatchers.IO) {
                 if (!refresh) {
                     // Library entries serve from cache instantly (no network); else reuse a recent fetch.
-                    LibraryStore.find(id, url)?.takeIf { it.knownChapters.isNotEmpty() }?.let { return@withContext cachedDetail(it) }
-                    detailCache[key]?.let { return@withContext it }
+                    LibraryStore.find(id, url)?.takeIf { it.knownChapters.isNotEmpty() }?.let { return@withContext Result.success(cachedDetail(it)) }
+                    detailCache[key]?.let { return@withContext Result.success(it) }
                 }
                 runCatching {
                     val d = SourceBrowser.details(id, url)
@@ -259,10 +259,12 @@ fun Application.module() {
                             )
                         },
                     ).also { detailCache[key] = it }
-                }.getOrNull()
+                }
             }
-            if (detail == null) call.respond(HttpStatusCode.BadGateway, "couldn't load manga")
-            else call.respond(detail)
+            detail.fold(
+                onSuccess = { call.respond(it) },
+                onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+            )
         }
 
         // ---- Library ----
@@ -367,6 +369,12 @@ fun Application.module() {
             val name = call.queryParam("name") ?: ""
             val thumb = call.queryParam("thumb")
             withContext(Dispatchers.IO) { HistoryStore.record(id, manga, mangaTitle, chapter, name, thumb) }
+            call.respond(HttpStatusCode.OK)
+        }
+        delete("/api/history") {
+            val id = call.querySourceId() ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { HistoryStore.remove(id, manga) }
             call.respond(HttpStatusCode.OK)
         }
 
@@ -480,7 +488,15 @@ private suspend fun browse(
         runCatching {
             val mp = op(id, page)
             PageResultDto(mp.mangas.map { it.toDto(id) }, mp.hasNextPage)
-        }.getOrNull()
+        }
     }
-    if (result == null) call.respond(HttpStatusCode.BadGateway, "source error") else call.respond(result)
+    result.fold(
+        onSuccess = { call.respond(it) },
+        onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+    )
 }
+
+/** A human-readable reason a source call failed — the engine already gives good messages
+ *  (e.g. "Cloudflare protection is blocking this source (HTTP 403)…", "HTTP error 522"). */
+private fun sourceErrorMessage(e: Throwable): String =
+    e.message?.takeIf { it.isNotBlank() } ?: (e::class.simpleName ?: "The source is unavailable")

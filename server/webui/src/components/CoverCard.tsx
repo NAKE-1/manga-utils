@@ -20,9 +20,10 @@ type Props = {
   type?: 'manga' | 'manhwa' | 'manhua' | null
   badge?: number
   grid?: boolean
+  onRemove?: () => void
 }
 
-export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid }: Props) {
+export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid, onRemove }: Props) {
   const nav = useNavigate()
   const [loaded, setLoaded] = useState(false)
   const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
@@ -30,6 +31,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
     <div className={'cover-card' + (grid ? ' full' : '')} onClick={go} onPointerEnter={() => prefetchDetail(sourceId, url)} onPointerDown={() => prefetchDetail(sourceId, url)}>
       <div className="cover-frame">
         {!loaded && <div className="cover-skel skeleton" />}
+        {onRemove && <button className="cover-remove" aria-label="Remove" onClick={(e) => { e.stopPropagation(); onRemove() }}>✕</button>}
         {cover && (
           <img
             src={cover}

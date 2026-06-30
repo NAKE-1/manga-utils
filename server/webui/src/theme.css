@@ -121,6 +121,12 @@ img { display: block; }
   border-radius: 50%; background: var(--accent); color: #fff;
   font-size: 12px; font-weight: 800; display: grid; place-items: center; padding: 0 5px;
 }
+.cover-remove {
+  position: absolute; top: 6px; right: 6px; z-index: 3; width: 26px; height: 26px;
+  border-radius: 50%; background: rgba(0,0,0,0.62); color: #fff; font-size: 12px; line-height: 1;
+  display: grid; place-items: center; cursor: pointer; backdrop-filter: blur(3px);
+}
+@media (hover: hover) { .cover-remove:hover { background: rgba(0,0,0,0.85); } }
 
 /* ---- Grid --------------------------------------------------------------- */
 .grid {

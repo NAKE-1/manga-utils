@@ -29,7 +29,7 @@ export function Detail() {
   const [data, setData] = useState<DetailT | null>(null)
   const [state, setState] = useState<MangaState>({ inLibrary: false, bookmarked: false, read: [], bookmarks: [] })
   const [readSet, setReadSet] = useState<Set<string>>(new Set())
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [descOpen, setDescOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -40,8 +40,8 @@ export function Detail() {
   const [stateLoaded, setStateLoaded] = useState(false)
 
   useEffect(() => {
-    setData(null); setError(false); setStateLoaded(false)
-    api.detail(sourceId, url).then(setData).catch(() => setError(true))
+    setData(null); setError(null); setStateLoaded(false)
+    api.detail(sourceId, url).then(setData).catch((e) => setError(e instanceof Error ? e.message : "Couldn't load this manga."))
     api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {}).finally(() => setStateLoaded(true))
   }, [sourceId, url, tries])
 
@@ -122,7 +122,7 @@ export function Detail() {
     nav(`/reader/${sourceId}?manga=${encodeURIComponent(url)}&chapter=${encodeURIComponent(chUrl)}&name=${encodeURIComponent(name)}&title=${encodeURIComponent(data!.manga.title)}`)
   }
 
-  if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message="Couldn't load this manga." /></BackWrap>
+  if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
 
   const m = data.manga

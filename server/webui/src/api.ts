@@ -53,20 +53,25 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Fetch JSON with a timeout and a couple of retries (transient network / 5xx) for resilience.
 async function getJson<T>(url: string, retries = 2, timeoutMs = 15000): Promise<T> {
-  let lastErr: unknown
+  let lastErr: Error = new Error('Request failed')
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), timeoutMs)
     try {
       const r = await fetch(url, { signal: ctrl.signal })
-      if (!r.ok) {
-        if (r.status >= 500 && attempt < retries) { await sleep(400 * (attempt + 1)); continue }
-        throw new Error(`${r.status} ${url}`)
-      }
-      return (await r.json()) as T
+      if (r.ok) return (await r.json()) as T
+      // Surface the backend's reason (e.g. "Cloudflare protection… (HTTP 403)", "HTTP error 522").
+      let msg = ''
+      try { const b = await r.json(); if (b && typeof b.error === 'string') msg = b.error } catch { /* non-JSON body */ }
+      lastErr = new Error(msg || `Request failed (${r.status})`)
+      // 502 = the source itself errored (down / Cloudflare) — retrying won't help and is slow.
+      if (r.status >= 500 && r.status !== 502 && attempt < retries) { await sleep(400 * (attempt + 1)); continue }
+      throw lastErr
     } catch (e) {
-      lastErr = e
+      if (e === lastErr) throw e // a definitive HTTP error we already decided not to retry
+      lastErr = ctrl.signal.aborted ? new Error('The request timed out.') : (e instanceof Error ? e : new Error('Network error'))
       if (attempt < retries) { await sleep(400 * (attempt + 1)); continue }
+      throw lastErr
     } finally {
       clearTimeout(t)
     }
@@ -114,6 +119,8 @@ export const api = {
     return r.json()
   },
   diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
+  deleteHistory: (id: string, manga: string) =>
+    fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
 }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number }

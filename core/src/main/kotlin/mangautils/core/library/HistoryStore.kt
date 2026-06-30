@@ -59,6 +59,13 @@ object HistoryStore {
 
     fun list(): List<HistoryEntry> = load()
 
+    /** Remove every history entry for one manga (e.g. "remove from Continue reading"). */
+    @Synchronized
+    fun remove(sourceId: Long, mangaUrl: String) {
+        val list = load()
+        if (list.removeAll { it.sourceId == sourceId && it.mangaUrl == mangaUrl }) save(list)
+    }
+
     @Synchronized
     fun clear() = save(emptyList())
 }

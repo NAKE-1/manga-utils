@@ -24,7 +24,7 @@ export function Search() {
   const [page, setPage] = useState(1)
   const [hasNext, setHasNext] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [recent, setRecent] = useState<string[]>(recents())
   const sentinel = useRef<HTMLDivElement>(null)
   const busy = useRef(false)
@@ -39,12 +39,12 @@ export function Search() {
 
   function fetchPage(p: number) {
     if (!sourceId || busy.current) return
-    busy.current = true; setLoading(true); setError(false)
+    busy.current = true; setLoading(true); setErrorMsg(null)
     const req = mode === 'search' ? api.search(sourceId, query, p) : mode === 'latest' ? api.latest(sourceId, p) : api.popular(sourceId, p)
     req.then((r) => {
       setItems((prev) => (p === 1 ? r.mangas : [...prev, ...r.mangas]))
       setHasNext(r.hasNextPage); setPage(p)
-    }).catch(() => { if (p === 1) setError(true) }).finally(() => { busy.current = false; setLoading(false) })
+    }).catch((e) => { if (p === 1) setErrorMsg(e instanceof Error ? e.message : 'Couldn\'t load results.') }).finally(() => { busy.current = false; setLoading(false) })
   }
 
   // Reset + load when the source / mode / query changes.
@@ -95,7 +95,7 @@ export function Search() {
         </div>
       )}
 
-      {error ? <ErrorPanel onRetry={() => fetchPage(1)} />
+      {errorMsg ? <ErrorPanel onRetry={() => fetchPage(1)} message={errorMsg} />
         : items.length === 0 && loading ? <SkeletonGrid />
         : items.length === 0 ? <div className="center-msg">{mode === 'search' ? 'No results.' : 'Nothing here.'}</div>
         : (
