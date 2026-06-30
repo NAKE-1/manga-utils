@@ -322,8 +322,10 @@ img { display: block; }
 .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* Search-engine dropdown */
-.src-picker-wrap { padding: 8px 16px 2px; }
-.src-picker { position: relative; z-index: 40; }
+/* z-index on the wrap (a direct main child) — main's per-section fade-up animation makes each
+   section its own stacking context, so lifting the inner .src-picker alone wasn't enough. */
+.src-picker-wrap { padding: 8px 16px 2px; position: relative; z-index: 50; }
+.src-picker { position: relative; }
 .src-current { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; cursor: pointer; }
 .src-avatar { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
@@ -340,6 +342,17 @@ img { display: block; }
 @media (hover: hover) { .src-item:hover { background: var(--card-2); } }
 .recents { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
 .recents-h { width: 100%; font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+
+/* Global search — one section per source */
+.gs { padding-top: 6px; }
+.gs-section { margin-bottom: 4px; }
+.gs-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 6px; }
+.gs-name { font-size: 15px; font-weight: 800; color: var(--text); }
+.gs-count { font-size: 12px; font-weight: 700; color: var(--muted); background: var(--card-2); padding: 1px 8px; border-radius: 999px; }
+.gs-empty { padding: 2px 16px 12px; color: var(--muted); font-size: 13px; }
+.row-scroll { display: flex; gap: 12px; overflow-x: auto; padding: 4px 16px 12px; scrollbar-width: none; }
+.row-scroll::-webkit-scrollbar { display: none; }
+.row-scroll > .cover-card { flex: 0 0 auto; }
 
 /* ---- Settings ----------------------------------------------------------- */
 .settings { padding: 8px 16px 24px; }
