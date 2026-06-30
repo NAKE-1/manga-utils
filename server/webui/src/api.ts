@@ -144,7 +144,14 @@ export const api = {
     return r.json()
   },
   removeRepo: (url: string) => fetch(`/api/repos?url=${encodeURIComponent(url)}`, { method: 'DELETE' }).then((r) => r.json() as Promise<string[]>),
+
+  downloads: () => getJson<Downloads>('/api/downloads'),
+  enqueueDownload: (source: string, manga: string, mode: 'missing' | 'all' | 'chapters', chapters?: string[]) =>
+    fetch('/api/downloads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, manga, mode, chapters: chapters ?? [] }) }),
 }
+
+export interface DownloadJob { id: string; target: string; state: string; error: string; updatedAt: number }
+export interface Downloads { jobs: DownloadJob[]; queued: number }
 
 export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }

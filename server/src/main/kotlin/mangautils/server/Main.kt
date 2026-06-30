@@ -33,7 +33,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
+import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
+import mangautils.core.download.SourceRef
 import mangautils.core.extension.ExtensionIcons
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.ExtensionRepoClient
@@ -46,6 +48,7 @@ import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
+import mangautils.core.status.StatusStore
 import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.CloudflareState
@@ -120,6 +123,10 @@ private data class LibraryDto(
 @Serializable private data class InstallReq(val pkg: String)
 @Serializable private data class RepoReq(val url: String)
 @Serializable private data class InstallResultDto(val pkg: String, val name: String, val sources: Int)
+
+@Serializable private data class DownloadReq(val source: String, val manga: String, val mode: String = "missing", val chapters: List<String> = emptyList())
+@Serializable private data class DownloadJobDto(val id: String, val target: String, val state: String, val error: String, val updatedAt: Long)
+@Serializable private data class DownloadsDto(val jobs: List<DownloadJobDto>, val queued: Int)
 
 @Serializable
 private data class HistoryDto(
@@ -222,6 +229,15 @@ private fun availableEntries(): List<Pair<ExtensionRepoEntry, String>> {
     availCache = System.currentTimeMillis() to entries
     return entries
 }
+
+/** Recent download jobs from StatusStore, with a friendly (library) title when known. */
+private fun downloadJobs(): List<DownloadJobDto> =
+    StatusStore.all().filter { it.type == "download" }.take(40).map { j ->
+        val sid = j.target.substringBefore(':').toLongOrNull()
+        val url = j.target.substringAfter(':', "")
+        val title = (if (sid != null && url.isNotBlank()) LibraryStore.find(sid, url)?.title else null) ?: url.ifBlank { j.target }
+        DownloadJobDto(j.id, title, j.state.name, j.error, j.updatedAt)
+    }
 
 /** Short readable name for a repo index URL (the GitHub org for raw URLs, else the host). */
 private fun repoLabel(url: String): String = runCatching {
@@ -388,6 +404,22 @@ fun Application.module() {
             val url = call.queryParam("url") ?: return@delete call.respond(HttpStatusCode.BadRequest)
             withContext(Dispatchers.IO) { LibraryService.remove(id, url) }
             call.respond(HttpStatusCode.OK)
+        }
+
+        // ---- Download queue ----
+        get("/api/downloads") { call.respond(DownloadsDto(downloadJobs(), DownloadQueue.queuedCount())) }
+        post("/api/downloads") {
+            val body = call.receive<DownloadReq>()
+            val id = body.source.toLongOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad source id"))
+            if (body.manga.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing manga"))
+            val select = when (body.mode) {
+                "all" -> ChapterSelect.All
+                "chapters" -> ChapterSelect.Urls(body.chapters.toSet())
+                else -> ChapterSelect.Missing
+            }
+            if (body.mode == "chapters" && body.chapters.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("no chapters selected"))
+            DownloadQueue.enqueue(SourceRef(id, body.manga), select)
+            call.respond(HttpStatusCode.Accepted, DownloadsDto(downloadJobs(), DownloadQueue.queuedCount()))
         }
 
         // Downloaded-files management for a series (used by the remove-from-library confirm flow).

@@ -405,6 +405,24 @@ img { display: block; }
 .diag-num small { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 2px; }
 .diag-lbl { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 
+/* ---- Downloads ---------------------------------------------------------- */
+.chapter-dlbtn { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); background: none; cursor: pointer; }
+.chapter-dlbtn svg { width: 18px; height: 18px; }
+.chapter-dlbtn.done { color: var(--accent); cursor: default; }
+@media (hover: hover) { .chapter-dlbtn:not(.done):hover { background: var(--card-2); color: var(--text); } }
+.dl-toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--safe-b) + 16px); z-index: 30;
+  background: rgba(26,26,28,0.96); color: var(--text); font-size: 13px; font-weight: 700; padding: 10px 16px; border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); animation: fade-in .14s ease; }
+.dl-active { font-size: 13px; font-weight: 700; color: var(--accent); }
+.dl-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.dl-info { flex: 1; min-width: 0; }
+.dl-target { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-error { font-size: 12px; color: #e0715c; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-state { flex: 0 0 auto; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; background: var(--card-2); color: var(--muted); }
+.dl-state.running, .dl-state.retrying { background: rgba(138,124,240,0.18); color: var(--accent); }
+.dl-state.done { background: rgba(63,174,90,0.18); color: #3fae5a; }
+.dl-state.failed { background: rgba(211,75,63,0.18); color: #d34b3f; }
+
 /* ---- Extensions manager ------------------------------------------------- */
 .ext-page { padding: 8px 0 24px; }
 .ext-top { display: flex; align-items: center; gap: 8px; padding: 6px 12px 12px; }

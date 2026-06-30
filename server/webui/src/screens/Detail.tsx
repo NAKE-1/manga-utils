@@ -39,6 +39,7 @@ export function Detail() {
   const [tries, setTries] = useState(0)
   const [stateLoaded, setStateLoaded] = useState(false)
   const [source, setSource] = useState<Source | null>(null)
+  const [dlMsg, setDlMsg] = useState('')
 
   useEffect(() => {
     setData(null); setError(null); setStateLoaded(false)
@@ -123,6 +124,16 @@ export function Detail() {
   function openChapter(chUrl: string, name: string) {
     nav(`/reader/${sourceId}?manga=${encodeURIComponent(url)}&chapter=${encodeURIComponent(chUrl)}&name=${encodeURIComponent(name)}&title=${encodeURIComponent(data!.manga.title)}`)
   }
+  let dlTimer: ReturnType<typeof setTimeout>
+  function toast(msg: string) { setDlMsg(msg); clearTimeout(dlTimer); dlTimer = setTimeout(() => setDlMsg(''), 2500) }
+  function downloadChapters(urls: string[]) {
+    api.enqueueDownload(sourceId, url, 'chapters', urls).catch(() => {})
+    toast(urls.length === 1 ? 'Chapter queued for download' : `${urls.length} chapters queued`)
+  }
+  function downloadMissing() {
+    api.enqueueDownload(sourceId, url, 'missing').catch(() => {})
+    toast('Queued missing chapters — see Downloads')
+  }
 
   if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
@@ -156,7 +167,7 @@ export function Detail() {
           <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
-        {c.downloaded && <IconDownload className="chapter-dl" />}
+        <button className={'chapter-dlbtn' + (c.downloaded ? ' done' : '')} onClick={(e) => { e.stopPropagation(); if (!c.downloaded) downloadChapters([c.url]) }} title={c.downloaded ? 'Downloaded' : 'Download'} aria-label="Download"><IconDownload /></button>
         {bm && <IconBookmarkSm filled className="chapter-bm" />}
       </div>
     )
@@ -211,10 +222,14 @@ export function Detail() {
             <button key={t} className={'ch-tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
           ))}
         </div>
+        <button className="ch-sort" onClick={() => downloadMissing()} title="Download all missing chapters">
+          <IconDownload className="pi" />Download
+        </button>
         <button className="ch-sort" onClick={() => setAsc((v) => !v)} title={asc ? 'Oldest first' : 'Newest first'}>
           <IconSort className="pi" />{asc ? 'Asc' : 'Desc'}
         </button>
       </div>
+      {dlMsg && <div className="dl-toast">{dlMsg}</div>}
 
       <div className="chapters">
         {groups.map((g, i) =>
