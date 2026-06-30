@@ -32,6 +32,8 @@ data class Settings(
     val defaultFormat: String = "cbz",
     /** Save downloads as a CBZ archive; off (default) = a folder of page images (like Suwayomi). */
     val downloadAsCbz: Boolean = false,
+    /** How many chapters to download at once (chapter-level parallelism in the web queue). */
+    val parallelDownloads: Int = 3,
     /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
     val downloadDir: String? = null,
     /** Languages whose sources are shown in the web UI (codes like "en", "fr"). Empty = all;

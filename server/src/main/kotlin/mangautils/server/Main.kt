@@ -33,9 +33,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
-import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
-import mangautils.core.download.SourceRef
 import mangautils.core.extension.ExtensionIcons
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.ExtensionRepoClient
@@ -48,7 +46,6 @@ import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
-import mangautils.core.status.StatusStore
 import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.CloudflareState
@@ -124,9 +121,10 @@ private data class LibraryDto(
 @Serializable private data class RepoReq(val url: String)
 @Serializable private data class InstallResultDto(val pkg: String, val name: String, val sources: Int)
 
-@Serializable private data class DownloadReq(val source: String, val manga: String, val mode: String = "missing", val chapters: List<String> = emptyList())
-@Serializable private data class DownloadJobDto(val id: String, val target: String, val state: String, val error: String, val updatedAt: Long)
-@Serializable private data class DownloadsDto(val jobs: List<DownloadJobDto>, val queued: Int)
+@Serializable private data class DlChapterReq(val url: String, val name: String = "")
+@Serializable private data class DownloadReq(val source: String, val manga: String, val title: String = "", val chapters: List<DlChapterReq> = emptyList())
+@Serializable private data class DlTaskDto(val id: String, val mangaTitle: String, val chapterName: String, val state: String, val pagesDone: Int, val pagesTotal: Int, val kbps: Double, val error: String)
+@Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 
 @Serializable
 private data class HistoryDto(
@@ -146,6 +144,7 @@ private data class SettingsDto(
     val dataDir: String,
     val downloadAsCbz: Boolean,
     val downloadConcurrency: Int,
+    val parallelDownloads: Int,
     val visibleLanguages: List<String>,
     val cloudflareBypass: Boolean,
 )
@@ -155,6 +154,7 @@ private data class SettingsPatch(
     val downloadDir: String? = null,
     val downloadAsCbz: Boolean? = null,
     val downloadConcurrency: Int? = null,
+    val parallelDownloads: Int? = null,
     val visibleLanguages: List<String>? = null,
 )
 
@@ -230,14 +230,12 @@ private fun availableEntries(): List<Pair<ExtensionRepoEntry, String>> {
     return entries
 }
 
-/** Recent download jobs from StatusStore, with a friendly (library) title when known. */
-private fun downloadJobs(): List<DownloadJobDto> =
-    StatusStore.all().filter { it.type == "download" }.take(40).map { j ->
-        val sid = j.target.substringBefore(':').toLongOrNull()
-        val url = j.target.substringAfter(':', "")
-        val title = (if (sid != null && url.isNotBlank()) LibraryStore.find(sid, url)?.title else null) ?: url.ifBlank { j.target }
-        DownloadJobDto(j.id, title, j.state.name, j.error, j.updatedAt)
-    }
+private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
+    DownloadQueue.tasks().map { DlTaskDto(it.id, it.mangaTitle, it.chapterName, it.state, it.pagesDone, it.pagesTotal, it.bytesPerSec / 1024.0, it.error) },
+    DownloadQueue.activeCount(),
+    DownloadQueue.queuedCount(),
+    DownloadQueue.totalBytesPerSec() / 1024.0,
+)
 
 /** Short readable name for a repo index URL (the GitHub org for raw URLs, else the host). */
 private fun repoLabel(url: String): String = runCatching {
@@ -407,20 +405,21 @@ fun Application.module() {
         }
 
         // ---- Download queue ----
-        get("/api/downloads") { call.respond(DownloadsDto(downloadJobs(), DownloadQueue.queuedCount())) }
+        get("/api/downloads") { call.respond(downloadsSnapshot()) }
         post("/api/downloads") {
             val body = call.receive<DownloadReq>()
             val id = body.source.toLongOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad source id"))
-            if (body.manga.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing manga"))
-            val select = when (body.mode) {
-                "all" -> ChapterSelect.All
-                "chapters" -> ChapterSelect.Urls(body.chapters.toSet())
-                else -> ChapterSelect.Missing
-            }
-            if (body.mode == "chapters" && body.chapters.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("no chapters selected"))
-            DownloadQueue.enqueue(SourceRef(id, body.manga), select)
-            call.respond(HttpStatusCode.Accepted, DownloadsDto(downloadJobs(), DownloadQueue.queuedCount()))
+            if (body.manga.isBlank() || body.chapters.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("no chapters to download"))
+            val title = body.title.ifBlank { LibraryStore.find(id, body.manga)?.title ?: body.manga }
+            body.chapters.forEach { ch -> DownloadQueue.enqueueChapter(id, body.manga, title, ch.url, ch.name) }
+            call.respond(HttpStatusCode.Accepted, downloadsSnapshot())
         }
+        post("/api/downloads/stop") {
+            val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            DownloadQueue.stop(id); call.respond(downloadsSnapshot())
+        }
+        post("/api/downloads/stop-all") { DownloadQueue.stopAll(); call.respond(downloadsSnapshot()) }
+        post("/api/downloads/clear") { DownloadQueue.clearFinished(); call.respond(downloadsSnapshot()) }
 
         // Downloaded-files management for a series (used by the remove-from-library confirm flow).
         get("/api/downloads/count") {
@@ -482,7 +481,7 @@ fun Application.module() {
         // ---- Settings + diagnostics ----
         get("/api/settings") {
             val s = SettingsStore.get()
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.visibleLanguages, CLOUDFLARE_BYPASS))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.visibleLanguages, CLOUDFLARE_BYPASS))
         }
         post("/api/settings") {
             val body = call.receive<SettingsPatch>()
@@ -501,10 +500,11 @@ fun Application.module() {
             }
             body.downloadAsCbz?.let { s = s.copy(downloadAsCbz = it) }
             body.downloadConcurrency?.let { s = s.copy(downloadConcurrency = it.coerceIn(1, 32)) }
+            body.parallelDownloads?.let { s = s.copy(parallelDownloads = it.coerceIn(1, 8)) }
             body.visibleLanguages?.let { s = s.copy(visibleLanguages = it.map { l -> l.lowercase() }.distinct()) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.visibleLanguages, CLOUDFLARE_BYPASS))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.visibleLanguages, CLOUDFLARE_BYPASS))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)

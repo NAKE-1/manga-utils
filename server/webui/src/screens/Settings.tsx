@@ -44,6 +44,10 @@ export function Settings() {
     const s = await api.saveSettings({ downloadAsCbz: !info.downloadAsCbz }).catch(() => null)
     if (s) setInfo(s)
   }
+  async function setParallel(n: number) {
+    const s = await api.saveSettings({ parallelDownloads: n }).catch(() => null)
+    if (s) setInfo(s)
+  }
 
   async function runDiag() {
     if (!diagSource) return
@@ -77,6 +81,15 @@ export function Settings() {
             </div>
             <span className={'switch' + (info?.downloadAsCbz ? ' on' : '')}><span className="knob" /></span>
           </button>
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">Parallel downloads</div>
+          <div className="set-hint">How many chapters download at once. Higher = faster, but heavier on the source.</div>
+          <div className="stepper">
+            <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) <= 1} onClick={() => setParallel((info?.parallelDownloads ?? 3) - 1)}>−</button>
+            <span className="step-val">{info?.parallelDownloads ?? 3}</span>
+            <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) >= 8} onClick={() => setParallel((info?.parallelDownloads ?? 3) + 1)}>+</button>
+          </div>
         </div>
       </section>
 

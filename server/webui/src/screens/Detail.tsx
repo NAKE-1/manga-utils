@@ -126,13 +126,15 @@ export function Detail() {
   }
   let dlTimer: ReturnType<typeof setTimeout>
   function toast(msg: string) { setDlMsg(msg); clearTimeout(dlTimer); dlTimer = setTimeout(() => setDlMsg(''), 2500) }
-  function downloadChapters(urls: string[]) {
-    api.enqueueDownload(sourceId, url, 'chapters', urls).catch(() => {})
-    toast(urls.length === 1 ? 'Chapter queued for download' : `${urls.length} chapters queued`)
+  function downloadChapters(chs: { url: string; name: string }[]) {
+    if (chs.length === 0) return
+    api.enqueueDownload(sourceId, url, data!.manga.title, chs).catch(() => {})
+    toast(chs.length === 1 ? 'Chapter queued for download' : `${chs.length} chapters queued — see Downloads`)
   }
   function downloadMissing() {
-    api.enqueueDownload(sourceId, url, 'missing').catch(() => {})
-    toast('Queued missing chapters — see Downloads')
+    const missing = data!.chapters.filter((c) => !c.downloaded).map((c) => ({ url: c.url, name: c.name }))
+    if (missing.length === 0) { toast('All chapters already downloaded'); return }
+    downloadChapters(missing)
   }
 
   if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} /></BackWrap>
@@ -167,7 +169,7 @@ export function Detail() {
           <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
-        <button className={'chapter-dlbtn' + (c.downloaded ? ' done' : '')} onClick={(e) => { e.stopPropagation(); if (!c.downloaded) downloadChapters([c.url]) }} title={c.downloaded ? 'Downloaded' : 'Download'} aria-label="Download"><IconDownload /></button>
+        <button className={'chapter-dlbtn' + (c.downloaded ? ' done' : '')} onClick={(e) => { e.stopPropagation(); if (!c.downloaded) downloadChapters([{ url: c.url, name: c.name }]) }} title={c.downloaded ? 'Downloaded' : 'Download'} aria-label="Download"><IconDownload /></button>
         {bm && <IconBookmarkSm filled className="chapter-bm" />}
       </div>
     )
