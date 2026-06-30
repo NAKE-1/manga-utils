@@ -59,6 +59,7 @@ object DownloadQueue {
     private var seq = 0L
 
     private fun parallelism() = runCatching { SettingsStore.get().parallelDownloads }.getOrDefault(3).coerceIn(1, 8)
+    private fun perSourceParallel() = runCatching { SettingsStore.get().perSourceParallel }.getOrDefault(false)
     private fun newPool(n: Int) = Executors.newFixedThreadPool(n) { r -> Thread(r, "dl-worker").apply { isDaemon = true } }
 
     @Synchronized
@@ -71,11 +72,33 @@ object DownloadQueue {
     @Synchronized
     fun enqueue(sourceId: Long, mangaUrl: String, mangaTitle: String, chapters: List<Chapter>) {
         if (chapters.isEmpty()) return
-        ensurePool()
         val id = "dl-${seq++}-${System.nanoTime().toString(36).takeLast(4)}"
-        val task = Task(id, sourceId, mangaUrl, mangaTitle, chapters)
-        tasks[id] = task
-        futures[id] = pool.submit { run(task) }
+        tasks[id] = Task(id, sourceId, mangaUrl, mangaTitle, chapters)
+        pump()
+    }
+
+    /**
+     * Start as many queued tasks as the limits allow. By default only ONE manga per source runs at a
+     * time (different sources run in parallel up to parallelDownloads) — gentle on each source, like
+     * Suwayomi. perSourceParallel lifts the per-source cap.
+     */
+    @Synchronized
+    private fun pump() {
+        ensurePool()
+        val perSource = perSourceParallel()
+        val running = tasks.values.filter { it.state == "running" }
+        var slots = poolSize - running.size
+        if (slots <= 0) return
+        val busySources = running.map { it.sourceId }.toMutableSet()
+        for (task in tasks.values.sortedBy { it.id }) {
+            if (slots <= 0) break
+            if (task.state != "queued") continue
+            if (!perSource && task.sourceId in busySources) continue
+            task.state = "running"
+            busySources.add(task.sourceId)
+            slots--
+            futures[task.id] = pool.submit { run(task) }
+        }
     }
 
     private fun run(task: Task) {
@@ -115,6 +138,7 @@ object DownloadQueue {
             log.debug("download task {} ended: {}", task.id, task.state)
         }
         futures.remove(task.id)
+        pump() // a slot (and this source) just freed — start the next eligible manga
     }
 
     fun tasks(): List<Task> = tasks.values.sortedBy { it.id }
@@ -125,6 +149,7 @@ object DownloadQueue {
     fun stop(id: String) {
         futures[id]?.cancel(true)
         tasks[id]?.let { if (it.active) it.state = "stopped" }
+        pump()
     }
     fun stopAll() {
         futures.values.forEach { it.cancel(true) }

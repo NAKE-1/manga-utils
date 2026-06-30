@@ -257,6 +257,7 @@ export function Detail() {
           </button>
         )}
         <span className="pill"><IconBook className="pi" />{chapterTotal}</span>
+        <span className="pill" title="Downloaded chapters"><IconDownload className="pi" />{data.chapters.filter((c) => c.downloaded).length}/{data.chapters.length}</span>
         {year && <span className="pill"><IconCalendar className="pi" />{year}</span>}
         {m.author && <span className="pill"><IconPen className="pi" />{m.author}</span>}
       </div>

@@ -50,6 +50,11 @@ export function Settings() {
     const s = await api.saveSettings({ parallelDownloads: n }).catch(() => null)
     if (s) setInfo(s)
   }
+  async function togglePerSource() {
+    if (!info) return
+    const s = await api.saveSettings({ perSourceParallel: !info.perSourceParallel }).catch(() => null)
+    if (s) setInfo(s)
+  }
   async function clearContinue() {
     setClearing(true); setClearMsg('')
     await api.clearHistory().catch(() => {})
@@ -91,12 +96,21 @@ export function Settings() {
         </div>
         <div className="set-card">
           <div className="set-row-label">Parallel downloads</div>
-          <div className="set-hint">How many chapters download at once. Higher = faster, but heavier on the source.</div>
+          <div className="set-hint">How many manga download at once (across different sources). Higher = faster.</div>
           <div className="stepper">
             <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) <= 1} onClick={() => setParallel((info?.parallelDownloads ?? 3) - 1)}>−</button>
             <span className="step-val">{info?.parallelDownloads ?? 3}</span>
             <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) >= 8} onClick={() => setParallel((info?.parallelDownloads ?? 3) + 1)}>+</button>
           </div>
+        </div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={togglePerSource}>
+            <div>
+              <div className="set-row-label">Allow same-source parallel</div>
+              <div className="set-hint">Off (default) = one manga per source at a time — gentler, fewer failures. On = multiple from the same source at once.</div>
+            </div>
+            <span className={'switch' + (info?.perSourceParallel ? ' on' : '')}><span className="knob" /></span>
+          </button>
         </div>
       </section>
 

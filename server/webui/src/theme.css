@@ -58,6 +58,8 @@ img { display: block; }
 }
 .iconbtn:active { background: var(--card-2); }
 .iconbtn svg { width: 22px; height: 22px; }
+.iconbtn.dl-on { color: var(--accent); animation: dl-pulse 1.4s ease-in-out infinite; }
+@keyframes dl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 /* ---- Bottom tab bar ----------------------------------------------------- */
 .tabbar {

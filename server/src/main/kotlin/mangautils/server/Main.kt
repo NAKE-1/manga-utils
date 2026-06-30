@@ -150,6 +150,7 @@ private data class SettingsDto(
     val downloadAsCbz: Boolean,
     val downloadConcurrency: Int,
     val parallelDownloads: Int,
+    val perSourceParallel: Boolean,
     val visibleLanguages: List<String>,
     val cloudflareBypass: Boolean,
 )
@@ -160,6 +161,7 @@ private data class SettingsPatch(
     val downloadAsCbz: Boolean? = null,
     val downloadConcurrency: Int? = null,
     val parallelDownloads: Int? = null,
+    val perSourceParallel: Boolean? = null,
     val visibleLanguages: List<String>? = null,
 )
 
@@ -497,7 +499,7 @@ fun Application.module() {
         // ---- Settings + diagnostics ----
         get("/api/settings") {
             val s = SettingsStore.get()
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.visibleLanguages, CLOUDFLARE_BYPASS))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel, s.visibleLanguages, CLOUDFLARE_BYPASS))
         }
         post("/api/settings") {
             val body = call.receive<SettingsPatch>()
@@ -517,10 +519,11 @@ fun Application.module() {
             body.downloadAsCbz?.let { s = s.copy(downloadAsCbz = it) }
             body.downloadConcurrency?.let { s = s.copy(downloadConcurrency = it.coerceIn(1, 32)) }
             body.parallelDownloads?.let { s = s.copy(parallelDownloads = it.coerceIn(1, 8)) }
+            body.perSourceParallel?.let { s = s.copy(perSourceParallel = it) }
             body.visibleLanguages?.let { s = s.copy(visibleLanguages = it.map { l -> l.lowercase() }.distinct()) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.visibleLanguages, CLOUDFLARE_BYPASS))
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel, s.visibleLanguages, CLOUDFLARE_BYPASS))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
