@@ -425,6 +425,9 @@ img { display: block; }
   background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); animation: fade-in .12s ease; }
 .ch-menu button { display: block; width: 100%; text-align: left; padding: 11px 12px; font-size: 14px; font-weight: 600; color: var(--text); background: none; border-radius: 8px; cursor: pointer; }
 @media (hover: hover) { .ch-menu button:hover { background: var(--card-2); } }
+.ch-menu button.on { color: var(--accent); }
+.ch-menu button.on::after { content: '✓'; float: right; font-weight: 800; }
+.ch-menu-sep { height: 1px; background: var(--border); margin: 6px 8px; }
 
 /* ---- Downloads ---------------------------------------------------------- */
 .chapter-dlbtn { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); background: none; cursor: pointer; }

@@ -45,6 +45,7 @@ export function Detail() {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [menuOpen, setMenuOpen] = useState(false)
+  const [dlFilter, setDlFilter] = useState<'all' | 'dl' | 'undl'>('all')
 
   useEffect(() => {
     setData(null); setError(null); setStateLoaded(false)
@@ -190,6 +191,8 @@ export function Detail() {
   let chaps = data.chapters
   if (tab === 'unread') chaps = chaps.filter((c) => !readSet.has(c.url))
   else if (tab === 'read') chaps = chaps.filter((c) => readSet.has(c.url))
+  if (dlFilter === 'dl') chaps = chaps.filter((c) => c.downloaded)
+  else if (dlFilter === 'undl') chaps = chaps.filter((c) => !c.downloaded)
   chaps = [...chaps].sort((a, b) => (asc ? a.number - b.number : b.number - a.number))
 
   // Group adjacent same-number chapters (duplicate chapters from different scanlators) → "CH. N" card.
@@ -293,6 +296,11 @@ export function Detail() {
           <div className="ch-menu" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => { setSelecting(true); setSelected(new Set()); setMenuOpen(false) }}>Select chapters</button>
             <button onClick={() => { downloadMissing(); setMenuOpen(false) }}>Download missing</button>
+            <div className="ch-menu-sep" />
+            <button className={dlFilter === 'all' ? 'on' : ''} onClick={() => { setDlFilter('all'); setMenuOpen(false) }}>All chapters</button>
+            <button className={dlFilter === 'dl' ? 'on' : ''} onClick={() => { setDlFilter('dl'); setMenuOpen(false) }}>Downloaded only</button>
+            <button className={dlFilter === 'undl' ? 'on' : ''} onClick={() => { setDlFilter('undl'); setMenuOpen(false) }}>Not downloaded only</button>
+            <div className="ch-menu-sep" />
             <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), true); setMenuOpen(false) }}>Mark all read</button>
             <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), false); setMenuOpen(false) }}>Mark all unread</button>
           </div>
