@@ -317,7 +317,7 @@ img { display: block; }
 
 /* Search-engine dropdown */
 .src-picker-wrap { padding: 8px 16px 2px; }
-.src-picker { position: relative; }
+.src-picker { position: relative; z-index: 40; }
 .src-current { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; cursor: pointer; }
 .src-avatar { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;

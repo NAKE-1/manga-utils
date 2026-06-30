@@ -100,8 +100,8 @@ export const api = {
     if (name) u += `&name=${encodeURIComponent(name)}`
     return getJson<{ count: number }>(u)
   },
-  recordHistory: (id: string, manga: string, chapter: string, title: string, name: string) =>
-    fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&title=${encodeURIComponent(title)}&name=${encodeURIComponent(name)}`, { method: 'POST' }),
+  recordHistory: (id: string, manga: string, chapter: string, title: string, name: string, thumb?: string | null) =>
+    fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&title=${encodeURIComponent(title)}&name=${encodeURIComponent(name)}${thumb ? `&thumb=${encodeURIComponent(thumb)}` : ''}`, { method: 'POST' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>

@@ -73,10 +73,11 @@ export function Reader() {
     setCount(null); setPage(1); setProgress(0)
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
-    api.detail(sourceId, manga).then((d) => setChapters(d.chapters)).catch(() => {})
-    // Mark read + record history for "Continue reading".
+    // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
     api.setRead(sourceId, manga, chapter, true)
-    api.recordHistory(sourceId, manga, chapter, title, name)
+    api.detail(sourceId, manga)
+      .then((d) => { setChapters(d.chapters); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
+      .catch(() => api.recordHistory(sourceId, manga, chapter, title, name))
   }, [sourceId, chapter])
 
   // Navigate the de-duplicated list (scanlator-aware) so prev/next skip duplicate chapters.
