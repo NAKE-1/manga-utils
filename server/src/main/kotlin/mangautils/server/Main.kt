@@ -20,6 +20,7 @@ import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
+import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.delete
@@ -30,6 +31,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import mangautils.core.config.AppConfig
+import mangautils.core.config.SettingsStore
 import mangautils.core.download.DownloadManager
 import mangautils.core.extension.InstalledStore
 import mangautils.core.library.BookmarkStore
@@ -39,6 +42,7 @@ import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
 import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
+import mangautils.core.source.Diagnostics
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
 import mangautils.core.source.SourceImage
@@ -105,6 +109,35 @@ private data class HistoryDto(
 )
 
 @Serializable
+private data class SettingsDto(
+    val downloadDir: String?,
+    val effectiveDownloadDir: String,
+    val dataDir: String,
+    val downloadAsCbz: Boolean,
+    val downloadConcurrency: Int,
+)
+
+@Serializable
+private data class SettingsPatch(
+    val downloadDir: String? = null,
+    val downloadAsCbz: Boolean? = null,
+    val downloadConcurrency: Int? = null,
+)
+
+@Serializable
+private data class DiagDto(
+    val source: String,
+    val baseUrl: String,
+    val pingMs: Double,
+    val speedMbps: Double,
+    val sampleBytes: Long,
+    val ok: Boolean,
+    val error: String? = null,
+)
+
+@Serializable private data class ErrorDto(val error: String)
+
+@Serializable
 private data class MangaStateDto(val inLibrary: Boolean, val bookmarked: Boolean, val read: List<String>, val bookmarks: List<String>)
 
 @Serializable
@@ -159,6 +192,8 @@ private fun sniffImageType(b: ByteArray): ContentType = when {
 
 fun main() {
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
+    // Honor a custom downloads directory chosen in Settings.
+    SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
@@ -333,6 +368,38 @@ fun Application.module() {
             val thumb = call.queryParam("thumb")
             withContext(Dispatchers.IO) { HistoryStore.record(id, manga, mangaTitle, chapter, name, thumb) }
             call.respond(HttpStatusCode.OK)
+        }
+
+        // ---- Settings + diagnostics ----
+        get("/api/settings") {
+            val s = SettingsStore.get()
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency))
+        }
+        post("/api/settings") {
+            val body = call.receive<SettingsPatch>()
+            var s = SettingsStore.get()
+            if (body.downloadDir != null) {
+                val dir = body.downloadDir.trim()
+                if (dir.isEmpty()) {
+                    s = s.copy(downloadDir = null)
+                } else {
+                    val p = runCatching { java.nio.file.Path.of(dir).toAbsolutePath().normalize() }.getOrNull()
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("That doesn't look like a valid path"))
+                    val ok = withContext(Dispatchers.IO) { runCatching { java.nio.file.Files.createDirectories(p) }.isSuccess }
+                    if (!ok) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't create that directory"))
+                    s = s.copy(downloadDir = p.toString())
+                }
+            }
+            body.downloadAsCbz?.let { s = s.copy(downloadAsCbz = it) }
+            body.downloadConcurrency?.let { s = s.copy(downloadConcurrency = it.coerceIn(1, 32)) }
+            withContext(Dispatchers.IO) { SettingsStore.save(s) }
+            AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
+            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency))
+        }
+        get("/api/diag") {
+            val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val r = withContext(Dispatchers.IO) { Diagnostics.run(id) }
+            call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
 
         // ---- Chapter pages ----

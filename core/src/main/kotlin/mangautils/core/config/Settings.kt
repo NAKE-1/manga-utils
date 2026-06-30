@@ -32,6 +32,8 @@ data class Settings(
     val defaultFormat: String = "cbz",
     /** Save downloads as a CBZ archive; off (default) = a folder of page images (like Suwayomi). */
     val downloadAsCbz: Boolean = false,
+    /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
+    val downloadDir: String? = null,
     /** Default language filter for `ext list` and the friendly search picker (null = all). */
     val defaultLanguage: String? = null,
     /** Show NSFW-flagged extensions/sources by default. */

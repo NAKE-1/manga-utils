@@ -31,7 +31,11 @@ object AppConfig {
     }
 
     val extensionsDir: Path get() = sub("extensions")
-    val downloadsDir: Path get() = sub("downloads")
+
+    /** Optional runtime override for the downloads location (set from Settings). */
+    @Volatile
+    var downloadDirOverride: Path? = null
+    val downloadsDir: Path get() = downloadDirOverride ?: sub("downloads")
     val logsDir: Path get() = sub("logs")
     val databaseFile: Path get() = dataDir.resolve("library.db")
     val reposFile: Path get() = dataDir.resolve("repos.json")

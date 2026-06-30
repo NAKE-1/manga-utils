@@ -106,7 +106,18 @@ export const api = {
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>
     fetch(`/api/bookmarks?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&on=${on}`, { method: 'POST' }),
+
+  getSettings: () => getJson<SettingsInfo>('/api/settings'),
+  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number }>): Promise<SettingsInfo> => {
+    const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed')
+    return r.json()
+  },
+  diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
 }
+
+export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number }
+export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
 
 export const STATUS_LABELS: Record<number, string> = {
   0: '', 1: 'Ongoing', 2: 'Completed', 3: 'Licensed', 4: 'Publishing finished', 5: 'Cancelled', 6: 'Hiatus',
