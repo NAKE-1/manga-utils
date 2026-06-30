@@ -63,7 +63,7 @@ export function Detail() {
       if (!alive) return
       if (d) {
         const map: Record<string, { done: number; total: number; state: string }> = {}
-        for (const t of d.tasks) if (t.chapterUrl) map[t.chapterUrl] = { done: t.pagesDone, total: t.pagesTotal, state: t.state }
+        for (const t of d.tasks) if (t.state === 'running' && t.currentChapterUrl) map[t.currentChapterUrl] = { done: t.pagesDone, total: t.pagesTotal, state: 'running' }
         setDlProg(map)
         if (prevActive > 0 && d.active === 0) api.detail(sourceId, url).then(setData).catch(() => {})
         prevActive = d.active

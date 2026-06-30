@@ -9,35 +9,46 @@ import mangautils.core.config.SettingsStore
 import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.SourceRef
-import mangautils.core.status.JobState
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 /**
- * Web download queue: each task is ONE chapter, run on a small thread pool so several chapters
- * download in parallel. A [DownloadManager] listener feeds live page/byte progress into the task so
- * the Downloads screen can show a per-chapter bar + speed (like a real download manager). Tasks can
- * be stopped (the worker thread is interrupted, which aborts the in-flight network calls).
+ * Web download queue. Each task is ONE manga (a set of chapters), downloaded with a single
+ * [DownloadManager.download] call: the manga is resolved ONCE and its chapters download
+ * sequentially with page-level concurrency — exactly like the desktop app. Different manga run in
+ * parallel up to [SettingsStore]'s parallelDownloads. (The old per-chapter-parallel design hammered
+ * a source with redundant detail/chapter/page lookups and got rate-limited, failing every chapter.)
  */
 object DownloadQueue {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    class Chapter(val url: String, val name: String)
 
     class Task(
         val id: String,
         val sourceId: Long,
         val mangaUrl: String,
         val mangaTitle: String,
-        val chapterUrl: String,
-        val chapterName: String,
+        val chapters: List<Chapter>,
     ) {
-        @Volatile var state: String = "queued" // queued | running | done | failed | stopped
-        @Volatile var pagesDone: Int = 0
-        @Volatile var pagesTotal: Int = 0
-        @Volatile var bytesPerSec: Double = 0.0
-        @Volatile var error: String = ""
+        val total = chapters.size
+        @Volatile var state = "queued" // queued | running | done | failed | stopped
+        @Volatile var doneCount = 0
+        @Volatile var failedCount = 0
+        @Volatile var currentChapter = ""
+        @Volatile var currentChapterUrl = ""
+        @Volatile var pagesDone = 0
+        @Volatile var pagesTotal = 0
+        @Volatile var bytesPerSec = 0.0
+        @Volatile var error = ""
+        // Chapters that failed (for the Retry button); names of finished chapters (live progress).
+        val failed = CopyOnWriteArrayList<Chapter>()
+        val finishedNames = ConcurrentHashMap.newKeySet<String>()
         val active get() = state == "queued" || state == "running"
+        fun nameToUrl(name: String) = chapters.firstOrNull { it.name == name }?.url ?: ""
     }
 
     private val tasks = ConcurrentHashMap<String, Task>()
@@ -50,18 +61,19 @@ object DownloadQueue {
     private fun parallelism() = runCatching { SettingsStore.get().parallelDownloads }.getOrDefault(3).coerceIn(1, 8)
     private fun newPool(n: Int) = Executors.newFixedThreadPool(n) { r -> Thread(r, "dl-worker").apply { isDaemon = true } }
 
-    /** Re-create the pool if the parallelism setting changed (waiting tasks just re-queue). */
     @Synchronized
     private fun ensurePool() {
         val want = parallelism()
         if (want != poolSize) { poolSize = want; pool = newPool(want) }
     }
 
+    /** Enqueue a manga's chapters as a single task (one resolve, sequential chapters). */
     @Synchronized
-    fun enqueueChapter(sourceId: Long, mangaUrl: String, mangaTitle: String, chapterUrl: String, chapterName: String) {
+    fun enqueue(sourceId: Long, mangaUrl: String, mangaTitle: String, chapters: List<Chapter>) {
+        if (chapters.isEmpty()) return
         ensurePool()
         val id = "dl-${seq++}-${System.nanoTime().toString(36).takeLast(4)}"
-        val task = Task(id, sourceId, mangaUrl, mangaTitle, chapterUrl, chapterName)
+        val task = Task(id, sourceId, mangaUrl, mangaTitle, chapters)
         tasks[id] = task
         futures[id] = pool.submit { run(task) }
     }
@@ -75,11 +87,29 @@ object DownloadQueue {
                 concurrency = s.downloadConcurrency,
                 retries = s.downloadRetries,
                 existingPolicy = s.existingBehavior,
-                listener = { p -> task.pagesDone = p.pagesDone; task.pagesTotal = p.pagesTotal; task.bytesPerSec = p.bytesPerSecond },
+                listener = { p ->
+                    task.currentChapter = p.chapter
+                    task.currentChapterUrl = task.nameToUrl(p.chapter)
+                    task.pagesDone = p.pagesDone
+                    task.pagesTotal = p.pagesTotal
+                    task.bytesPerSec = p.bytesPerSecond
+                    if (p.finished && p.pagesTotal > 0) task.finishedNames.add(p.chapter)
+                    task.doneCount = task.finishedNames.size
+                },
             )
-            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(setOf(task.chapterUrl)))
-            if (job.state == JobState.DONE) task.state = "done" else { task.state = "failed"; task.error = job.error }
+            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(task.chapters.map { it.url }.toSet()))
+            // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
+            val byTarget = job.attempts.groupBy { it.target }
+            val doneNames = byTarget.filterValues { atts -> atts.any { it.outcome == "ok" || it.outcome == "skipped" } }.keys
+            task.doneCount = doneNames.size
+            task.failed.clear()
+            task.failed.addAll(task.chapters.filter { it.name !in doneNames })
+            task.failedCount = task.failed.size
+            task.bytesPerSec = 0.0
+            task.state = if (task.failedCount == 0) "done" else "failed"
+            if (task.failedCount > 0) task.error = job.error.ifBlank { "${task.failedCount} chapter(s) failed" }
         }.onFailure {
+            task.bytesPerSec = 0.0
             if (Thread.currentThread().isInterrupted || it is InterruptedException) task.state = "stopped"
             else { task.state = "failed"; task.error = it.message ?: it::class.simpleName ?: "failed" }
             log.debug("download task {} ended: {}", task.id, task.state)
