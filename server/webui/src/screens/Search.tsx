@@ -53,6 +53,8 @@ export function Search() {
     }).catch(() => {})
   }, [])
   useEffect(() => { if (sourceId) localStorage.setItem('browse.source', sourceId) }, [sourceId])
+  // Remember the last-used source immediately on pick, so reopening Search restores it.
+  function pickSource(id: string) { localStorage.setItem('browse.source', id); setSourceId(id) }
 
   // ---- Single-source browse/search ----
   function fetchPage(p: number) {
@@ -114,7 +116,7 @@ export function Search() {
       </div>
 
       <div className="src-picker-wrap">
-        <SourcePicker sources={pickerSources} value={sourceId} onChange={setSourceId} />
+        <SourcePicker sources={pickerSources} value={sourceId} onChange={pickSource} />
       </div>
 
       {!isGlobal && mode !== 'search' && (
