@@ -42,6 +42,9 @@ export function Search() {
 
   const isGlobal = sourceId === GLOBAL
   const pickerSources = useMemo(() => [{ id: GLOBAL, name: 'Global', lang: '', nsfw: false, cfState: 'green' } as Source, ...sources], [sources])
+  // Stable signature of the source *set* — so refreshing cloud colors (which replaces the sources
+  // array with the same ids) doesn't re-trigger the global search in a loop.
+  const sourceKey = useMemo(() => sources.map((s) => s.id).join(','), [sources])
 
   useEffect(() => {
     api.sources().then((s) => {
@@ -91,7 +94,8 @@ export function Search() {
           if (/cloudflare/i.test(msg)) refreshSourcesSoon()
         })
     })
-  }, [isGlobal, query, sources])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the source SET, not its array identity
+  }, [isGlobal, query, sourceKey])
 
   function submit(q: string) {
     const t = q.trim()
