@@ -405,6 +405,26 @@ img { display: block; }
 .diag-num small { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 2px; }
 .diag-lbl { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 
+/* ---- Extensions manager ------------------------------------------------- */
+.ext-page { padding: 8px 0 24px; }
+.ext-top { display: flex; align-items: center; gap: 8px; padding: 6px 12px 12px; }
+.ext-title { font-size: 19px; font-weight: 800; }
+.ext-actions { padding: 0 16px 10px; }
+.ext-search { display: flex; gap: 10px; padding: 0 16px 12px; }
+.ext-search input { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 15px; padding: 11px 12px; outline: none; }
+.ext-search input:focus { border-color: var(--accent); }
+.ext-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.ext-icon { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 9px; object-fit: cover; background: var(--card-2); }
+.ext-icon.ph { background: var(--card-2); }
+.ext-info { flex: 1; min-width: 0; }
+.ext-name { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.ext-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.ext-sub.repo-url { word-break: break-all; }
+.ext-installed { font-size: 12px; font-weight: 700; color: var(--muted); flex: 0 0 auto; }
+.btn.sm { padding: 7px 12px; font-size: 13px; cursor: pointer; }
+.btn.danger { color: #e0715c; border-color: #5a3b36; }
+@media (hover: hover) { .btn.danger:hover { background: #3a2422; } }
+
 /* ---- Misc --------------------------------------------------------------- */
 .muted { color: var(--muted); }
 .center-msg { padding: 48px 24px; text-align: center; color: var(--muted); }

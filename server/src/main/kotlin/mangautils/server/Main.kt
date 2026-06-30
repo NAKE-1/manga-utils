@@ -35,7 +35,12 @@ import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.DownloadManager
 import mangautils.core.extension.ExtensionIcons
+import mangautils.core.extension.ExtensionInstaller
+import mangautils.core.extension.ExtensionRepoClient
+import mangautils.core.extension.ExtensionRepoEntry
+import mangautils.core.extension.ExtensionUpdates
 import mangautils.core.extension.InstalledStore
+import mangautils.core.extension.RepoStore
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryEntry
@@ -109,6 +114,12 @@ private data class LibraryDto(
 )
 
 @Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int)
+
+@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int)
+@Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean)
+@Serializable private data class InstallReq(val pkg: String)
+@Serializable private data class RepoReq(val url: String)
+@Serializable private data class InstallResultDto(val pkg: String, val name: String, val sources: Int)
 
 @Serializable
 private data class HistoryDto(
@@ -197,6 +208,17 @@ private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
 
 private fun pagesFor(sourceId: Long, chapterUrl: String): List<Page> =
     pageCache.getOrPut("$sourceId|$chapterUrl") { SourceImage.pageList(sourceId, chapterUrl) }
+
+// Merged repo entries for the "available extensions" browse, cached 5 min (indexes are large).
+@Volatile
+private var availCache: Pair<Long, List<ExtensionRepoEntry>>? = null
+private fun availableEntries(): List<ExtensionRepoEntry> {
+    availCache?.let { (t, v) -> if (System.currentTimeMillis() - t < 300_000) return v }
+    val client = ExtensionRepoClient()
+    val entries = RepoStore.list().flatMap { runCatching { client.fetchIndex(it) }.getOrDefault(emptyList()) }.distinctBy { it.pkg }
+    availCache = System.currentTimeMillis() to entries
+    return entries
+}
 
 /** Guess an image content-type from magic bytes (covers + pages are mixed jpg/png/webp/gif). */
 private fun sniffImageType(b: ByteArray): ContentType = when {
@@ -449,6 +471,70 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
 
+        // ---- Extensions + repositories ----
+        get("/api/extensions") {
+            val list = withContext(Dispatchers.IO) {
+                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size) }
+            }
+            call.respond(list)
+        }
+        post("/api/extensions/check-updates") {
+            val pkgs = withContext(Dispatchers.IO) { runCatching { ExtensionUpdates.check().map { it.installed.pkg } }.getOrDefault(emptyList()) }
+            call.respond(pkgs)
+        }
+        post("/api/extensions/install") {
+            val pkg = call.receive<InstallReq>().pkg
+            availCache = null // a fresh install/update should re-read repos next browse
+            val r = withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(pkg) } }
+            r.fold(
+                onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
+                onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(it.message ?: "Install failed")) },
+            )
+        }
+        delete("/api/extensions") {
+            val pkg = call.queryParam("pkg") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) {
+                InstalledStore.remove(pkg)
+                runCatching {
+                    java.nio.file.Files.deleteIfExists(AppConfig.extensionsDir.resolve("$pkg.jar"))
+                    java.nio.file.Files.deleteIfExists(AppConfig.extensionsDir.resolve("$pkg.apk"))
+                }
+            }
+            call.respond(HttpStatusCode.OK)
+        }
+        get("/api/extensions/available") {
+            val q = call.queryParam("q")?.trim()?.lowercase().orEmpty()
+            val visible = SettingsStore.get().visibleLanguages
+            val result = withContext(Dispatchers.IO) {
+                val installed = InstalledStore.list().associateBy { it.pkg }
+                availableEntries()
+                    .filter { langVisible(it.lang, visible) }
+                    .filter { q.isEmpty() || it.name.lowercase().contains(q) }
+                    .sortedBy { it.name.lowercase() }
+                    .take(300)
+                    .map { e ->
+                        val inst = installed[e.pkg]
+                        AvailDto(e.pkg, e.name, e.version, e.lang, e.isNsfw, inst != null, inst != null && e.code > inst.versionCode)
+                    }
+            }
+            call.respond(result)
+        }
+
+        get("/api/repos") { call.respond(RepoStore.list()) }
+        post("/api/repos") {
+            val url = call.receive<RepoReq>().url.trim()
+            if (url.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Enter a repo URL"))
+            withContext(Dispatchers.IO) { RepoStore.add(url) }
+            availCache = null
+            call.respond(RepoStore.list())
+        }
+        delete("/api/repos") {
+            val url = call.queryParam("url") ?: return@delete call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { RepoStore.remove(url) }
+            availCache = null
+            call.respond(RepoStore.list())
+        }
+
         // ---- Chapter pages ----
         get("/api/chapter/pages") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest, "bad source id")
@@ -468,6 +554,16 @@ fun Application.module() {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val pkg = withContext(Dispatchers.IO) { InstalledStore.findExtensionForSource(id)?.pkg }
                 ?: return@get call.respond(HttpStatusCode.NotFound)
+            val bytes = withContext(Dispatchers.IO) { ExtensionIcons.iconBytes(pkg) }
+            if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
+                call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=604800, immutable")
+                call.respondBytes(bytes, sniffImageType(bytes))
+            }
+        }
+
+        // Extension icon by package (for the extensions manager).
+        get("/img/ext-icon") {
+            val pkg = call.queryParam("pkg") ?: return@get call.respond(HttpStatusCode.BadRequest)
             val bytes = withContext(Dispatchers.IO) { ExtensionIcons.iconBytes(pkg) }
             if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
                 call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=604800, immutable")

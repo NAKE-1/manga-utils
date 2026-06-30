@@ -126,7 +126,28 @@ export const api = {
   diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
   deleteHistory: (id: string, manga: string) =>
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
+
+  // Extensions + repositories
+  extensions: () => getJson<ExtInstalled[]>('/api/extensions'),
+  extCheckUpdates: () => fetch('/api/extensions/check-updates', { method: 'POST' }).then((r) => r.json() as Promise<string[]>),
+  extAvailable: (q: string) => getJson<ExtAvailable[]>(`/api/extensions/available?q=${encodeURIComponent(q)}`, 0, 60000),
+  extInstall: async (pkg: string) => {
+    const r = await fetch('/api/extensions/install', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Install failed')
+    return r.json()
+  },
+  extUninstall: (pkg: string) => fetch(`/api/extensions?pkg=${encodeURIComponent(pkg)}`, { method: 'DELETE' }),
+  repos: () => getJson<string[]>('/api/repos'),
+  addRepo: async (url: string): Promise<string[]> => {
+    const r = await fetch('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Failed to add repo')
+    return r.json()
+  },
+  removeRepo: (url: string) => fetch(`/api/repos?url=${encodeURIComponent(url)}`, { method: 'DELETE' }).then((r) => r.json() as Promise<string[]>),
 }
+
+export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number }
+export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; visibleLanguages: string[]; cloudflareBypass: boolean }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }

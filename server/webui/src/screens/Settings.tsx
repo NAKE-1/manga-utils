@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, Source, SettingsInfo, DiagResult } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 
 export function Settings() {
+  const nav = useNavigate()
   const [info, setInfo] = useState<SettingsInfo | null>(null)
   const [dir, setDir] = useState('')
   const [savingDir, setSavingDir] = useState(false)
@@ -97,7 +99,7 @@ export function Settings() {
         <div className="set-card">
           <div className="set-row-label">Extensions &amp; repositories</div>
           <div className="set-hint">Install, update or remove extensions and manage repos.</div>
-          <div className="set-actions"><button className="btn" disabled>Coming soon</button></div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/extensions')}>Open manager</button></div>
         </div>
 
         <div className="set-card">

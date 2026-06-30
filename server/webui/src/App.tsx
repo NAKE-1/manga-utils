@@ -7,6 +7,7 @@ import { Detail } from './screens/Detail'
 import { Reader } from './screens/Reader'
 import { Search } from './screens/Search'
 import { Settings } from './screens/Settings'
+import { Extensions } from './screens/Extensions'
 import { Stub } from './screens/Stub'
 
 export function App() {
@@ -29,6 +30,7 @@ export function App() {
           <Route path="/library" element={<ListPage />} />
           <Route path="/search" element={<Search />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/extensions" element={<Extensions />} />
           <Route path="/downloads" element={<Stub name="Downloads" />} />
           <Route path="/manga/:sourceId" element={<Detail />} />
           <Route path="*" element={<Stub name="Not found" />} />
