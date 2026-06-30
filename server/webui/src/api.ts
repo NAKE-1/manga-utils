@@ -126,6 +126,7 @@ export const api = {
   diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
   deleteHistory: (id: string, manga: string) =>
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
+  clearHistory: () => fetch('/api/history/clear', { method: 'POST' }),
 
   // Extensions + repositories
   extensions: () => getJson<ExtInstalled[]>('/api/extensions'),
@@ -153,7 +154,7 @@ export const api = {
   clearDownloads: () => fetch('/api/downloads/clear', { method: 'POST' }),
 }
 
-export interface DlTask { id: string; mangaTitle: string; chapterName: string; state: string; pagesDone: number; pagesTotal: number; kbps: number; error: string }
+export interface DlTask { id: string; mangaTitle: string; chapterName: string; chapterUrl: string; state: string; pagesDone: number; pagesTotal: number; kbps: number; error: string }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 
 export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string }

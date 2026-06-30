@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
-import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload } from '../components/icons'
+import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots } from '../components/icons'
+import { ProgressRing } from '../components/ProgressRing'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
@@ -40,6 +41,10 @@ export function Detail() {
   const [stateLoaded, setStateLoaded] = useState(false)
   const [source, setSource] = useState<Source | null>(null)
   const [dlMsg, setDlMsg] = useState('')
+  const [dlProg, setDlProg] = useState<Record<string, { done: number; total: number; state: string }>>({})
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     setData(null); setError(null); setStateLoaded(false)
@@ -47,6 +52,27 @@ export function Detail() {
     api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {}).finally(() => setStateLoaded(true))
     api.sources().then((all) => setSource(all.find((x) => x.id === sourceId) ?? null)).catch(() => {})
   }, [sourceId, url, tries])
+
+  // Poll the download queue for live per-chapter progress; refetch detail when downloads finish.
+  useEffect(() => {
+    let alive = true
+    let timer: ReturnType<typeof setTimeout>
+    let prevActive = 0
+    const tick = async () => {
+      const d = await api.downloads().catch(() => null)
+      if (!alive) return
+      if (d) {
+        const map: Record<string, { done: number; total: number; state: string }> = {}
+        for (const t of d.tasks) if (t.chapterUrl) map[t.chapterUrl] = { done: t.pagesDone, total: t.pagesTotal, state: t.state }
+        setDlProg(map)
+        if (prevActive > 0 && d.active === 0) api.detail(sourceId, url).then(setData).catch(() => {})
+        prevActive = d.active
+      }
+      timer = setTimeout(tick, d && d.active > 0 ? 1200 : 5000)
+    }
+    tick()
+    return () => { alive = false; clearTimeout(timer) }
+  }, [sourceId, url])
 
   // Preload the chapter you'd continue from (first unread, or ch.1) so opening it is instant.
   const prefetchedCont = useRef('')
@@ -136,6 +162,15 @@ export function Detail() {
     if (missing.length === 0) { toast('All chapters already downloaded'); return }
     downloadChapters(missing)
   }
+  function bulkSetRead(urls: string[], read: boolean) {
+    const next = new Set(readSet)
+    urls.forEach((u) => { if (read) next.add(u); else next.delete(u); api.setRead(sourceId, url, u, read) })
+    setReadSet(next)
+  }
+  function toggleSelect(chUrl: string) {
+    setSelected((s) => { const n = new Set(s); if (n.has(chUrl)) n.delete(chUrl); else n.add(chUrl); return n })
+  }
+  function exitSelect() { setSelecting(false); setSelected(new Set()) }
 
   if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
@@ -146,6 +181,11 @@ export function Detail() {
   // Some sources don't expose a status — show "Unknown" rather than nothing (still tappable to scan).
   const status = STATUS_LABELS[m.status] || 'Unknown'
   const newSet = new Set(data.newChapters)
+  // The chapter you'd resume on (first unread ascending, else the latest) — gets a "Resume" marker.
+  const resumeUrl = (() => {
+    const ordered = [...data.chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
+    return (ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1])?.url
+  })()
 
   let chaps = data.chapters
   if (tab === 'unread') chaps = chaps.filter((c) => !readSet.has(c.url))
@@ -163,13 +203,20 @@ export function Detail() {
     const read = readSet.has(c.url)
     const bm = state.bookmarks.includes(c.url)
     const meta = [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
+    const prog = dlProg[c.url]
+    const downloading = prog && (prog.state === 'running' || prog.state === 'queued')
+    const sel = selected.has(c.url)
+    const onRow = () => { if (selecting) toggleSelect(c.url); else openChapter(c.url, c.name) }
     return (
-      <div key={c.url} className={'chapter-row' + (read ? ' read' : '')} onClick={() => openChapter(c.url, c.name)}>
+      <div key={c.url} className={'chapter-row' + (read ? ' read' : '') + (c.url === resumeUrl ? ' resume' : '') + (sel ? ' sel' : '')} onClick={onRow}>
+        {selecting && <span className={'ch-check' + (sel ? ' on' : '')} />}
         <div className="chapter-text">
-          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.name}</div>
+          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
-        <button className={'chapter-dlbtn' + (c.downloaded ? ' done' : '')} onClick={(e) => { e.stopPropagation(); if (!c.downloaded) downloadChapters([{ url: c.url, name: c.name }]) }} title={c.downloaded ? 'Downloaded' : 'Download'} aria-label="Download"><IconDownload /></button>
+        {!selecting && (downloading
+          ? <span className="chapter-dlbtn"><ProgressRing pct={prog.total > 0 ? (prog.done / prog.total) * 100 : 0} size={26} /></span>
+          : <button className={'chapter-dlbtn' + (c.downloaded ? ' done' : '')} onClick={(e) => { e.stopPropagation(); if (!c.downloaded) downloadChapters([{ url: c.url, name: c.name }]) }} title={c.downloaded ? 'Downloaded' : 'Download'} aria-label="Download"><IconDownload /></button>)}
         {bm && <IconBookmarkSm filled className="chapter-bm" />}
       </div>
     )
@@ -218,19 +265,39 @@ export function Detail() {
         </div>
       )}
 
-      <div className="ch-toolbar">
-        <div className="ch-tabs">
-          {(['all', 'unread', 'read'] as Tab[]).map((t) => (
-            <button key={t} className={'ch-tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
-          ))}
+      {selecting ? (
+        <div className="sel-bar">
+          <button className="sel-link" onClick={exitSelect}>Cancel</button>
+          <span className="sel-count">{selected.size} selected</span>
+          <div className="sel-actions">
+            <button className="sel-link" disabled={selected.size === 0} onClick={() => { downloadChapters(data.chapters.filter((c) => selected.has(c.url) && !c.downloaded).map((c) => ({ url: c.url, name: c.name }))); exitSelect() }}>Download</button>
+            <button className="sel-link" disabled={selected.size === 0} onClick={() => { bulkSetRead([...selected], true); exitSelect() }}>Read</button>
+            <button className="sel-link" disabled={selected.size === 0} onClick={() => { bulkSetRead([...selected], false); exitSelect() }}>Unread</button>
+          </div>
         </div>
-        <button className="ch-sort" onClick={() => downloadMissing()} title="Download all missing chapters">
-          <IconDownload className="pi" />Download
-        </button>
-        <button className="ch-sort" onClick={() => setAsc((v) => !v)} title={asc ? 'Oldest first' : 'Newest first'}>
-          <IconSort className="pi" />{asc ? 'Asc' : 'Desc'}
-        </button>
-      </div>
+      ) : (
+        <div className="ch-toolbar">
+          <div className="ch-tabs">
+            {(['all', 'unread', 'read'] as Tab[]).map((t) => (
+              <button key={t} className={'ch-tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+            ))}
+          </div>
+          <button className="ch-sort" onClick={() => setAsc((v) => !v)} title={asc ? 'Oldest first' : 'Newest first'}>
+            <IconSort className="pi" />{asc ? 'Asc' : 'Desc'}
+          </button>
+          <button className="ch-sort ico" onClick={() => setMenuOpen((v) => !v)} aria-label="More"><IconDots className="pi" /></button>
+        </div>
+      )}
+      {menuOpen && (
+        <div className="ch-menu-scrim" onClick={() => setMenuOpen(false)}>
+          <div className="ch-menu" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => { setSelecting(true); setSelected(new Set()); setMenuOpen(false) }}>Select chapters</button>
+            <button onClick={() => { downloadMissing(); setMenuOpen(false) }}>Download missing</button>
+            <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), true); setMenuOpen(false) }}>Mark all read</button>
+            <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), false); setMenuOpen(false) }}>Mark all unread</button>
+          </div>
+        </div>
+      )}
       {dlMsg && <div className="dl-toast">{dlMsg}</div>}
 
       <div className="chapters">

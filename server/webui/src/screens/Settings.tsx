@@ -14,6 +14,8 @@ export function Settings() {
   const [diag, setDiag] = useState<DiagResult | null>(null)
   const [diagRunning, setDiagRunning] = useState(false)
   const [languages, setLanguages] = useState<string[]>([])
+  const [clearing, setClearing] = useState(false)
+  const [clearMsg, setClearMsg] = useState('')
 
   useEffect(() => {
     api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
@@ -47,6 +49,11 @@ export function Settings() {
   async function setParallel(n: number) {
     const s = await api.saveSettings({ parallelDownloads: n }).catch(() => null)
     if (s) setInfo(s)
+  }
+  async function clearContinue() {
+    setClearing(true); setClearMsg('')
+    await api.clearHistory().catch(() => {})
+    setClearing(false); setClearMsg('Cleared')
   }
 
   async function runDiag() {
@@ -102,6 +109,18 @@ export function Settings() {
             {languages.map((code) => (
               <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-h">Reading</div>
+        <div className="set-card">
+          <div className="set-row-label">Continue reading</div>
+          <div className="set-hint">Clear the “Continue reading” row (your reading history). Library and downloads are unaffected.</div>
+          <div className="set-actions">
+            <button className="btn danger" disabled={clearing} onClick={clearContinue}>{clearing ? 'Clearing…' : 'Clear continue reading'}</button>
+            {clearMsg && <span className="set-msg">{clearMsg}</span>}
           </div>
         </div>
       </section>

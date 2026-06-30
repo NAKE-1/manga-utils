@@ -405,6 +405,28 @@ img { display: block; }
 .diag-num small { font-size: 12px; font-weight: 700; color: var(--muted); margin-left: 2px; }
 .diag-lbl { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 
+/* ---- Chapter selection / menu / progress -------------------------------- */
+.ch-check { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--border); margin-right: 2px; position: relative; }
+.ch-check.on { background: var(--accent); border-color: var(--accent); }
+.ch-check.on::after { content: '✓'; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 800; }
+.chapter-row.sel { background: rgba(138,124,240,0.12); }
+.chapter-row.resume { box-shadow: inset 3px 0 0 var(--accent); }
+.chapter-resume { display: inline-block; font-size: 9px; font-weight: 800; color: #fff; background: #3fae5a; padding: 2px 5px; border-radius: 5px; margin-right: 7px; vertical-align: middle; letter-spacing: .04em; }
+.ch-sort.ico { padding: 8px 10px; }
+.ring-bg { fill: none; stroke: var(--card-2); stroke-width: 3; }
+.ring-fg { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset .3s ease; }
+.ring-txt { fill: var(--text); font-size: 8px; font-weight: 800; }
+.sel-bar { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--border); }
+.sel-count { font-size: 14px; font-weight: 700; flex: 1; }
+.sel-actions { display: flex; gap: 14px; }
+.sel-link { font-size: 14px; font-weight: 700; color: var(--accent); cursor: pointer; background: none; }
+.sel-link:disabled { opacity: .4; }
+.ch-menu-scrim { position: fixed; inset: 0; z-index: 40; }
+.ch-menu { position: fixed; right: 12px; top: calc(var(--topbar-h) + var(--safe-t) + 8px); z-index: 41; min-width: 190px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); animation: fade-in .12s ease; }
+.ch-menu button { display: block; width: 100%; text-align: left; padding: 11px 12px; font-size: 14px; font-weight: 600; color: var(--text); background: none; border-radius: 8px; cursor: pointer; }
+@media (hover: hover) { .ch-menu button:hover { background: var(--card-2); } }
+
 /* ---- Downloads ---------------------------------------------------------- */
 .chapter-dlbtn { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); background: none; cursor: pointer; }
 .chapter-dlbtn svg { width: 18px; height: 18px; }

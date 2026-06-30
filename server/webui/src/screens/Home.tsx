@@ -51,7 +51,6 @@ export function Home() {
               title={h.mangaTitle}
               cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)}
               subtitle={h.chapterName}
-              onRemove={() => { api.deleteHistory(h.sourceId, h.mangaUrl); setHistory((prev) => prev.filter((x) => !(x.sourceId === h.sourceId && x.mangaUrl === h.mangaUrl))) }}
             />
           ))}
         </Carousel>
