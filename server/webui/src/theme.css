@@ -330,6 +330,7 @@ img { display: block; }
   background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; cursor: pointer; }
 .src-avatar { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
   color: #fff; font-size: 13px; font-weight: 800; }
+.src-avatar.img { object-fit: cover; background: var(--card-2); }
 .src-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .src-lang { font-size: 11px; font-weight: 700; color: var(--muted); }
 .src-18 { flex: 0 0 auto; font-size: 10px; font-weight: 800; color: #fff; background: #c1432f; padding: 2px 6px; border-radius: 6px; letter-spacing: .02em; }
@@ -367,6 +368,8 @@ img { display: block; }
 /* ---- Settings ----------------------------------------------------------- */
 .settings { padding: 8px 16px 24px; }
 .set-h { font-size: 22px; font-weight: 800; margin: 8px 2px 14px; }
+.set-section { margin-bottom: 22px; }
+.set-section-h { font-size: 12px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin: 0 2px 8px; }
 .set-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
 .set-row-label { font-size: 15px; font-weight: 700; color: var(--text); }
 .set-hint { font-size: 12.5px; color: var(--muted); margin-top: 3px; }

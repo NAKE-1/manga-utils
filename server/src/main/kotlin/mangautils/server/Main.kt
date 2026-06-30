@@ -34,6 +34,7 @@ import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.DownloadManager
+import mangautils.core.extension.ExtensionIcons
 import mangautils.core.extension.InstalledStore
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
@@ -444,6 +445,18 @@ fun Application.module() {
                 local?.count ?: pagesFor(id, chapter).size
             }
             call.respond(PagesDto(count))
+        }
+
+        // Real extension icon (from the repo), keyed by source id.
+        get("/img/source-icon") {
+            val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val pkg = withContext(Dispatchers.IO) { InstalledStore.findExtensionForSource(id)?.pkg }
+                ?: return@get call.respond(HttpStatusCode.NotFound)
+            val bytes = withContext(Dispatchers.IO) { ExtensionIcons.iconBytes(pkg) }
+            if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
+                call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=604800, immutable")
+                call.respondBytes(bytes, sniffImageType(bytes))
+            }
         }
 
         // ---- Images (binary) ----

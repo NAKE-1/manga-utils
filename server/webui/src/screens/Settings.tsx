@@ -55,53 +55,73 @@ export function Settings() {
     <div className="settings">
       <h2 className="set-h">Settings</h2>
 
-      <div className="set-card">
-        <div className="set-row-label">Download folder</div>
-        <div className="set-hint">Where chapters and covers are saved on the server. Leave blank for the default.</div>
-        <input className="set-input" value={dir} onChange={(e) => setDir(e.target.value)} placeholder={info?.effectiveDownloadDir || 'default'} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
-        <div className="set-actions">
-          <button className="btn primary" disabled={savingDir} onClick={saveDir}>{savingDir ? 'Saving…' : 'Save'}</button>
-          {dirMsg && <span className={'set-msg' + (dirMsg.err ? ' err' : '')}>{dirMsg.text}</span>}
-        </div>
-        <div className="set-kv"><span>Saving to</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
-        <div className="set-kv"><span>Data folder</span><code>{info?.dataDir || '…'}</code></div>
-      </div>
-
-      <div className="set-card">
-        <div className="set-row-label">Source languages</div>
-        <div className="set-hint">Show sources in these languages. None selected = all.</div>
-        <div className="lang-chips">
-          {languages.map((code) => (
-            <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
-          ))}
-        </div>
-      </div>
-
-      <div className="set-card">
-        <button className="set-toggle" onClick={toggleCbz}>
-          <div>
-            <div className="set-row-label">Save as CBZ</div>
-            <div className="set-hint">Off = a folder of page images.</div>
+      <section className="set-section">
+        <div className="set-section-h">Downloads</div>
+        <div className="set-card">
+          <div className="set-row-label">Download folder</div>
+          <div className="set-hint">Where chapters and covers are saved on the server. Leave blank for the default.</div>
+          <input className="set-input" value={dir} onChange={(e) => setDir(e.target.value)} placeholder={info?.effectiveDownloadDir || 'default'} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+          <div className="set-actions">
+            <button className="btn primary" disabled={savingDir} onClick={saveDir}>{savingDir ? 'Saving…' : 'Save'}</button>
+            {dirMsg && <span className={'set-msg' + (dirMsg.err ? ' err' : '')}>{dirMsg.text}</span>}
           </div>
-          <span className={'switch' + (info?.downloadAsCbz ? ' on' : '')}><span className="knob" /></span>
-        </button>
-      </div>
-
-      <div className="set-card">
-        <div className="set-row-label">Connection test</div>
-        <div className="set-hint">Ping + download speed to a source, measured from the server.</div>
-        <div className="set-diag-row"><SourcePicker sources={sources} value={diagSource} onChange={setDiagSource} /></div>
-        <div className="set-actions">
-          <button className="btn primary" disabled={diagRunning || !diagSource} onClick={runDiag}>{diagRunning ? 'Testing…' : 'Run test'}</button>
+          <div className="set-kv"><span>Saving to</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
         </div>
-        {diag && (diag.ok ? (
-          <div className="diag-result">
-            <div className="diag-stat"><span className="diag-num">{Math.round(diag.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
-            <div className="diag-stat"><span className="diag-num">{diag.speedMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Speed</span></div>
-            <div className="diag-stat"><span className="diag-num">{Math.round(diag.sampleBytes / 1024)}<small>KB</small></span><span className="diag-lbl">Sample</span></div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleCbz}>
+            <div>
+              <div className="set-row-label">Save as CBZ</div>
+              <div className="set-hint">Off = a folder of page images.</div>
+            </div>
+            <span className={'switch' + (info?.downloadAsCbz ? ' on' : '')}><span className="knob" /></span>
+          </button>
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-h">Sources</div>
+        <div className="set-card">
+          <div className="set-row-label">Source languages</div>
+          <div className="set-hint">Show sources in these languages. None selected = all.</div>
+          <div className="lang-chips">
+            {languages.map((code) => (
+              <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
+            ))}
           </div>
-        ) : <div className="set-msg err">{diag.error || 'Test failed'}</div>)}
-      </div>
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-h">Developer</div>
+
+        <div className="set-card">
+          <div className="set-row-label">Extensions &amp; repositories</div>
+          <div className="set-hint">Install, update or remove extensions and manage repos.</div>
+          <div className="set-actions"><button className="btn" disabled>Coming soon</button></div>
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Connection test</div>
+          <div className="set-hint">Ping + download speed to a source, measured from the server.</div>
+          <div className="set-diag-row"><SourcePicker sources={sources} value={diagSource} onChange={setDiagSource} /></div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={diagRunning || !diagSource} onClick={runDiag}>{diagRunning ? 'Testing…' : 'Run test'}</button>
+          </div>
+          {diag && (diag.ok ? (
+            <div className="diag-result">
+              <div className="diag-stat"><span className="diag-num">{Math.round(diag.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
+              <div className="diag-stat"><span className="diag-num">{diag.speedMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Speed</span></div>
+              <div className="diag-stat"><span className="diag-num">{Math.round(diag.sampleBytes / 1024)}<small>KB</small></span><span className="diag-lbl">Sample</span></div>
+            </div>
+          ) : <div className="set-msg err">{diag.error || 'Test failed'}</div>)}
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Server paths</div>
+          <div className="set-kv"><span>Downloads</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
+          <div className="set-kv"><span>Data folder</span><code>{info?.dataDir || '…'}</code></div>
+        </div>
+      </section>
     </div>
   )
 }

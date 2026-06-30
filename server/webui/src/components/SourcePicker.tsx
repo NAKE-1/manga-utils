@@ -11,9 +11,13 @@ function avatarColor(name: string): string {
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
   return `hsl(${h % 360} 42% 40%)`
 }
-const Avatar = ({ name }: { name: string }) => (
-  <span className="src-avatar" style={{ background: avatarColor(name) }}>{(name[0] || '?').toUpperCase()}</span>
-)
+function Avatar({ id, name }: { id: string; name: string }) {
+  const [failed, setFailed] = useState(false)
+  if (id !== GLOBAL && !failed) {
+    return <img className="src-avatar img" src={`/img/source-icon?source=${id}`} alt="" loading="lazy" onError={() => setFailed(true)} />
+  }
+  return <span className="src-avatar" style={{ background: avatarColor(name) }}>{(name[0] || '?').toUpperCase()}</span>
+}
 
 const CF_TITLE: Record<string, string> = {
   green: 'No Cloudflare protection',
@@ -58,7 +62,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
   return (
     <div className="src-picker">
       <button className="src-current" onClick={() => setOpen(true)} aria-haspopup="listbox" aria-expanded={open}>
-        <Avatar name={cur.name} />
+        <Avatar id={cur.id} name={cur.name} />
         <span className="src-name">{cur.name}</span>
         {down(cur)}
         {cf(cur)}
@@ -76,7 +80,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
             <div className="src-sheet-list" role="listbox">
               {sources.map((s) => (
                 <button key={s.id} role="option" aria-selected={s.id === value} className={'src-item' + (s.id === value ? ' on' : '')} onClick={() => { onChange(s.id); setOpen(false) }}>
-                  <Avatar name={s.name} />
+                  <Avatar id={s.id} name={s.name} />
                   <span className="src-name">{s.name}</span>
                   {down(s)}
                   {cf(s)}
