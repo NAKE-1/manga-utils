@@ -335,11 +335,15 @@ img { display: block; }
 .src-18 { flex: 0 0 auto; font-size: 10px; font-weight: 800; color: #fff; background: #c1432f; padding: 2px 6px; border-radius: 6px; letter-spacing: .02em; }
 .src-cf { flex: 0 0 auto; width: 17px; height: 17px; color: #4a4a4f; }
 .src-cf.on { color: #f6821f; }
-.src-caret { width: 18px; height: 18px; color: var(--muted); transition: transform .16s ease; flex: 0 0 auto; }
-.src-caret.up { transform: rotate(180deg); }
-.src-menu { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20; max-height: 60vh; overflow-y: auto;
-  background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); animation: fade-in .12s ease; }
-.src-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-radius: 9px; padding: 9px 8px; cursor: pointer; }
+.src-caret { width: 18px; height: 18px; color: var(--muted); flex: 0 0 auto; }
+/* Source picker bottom sheet (portaled to body — viewport-fixed, mobile-safe). */
+.src-sheet-scrim { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; animation: fade-in .14s ease; }
+.src-sheet { width: 100%; max-height: 78vh; display: flex; flex-direction: column; background: var(--card);
+  border: 1px solid var(--border); border-bottom: none; border-radius: 18px 18px 0 0;
+  padding: 8px 10px calc(12px + var(--safe-b)); animation: sheet-up .2s ease; }
+.src-sheet-title { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px 8px; }
+.src-sheet-list { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.src-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-radius: 9px; padding: 11px 8px; cursor: pointer; }
 .src-item.on { background: var(--card-2); }
 @media (hover: hover) { .src-item:hover { background: var(--card-2); } }
 .recents { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
