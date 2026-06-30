@@ -108,7 +108,7 @@ export function Search() {
       <div className="search-bar-wrap">
         <div className="search-bar">
           <IconSearch className="sb-ic" />
-          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(input) }} placeholder={isGlobal ? 'Search all sources…' : 'Search manga…'} inputMode="search" />
+          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { submit(input); e.currentTarget.blur() } }} placeholder={isGlobal ? 'Search all sources…' : 'Search manga…'} inputMode="search" enterKeyHint="search" />
           {input && <button className="sb-clear" onClick={() => { setInput(''); submit('') }} aria-label="Clear">✕</button>}
         </div>
       </div>

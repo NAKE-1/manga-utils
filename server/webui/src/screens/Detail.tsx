@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState } from '../api'
+import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
@@ -38,11 +38,13 @@ export function Detail() {
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
   const [tries, setTries] = useState(0)
   const [stateLoaded, setStateLoaded] = useState(false)
+  const [source, setSource] = useState<Source | null>(null)
 
   useEffect(() => {
     setData(null); setError(null); setStateLoaded(false)
     api.detail(sourceId, url).then(setData).catch((e) => setError(e instanceof Error ? e.message : "Couldn't load this manga."))
     api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {}).finally(() => setStateLoaded(true))
+    api.sources().then((all) => setSource(all.find((x) => x.id === sourceId) ?? null)).catch(() => {})
   }, [sourceId, url, tries])
 
   // Preload the chapter you'd continue from (first unread, or ch.1) so opening it is instant.
@@ -128,7 +130,8 @@ export function Detail() {
   const m = data.manga
   const type = mediaType(m.genre)
   const genres = (m.genre || '').split(',').map((g) => g.trim()).filter(Boolean)
-  const status = STATUS_LABELS[m.status] || ''
+  // Some sources don't expose a status — show "Unknown" rather than nothing (still tappable to scan).
+  const status = STATUS_LABELS[m.status] || 'Unknown'
 
   let chaps = data.chapters
   if (tab === 'unread') chaps = chaps.filter((c) => !readSet.has(c.url))
@@ -164,7 +167,15 @@ export function Detail() {
         <div className="detail-cover">
           {m.thumbnailUrl ? <img src={coverUrl(sourceId, m.thumbnailUrl, m.title)} alt="" /> : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
         </div>
-        <h1 className="detail-title">{m.title}</h1>
+        <div className="detail-head-info">
+          <h1 className="detail-title">{m.title}</h1>
+          {source && (
+            <div className="meta-tag">
+              <span className="meta-tag-k">Source</span>
+              <span className="meta-tag-v">{source.name}{source.lang ? ` (${source.lang.toUpperCase()})` : ''}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {genres.length > 0 && (
