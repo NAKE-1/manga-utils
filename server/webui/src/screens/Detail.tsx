@@ -132,6 +132,7 @@ export function Detail() {
   const genres = (m.genre || '').split(',').map((g) => g.trim()).filter(Boolean)
   // Some sources don't expose a status — show "Unknown" rather than nothing (still tappable to scan).
   const status = STATUS_LABELS[m.status] || 'Unknown'
+  const newSet = new Set(data.newChapters)
 
   let chaps = data.chapters
   if (tab === 'unread') chaps = chaps.filter((c) => !readSet.has(c.url))
@@ -152,7 +153,7 @@ export function Detail() {
     return (
       <div key={c.url} className={'chapter-row' + (read ? ' read' : '')} onClick={() => openChapter(c.url, c.name)}>
         <div className="chapter-text">
-          <div className="chapter-name">{c.name}</div>
+          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
         {c.downloaded && <IconDownload className="chapter-dl" />}

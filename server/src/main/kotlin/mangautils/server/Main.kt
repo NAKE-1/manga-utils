@@ -91,7 +91,7 @@ private data class ChapterDto(
 )
 
 @Serializable
-private data class DetailDto(val manga: MangaDto, val chapters: List<ChapterDto>)
+private data class DetailDto(val manga: MangaDto, val chapters: List<ChapterDto>, val newChapters: List<String> = emptyList())
 
 @Serializable
 private data class LibraryDto(
@@ -102,7 +102,13 @@ private data class LibraryDto(
     val author: String? = null,
     val status: Int = 0,
     val newChapters: Int = 0,
+    /** Latest known chapter, for the "Ch N · <date>" line under the cover. */
+    val lastNumber: Float = -1f,
+    val lastName: String = "",
+    val lastDate: Long = 0,
 )
+
+@Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int)
 
 @Serializable
 private data class HistoryDto(
@@ -186,6 +192,7 @@ private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
     e.knownChapters.map {
         ChapterDto(it.url, it.name, it.scanlator, it.dateUpload, it.number, runCatching { DownloadManager.isDownloaded(e.title, it.name) }.getOrDefault(false))
     },
+    e.newChapters.toList(),
 )
 
 private fun pagesFor(sourceId: Long, chapterUrl: String): List<Page> =
@@ -280,6 +287,7 @@ fun Application.module() {
                                 downloaded = runCatching { DownloadManager.isDownloaded(mangaTitle, chName) }.getOrDefault(false),
                             )
                         },
+                        LibraryStore.find(id, url)?.newChapters?.toList() ?: emptyList(),
                     ).also { detailCache[key] = it }
                 }
             }
@@ -293,10 +301,18 @@ fun Application.module() {
         get("/api/library") {
             val entries = withContext(Dispatchers.IO) {
                 LibraryService.list().map {
-                    LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size)
+                    val last = it.knownChapters.maxByOrNull { c -> c.number }
+                    LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size,
+                        last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0)
                 }
             }
             call.respond(entries)
+        }
+
+        // Scan the whole library for new chapters (like the desktop). Updates per-manga newChapters.
+        post("/api/library/update") {
+            val results = withContext(Dispatchers.IO) { LibraryService.update() }
+            call.respond(UpdateSummaryDto(results.sumOf { it.newChapters.size }, results.count { it.newChapters.isNotEmpty() }))
         }
 
         // ---- Per-manga state for the detail page (in-library + read + bookmarked) ----

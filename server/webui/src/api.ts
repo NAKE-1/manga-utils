@@ -25,7 +25,7 @@ export interface Chapter {
   downloaded: boolean
 }
 
-export interface Detail { manga: Manga; chapters: Chapter[] }
+export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[] }
 
 export interface MangaState { inLibrary: boolean; bookmarked: boolean; read: string[]; bookmarks: string[] }
 
@@ -37,6 +37,9 @@ export interface LibraryEntry {
   author?: string | null
   status: number
   newChapters: number
+  lastNumber: number
+  lastName: string
+  lastDate: number
 }
 
 export interface HistoryItem {
@@ -83,6 +86,7 @@ export const api = {
   sources: () => getJson<Source[]>('/api/sources'),
   languages: () => getJson<string[]>('/api/languages'),
   library: () => getJson<LibraryEntry[]>('/api/library'),
+  updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number }>),
   history: () => getJson<HistoryItem[]>('/api/history'),
   popular: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`),
   latest: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`),
