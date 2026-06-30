@@ -154,7 +154,7 @@ export const api = {
   clearDownloads: () => fetch('/api/downloads/clear', { method: 'POST' }),
 }
 
-export interface DlTask { id: string; mangaTitle: string; chapterName: string; chapterUrl: string; state: string; pagesDone: number; pagesTotal: number; kbps: number; error: string }
+export interface DlTask { id: string; mangaKey: string; mangaTitle: string; chapterName: string; chapterUrl: string; state: string; pagesDone: number; pagesTotal: number; kbps: number; error: string }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 
 export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string }

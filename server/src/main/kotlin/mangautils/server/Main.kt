@@ -123,7 +123,7 @@ private data class LibraryDto(
 
 @Serializable private data class DlChapterReq(val url: String, val name: String = "")
 @Serializable private data class DownloadReq(val source: String, val manga: String, val title: String = "", val chapters: List<DlChapterReq> = emptyList())
-@Serializable private data class DlTaskDto(val id: String, val mangaTitle: String, val chapterName: String, val chapterUrl: String, val state: String, val pagesDone: Int, val pagesTotal: Int, val kbps: Double, val error: String)
+@Serializable private data class DlTaskDto(val id: String, val mangaKey: String, val mangaTitle: String, val chapterName: String, val chapterUrl: String, val state: String, val pagesDone: Int, val pagesTotal: Int, val kbps: Double, val error: String)
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 
 @Serializable
@@ -231,7 +231,7 @@ private fun availableEntries(): List<Pair<ExtensionRepoEntry, String>> {
 }
 
 private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
-    DownloadQueue.tasks().map { DlTaskDto(it.id, it.mangaTitle, it.chapterName, it.chapterUrl, it.state, it.pagesDone, it.pagesTotal, it.bytesPerSec / 1024.0, it.error) },
+    DownloadQueue.tasks().map { DlTaskDto(it.id, "${it.sourceId}|${it.mangaUrl}", it.mangaTitle, it.chapterName, it.chapterUrl, it.state, it.pagesDone, it.pagesTotal, it.bytesPerSec / 1024.0, it.error) },
     DownloadQueue.activeCount(),
     DownloadQueue.queuedCount(),
     DownloadQueue.totalBytesPerSec() / 1024.0,
