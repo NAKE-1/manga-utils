@@ -2,9 +2,13 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ExtInstalled, ExtAvailable } from '../api'
 import { IconArrowLeft } from '../components/icons'
+import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
 type Tab = 'installed' | 'browse' | 'repos'
 const cleanName = (n: string) => n.replace(/^Tachiyomi:\s*/i, '')
+function repoLabel(url: string): string {
+  try { const u = new URL(url); return u.hostname === 'raw.githubusercontent.com' ? (u.pathname.split('/').filter(Boolean)[0] || u.hostname) : u.hostname } catch { return url }
+}
 
 function ExtIcon({ pkg }: { pkg: string }) {
   const [failed, setFailed] = useState(false)
@@ -25,18 +29,20 @@ export function Extensions() {
   const [repos, setRepos] = useState<string[]>([])
   const [repoInput, setRepoInput] = useState('')
   const [repoMsg, setRepoMsg] = useState('')
+  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
 
   const loadInstalled = () => api.extensions().then(setInstalled).catch(() => {})
   const loadBrowse = () => { setBrowseLoading(true); api.extAvailable(q).then(setAvail).catch(() => setAvail([])).finally(() => setBrowseLoading(false)) }
-
-  useEffect(() => { loadInstalled(); api.repos().then(setRepos).catch(() => {}) }, [])
-  useEffect(() => { if (tab === 'browse') loadBrowse() }, [tab, q]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function checkUpdates() {
     setChecking(true)
     setUpdates(new Set(await api.extCheckUpdates().catch(() => [])))
     setChecking(false)
   }
+
+  useEffect(() => { loadInstalled(); api.repos().then(setRepos).catch(() => {}); checkUpdates() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'browse') loadBrowse() }, [tab, q]) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function install(pkg: string, label: string) {
     setBusy((b) => ({ ...b, [pkg]: label }))
     await api.extInstall(pkg).catch(() => {})
@@ -44,6 +50,7 @@ export function Extensions() {
     setUpdates((u) => { const n = new Set(u); n.delete(pkg); return n })
     loadInstalled(); if (tab === 'browse') loadBrowse()
   }
+  async function updateAll() { for (const pkg of Array.from(updates)) await install(pkg, 'Updating…') }
   async function uninstall(pkg: string) {
     setBusy((b) => ({ ...b, [pkg]: 'Removing…' }))
     await api.extUninstall(pkg)
@@ -53,9 +60,21 @@ export function Extensions() {
   async function addRepo() {
     const url = repoInput.trim(); if (!url) return
     setRepoMsg('')
-    try { setRepos(await api.addRepo(url)); setRepoInput('') } catch (e) { setRepoMsg(e instanceof Error ? e.message : 'Failed') }
+    try { setRepos(await api.addRepo(url)); setRepoInput(''); loadInstalled() } catch (e) { setRepoMsg(e instanceof Error ? e.message : 'Failed') }
   }
-  async function removeRepo(url: string) { setRepos(await api.removeRepo(url).catch(() => repos)) }
+  function askRemoveRepo(url: string) {
+    const assoc = installed.filter((e) => e.repo && e.repo === repoLabel(url))
+    setConfirm({
+      title: 'Remove repository?',
+      message: assoc.length
+        ? `${assoc.length} installed extension${assoc.length === 1 ? '' : 's'} came from this repo (${assoc.map((e) => cleanName(e.name)).join(', ')}). They stay installed but will no longer receive updates. Remove the repo?`
+        : 'This repository will be removed. You can add it again any time.',
+      confirmLabel: 'Remove repo',
+      danger: true,
+      onConfirm: async () => { setConfirm(null); setRepos(await api.removeRepo(url).catch(() => repos)); loadInstalled() },
+      onCancel: () => setConfirm(null),
+    })
+  }
 
   return (
     <div className="ext-page">
@@ -66,19 +85,27 @@ export function Extensions() {
 
       <div className="seg" style={{ margin: '0 16px 12px' }}>
         {(['installed', 'browse', 'repos'] as Tab[]).map((t) => (
-          <button key={t} className={'seg-btn' + (tab === t ? ' on' : '')} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+          <button key={t} className={'seg-btn' + (tab === t ? ' on' : '')} onClick={() => setTab(t)}>
+            {t[0].toUpperCase() + t.slice(1)}{t === 'installed' && updates.size > 0 ? ` (${updates.size})` : ''}
+          </button>
         ))}
       </div>
 
       {tab === 'installed' && (
         <>
+          {updates.size > 0 && (
+            <div className="ext-banner">
+              <span>{updates.size} update{updates.size === 1 ? '' : 's'} available</span>
+              <button className="btn primary sm" onClick={updateAll}>Update all</button>
+            </div>
+          )}
           <div className="ext-actions"><button className="btn" disabled={checking} onClick={checkUpdates}>{checking ? 'Checking…' : 'Check for updates'}</button></div>
           {installed.map((e) => (
             <div className="ext-row" key={e.pkg}>
               <ExtIcon pkg={e.pkg} />
               <div className="ext-info">
-                <div className="ext-name">{cleanName(e.name)}{e.nsfw && <span className="src-18">18+</span>}</div>
-                <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}</div>
+                <div className="ext-name">{cleanName(e.name)}{e.nsfw && <span className="src-18">18+</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
+                <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
               </div>
               {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>}
               <button className="btn sm danger" disabled={!!busy[e.pkg]} onClick={() => uninstall(e.pkg)}>{busy[e.pkg] === 'Removing…' ? '…' : 'Remove'}</button>
@@ -96,7 +123,7 @@ export function Extensions() {
               <ExtIcon pkg={e.pkg} />
               <div className="ext-info">
                 <div className="ext-name">{cleanName(e.name)}{e.nsfw && <span className="src-18">18+</span>}</div>
-                <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()}</div>
+                <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()}{e.repo ? ` · ${e.repo}` : ''}</div>
               </div>
               {e.installed && !e.hasUpdate
                 ? <span className="ext-installed">Installed</span>
@@ -113,15 +140,24 @@ export function Extensions() {
             <button className="btn primary" onClick={addRepo}>Add</button>
           </div>
           {repoMsg && <div className="set-msg err" style={{ padding: '0 16px 8px' }}>{repoMsg}</div>}
-          {repos.map((url) => (
-            <div className="ext-row" key={url}>
-              <div className="ext-info"><div className="ext-sub repo-url">{url}</div></div>
-              <button className="btn sm danger" onClick={() => removeRepo(url)}>Remove</button>
-            </div>
-          ))}
+          {repos.map((url) => {
+            const count = installed.filter((e) => e.repo === repoLabel(url)).length
+            return (
+              <div className="ext-row" key={url}>
+                <div className="ext-info">
+                  <div className="ext-name">{repoLabel(url)}</div>
+                  <div className="ext-sub repo-url">{url}</div>
+                  {count > 0 && <div className="ext-sub">{count} installed extension{count === 1 ? '' : 's'}</div>}
+                </div>
+                <button className="btn sm danger" onClick={() => askRemoveRepo(url)}>Remove</button>
+              </div>
+            )
+          })}
           {repos.length === 0 && <div className="center-msg">No repositories. Add one to install extensions.</div>}
         </>
       )}
+
+      {confirm && <ConfirmDialog spec={confirm} />}
     </div>
   )
 }

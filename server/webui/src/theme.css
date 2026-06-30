@@ -410,6 +410,8 @@ img { display: block; }
 .ext-top { display: flex; align-items: center; gap: 8px; padding: 6px 12px 12px; }
 .ext-title { font-size: 19px; font-weight: 800; }
 .ext-actions { padding: 0 16px 10px; }
+.ext-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 16px 10px; padding: 10px 14px; border-radius: 12px; background: rgba(138,124,240,0.16); border: 1px solid var(--accent); font-size: 14px; font-weight: 700; color: var(--text); }
+.ext-badge { font-size: 9px; font-weight: 800; color: #fff; background: var(--accent); padding: 2px 6px; border-radius: 5px; letter-spacing: .04em; }
 .ext-search { display: flex; gap: 10px; padding: 0 16px 12px; }
 .ext-search input { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 15px; padding: 11px 12px; outline: none; }
 .ext-search input:focus { border-color: var(--accent); }

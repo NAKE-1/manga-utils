@@ -45,7 +45,7 @@ export function ListPage() {
     const r = await api.updateLibrary().catch(() => null)
     await api.library().then(setLibrary).catch(() => {})
     setUpdating(false)
-    setUpdateMsg(!r ? 'Update failed' : r.newChapters > 0 ? `${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'} across ${r.updatedManga} title${r.updatedManga === 1 ? '' : 's'}` : 'Everything is up to date')
+    setUpdateMsg(!r ? 'Update failed' : r.newChapters > 0 ? `${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'} across ${r.updatedManga} title${r.updatedManga === 1 ? '' : 's'}` : 'No new chapters found')
   }
 
   if (!ready) return <div className="spinner" />

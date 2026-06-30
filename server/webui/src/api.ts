@@ -146,8 +146,8 @@ export const api = {
   removeRepo: (url: string) => fetch(`/api/repos?url=${encodeURIComponent(url)}`, { method: 'DELETE' }).then((r) => r.json() as Promise<string[]>),
 }
 
-export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number }
-export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean }
+export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string }
+export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; visibleLanguages: string[]; cloudflareBypass: boolean }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }

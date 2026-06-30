@@ -115,11 +115,20 @@ export function Reader() {
     const p = max > 0 ? el.scrollTop / max : 0
     setProgress(p)
     setPage(Math.min(count, Math.max(1, Math.round(p * (count - 1)) + 1)))
+    // Once you start reading (scroll away from the top), hide the chrome.
+    if (chrome && el.scrollTop > 40) setChrome(false)
+  }
+
+  // Tap does nothing (so reading isn't interrupted); a double-tap toggles the chrome.
+  const lastTap = useRef(0)
+  function onTap() {
+    const now = Date.now()
+    if (now - lastTap.current < 300) { setChrome((v) => !v); lastTap.current = 0 } else lastTap.current = now
   }
 
   return (
     <div className="reader">
-      <div className="reader-scroll" ref={scrollRef} onScroll={onScroll} onClick={() => setChrome((v) => !v)}>
+      <div className="reader-scroll" ref={scrollRef} onScroll={onScroll} onClick={onTap}>
         {count === null && <div className="spinner" />}
         {count === 0 && <div className="center-msg" style={{ color: '#ccc' }}>Couldn't load this chapter's pages.</div>}
         {count !== null && count > 0 && (
@@ -144,7 +153,7 @@ export function Reader() {
             <button className="r-icon" onClick={() => nav('/')} aria-label="Home"><IconHome /></button>
           </div>
 
-          <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}{name ? ` · ${name}` : ''}</div>
+          <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}</div>
 
           <div className="reader-nav" onClick={(e) => e.stopPropagation()}>
             {count ? <div className="reader-progress">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div> : null}

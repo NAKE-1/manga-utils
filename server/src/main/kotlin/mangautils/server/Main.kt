@@ -115,8 +115,8 @@ private data class LibraryDto(
 
 @Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int)
 
-@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int)
-@Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean)
+@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "")
+@Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
 @Serializable private data class RepoReq(val url: String)
 @Serializable private data class InstallResultDto(val pkg: String, val name: String, val sources: Int)
@@ -209,16 +209,25 @@ private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
 private fun pagesFor(sourceId: Long, chapterUrl: String): List<Page> =
     pageCache.getOrPut("$sourceId|$chapterUrl") { SourceImage.pageList(sourceId, chapterUrl) }
 
-// Merged repo entries for the "available extensions" browse, cached 5 min (indexes are large).
+// Merged (entry, repoUrl) for the "available extensions" browse, cached 5 min (indexes are large).
 @Volatile
-private var availCache: Pair<Long, List<ExtensionRepoEntry>>? = null
-private fun availableEntries(): List<ExtensionRepoEntry> {
+private var availCache: Pair<Long, List<Pair<ExtensionRepoEntry, String>>>? = null
+private fun availableEntries(): List<Pair<ExtensionRepoEntry, String>> {
     availCache?.let { (t, v) -> if (System.currentTimeMillis() - t < 300_000) return v }
     val client = ExtensionRepoClient()
-    val entries = RepoStore.list().flatMap { runCatching { client.fetchIndex(it) }.getOrDefault(emptyList()) }.distinctBy { it.pkg }
+    val seen = HashSet<String>()
+    val entries = RepoStore.list().flatMap { repo ->
+        runCatching { client.fetchIndex(repo) }.getOrDefault(emptyList()).map { it to repo }
+    }.filter { seen.add(it.first.pkg) }
     availCache = System.currentTimeMillis() to entries
     return entries
 }
+
+/** Short readable name for a repo index URL (the GitHub org for raw URLs, else the host). */
+private fun repoLabel(url: String): String = runCatching {
+    val u = java.net.URI(url)
+    if (u.host == "raw.githubusercontent.com") u.path.split('/').firstOrNull { it.isNotBlank() } ?: u.host else u.host
+}.getOrDefault(url)
 
 /** Guess an image content-type from magic bytes (covers + pages are mixed jpg/png/webp/gif). */
 private fun sniffImageType(b: ByteArray): ContentType = when {
@@ -474,7 +483,8 @@ fun Application.module() {
         // ---- Extensions + repositories ----
         get("/api/extensions") {
             val list = withContext(Dispatchers.IO) {
-                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size) }
+                val repoOf = runCatching { availableEntries().associate { it.first.pkg to repoLabel(it.second) } }.getOrDefault(emptyMap())
+                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "") }
             }
             call.respond(list)
         }
@@ -508,13 +518,13 @@ fun Application.module() {
             val result = withContext(Dispatchers.IO) {
                 val installed = InstalledStore.list().associateBy { it.pkg }
                 availableEntries()
-                    .filter { langVisible(it.lang, visible) }
-                    .filter { q.isEmpty() || it.name.lowercase().contains(q) }
-                    .sortedBy { it.name.lowercase() }
+                    .filter { langVisible(it.first.lang, visible) }
+                    .filter { q.isEmpty() || it.first.name.lowercase().contains(q) }
+                    .sortedBy { it.first.name.lowercase() }
                     .take(300)
-                    .map { e ->
+                    .map { (e, repo) ->
                         val inst = installed[e.pkg]
-                        AvailDto(e.pkg, e.name, e.version, e.lang, e.isNsfw, inst != null, inst != null && e.code > inst.versionCode)
+                        AvailDto(e.pkg, e.name, e.version, e.lang, e.isNsfw, inst != null, inst != null && e.code > inst.versionCode, repoLabel(repo))
                     }
             }
             call.respond(result)
