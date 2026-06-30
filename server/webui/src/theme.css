@@ -340,11 +340,12 @@ img { display: block; }
 .src-caret { width: 18px; height: 18px; color: var(--muted); flex: 0 0 auto; }
 /* Source picker bottom sheet (portaled to body — viewport-fixed, mobile-safe). */
 .src-sheet-scrim { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; animation: fade-in .14s ease; }
-.src-sheet { width: 100%; max-height: 78vh; display: flex; flex-direction: column; background: var(--card);
+.src-sheet { width: 100%; max-height: 80vh; display: flex; flex-direction: column; background: var(--card);
   border: 1px solid var(--border); border-bottom: none; border-radius: 18px 18px 0 0;
-  padding: 8px 10px calc(12px + var(--safe-b)); animation: sheet-up .2s ease; }
+  padding: 0 10px calc(8px + var(--safe-b)); animation: sheet-up .2s ease; will-change: transform; }
+.src-sheet-grip { flex: 0 0 auto; padding-top: 8px; cursor: grab; touch-action: none; }
 .src-sheet-title { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px 8px; }
-.src-sheet-list { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.src-sheet-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .src-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-radius: 9px; padding: 11px 8px; cursor: pointer; }
 .src-item.on { background: var(--card-2); }
 @media (hover: hover) { .src-item:hover { background: var(--card-2); } }

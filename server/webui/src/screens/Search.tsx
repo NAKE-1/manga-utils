@@ -32,6 +32,13 @@ export function Search() {
   const [globalRows, setGlobalRows] = useState<GlobalRow[]>([])
   const sentinel = useRef<HTMLDivElement>(null)
   const busy = useRef(false)
+  const cfTimer = useRef<number | undefined>(undefined)
+
+  // A source that just revealed Cloudflare gets re-coloured in the picker (debounced refetch).
+  function refreshSourcesSoon() {
+    if (cfTimer.current) clearTimeout(cfTimer.current)
+    cfTimer.current = window.setTimeout(() => { api.sources().then(setSources).catch(() => {}) }, 1500)
+  }
 
   const isGlobal = sourceId === GLOBAL
   const pickerSources = useMemo(() => [{ id: GLOBAL, name: 'Global', lang: '', nsfw: false, cfState: 'green' } as Source, ...sources], [sources])
@@ -52,7 +59,11 @@ export function Search() {
     req.then((r) => {
       setItems((prev) => (p === 1 ? r.mangas : [...prev, ...r.mangas]))
       setHasNext(r.hasNextPage); setPage(p)
-    }).catch((e) => { if (p === 1) setErrorMsg(e instanceof Error ? e.message : "Couldn't load results.") }).finally(() => { busy.current = false; setLoading(false) })
+    }).catch((e) => {
+      const msg = e instanceof Error ? e.message : "Couldn't load results."
+      if (p === 1) setErrorMsg(msg)
+      if (/cloudflare/i.test(msg)) refreshSourcesSoon()
+    }).finally(() => { busy.current = false; setLoading(false) })
   }
 
   useEffect(() => { if (sourceId && !isGlobal) { setItems([]); setHasNext(false); setPage(1); fetchPage(1) } }, [sourceId, mode, query])
@@ -74,7 +85,11 @@ export function Search() {
     sources.forEach((s) => {
       api.search(s.id, q, 1)
         .then((r) => setGlobalRows((prev) => prev.map((g) => (g.src.id === s.id ? { ...g, items: r.mangas, loading: false } : g))))
-        .catch((e) => setGlobalRows((prev) => prev.map((g) => (g.src.id === s.id ? { ...g, error: e instanceof Error ? e.message : 'Unavailable', loading: false } : g))))
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : 'Unavailable'
+          setGlobalRows((prev) => prev.map((g) => (g.src.id === s.id ? { ...g, error: msg, loading: false } : g)))
+          if (/cloudflare/i.test(msg)) refreshSourcesSoon()
+        })
     })
   }, [isGlobal, query, sources])
 
