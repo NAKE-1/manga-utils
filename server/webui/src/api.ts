@@ -158,10 +158,11 @@ export const api = {
   manageChapters: (title: string) => getJson<ManagedChapter[]>(`/api/downloads/manage/chapters?title=${encodeURIComponent(title)}`),
   deleteDownloadChapter: (title: string, chapter: string) => fetch(`/api/downloads/chapter?title=${encodeURIComponent(title)}&chapter=${encodeURIComponent(chapter)}`, { method: 'DELETE' }),
   markSeriesUnread: (title: string) => fetch(`/api/downloads/manage/mark-unread?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
+  deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
 }
 
-export interface ManagedSeries { title: string; chapters: number; bytes: number; hasCover: boolean }
-export interface ManagedChapter { name: string; pages: number; bytes: number; cbz: boolean }
+export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean }
+export interface ManagedChapter { name: string; pages: number; bytes: number; cbz: boolean; complete: boolean }
 
 export interface DlChapterRef { url: string; name: string }
 export interface DlTask {

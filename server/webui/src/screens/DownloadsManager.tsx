@@ -48,6 +48,19 @@ export function DownloadsManager() {
     const r = await api.markSeriesUnread(s.title).catch(() => ({ count: 0 }))
     flash(r.count > 0 ? `Marked ${s.title} unread` : 'Not in your library — can’t mark unread')
   }
+  function delIncomplete(s: ManagedSeries) {
+    setConfirm({
+      title: 'Delete incomplete chapters?', message: `Delete ${s.incomplete} interrupted/partial chapter${s.incomplete === 1 ? '' : 's'} of ${s.title} so you can re-download them?`,
+      confirmLabel: 'Delete incomplete', danger: true, onCancel: () => setConfirm(null),
+      onConfirm: async () => {
+        setConfirm(null)
+        await api.deleteIncomplete(s.title).catch(() => {})
+        const c = await api.manageChapters(s.title).catch(() => [])
+        setChapters((m) => ({ ...m, [s.title]: c }))
+        load()
+      },
+    })
+  }
 
   return (
     <div className="ext-page">
@@ -66,7 +79,7 @@ export function DownloadsManager() {
               <button className="dm-row" onClick={() => toggle(s.title)}>
                 <IconChevronDown className={'dm-caret' + (open === s.title ? ' open' : '')} />
                 <div className="ext-info">
-                  <div className="ext-name">{s.title}</div>
+                  <div className="ext-name">{s.title}{s.incomplete > 0 && <span className="dm-badge">{s.incomplete} incomplete</span>}</div>
                   <div className="ext-sub">{s.chapters} chapter{s.chapters === 1 ? '' : 's'} · {fmtSize(s.bytes)}</div>
                 </div>
                 <IconDownload className="dm-dl" />
@@ -75,12 +88,13 @@ export function DownloadsManager() {
                 <div className="dm-body">
                   <div className="dm-actions">
                     <button className="btn sm" onClick={() => markUnread(s)}>Mark unread</button>
+                    {s.incomplete > 0 && <button className="btn sm danger" onClick={() => delIncomplete(s)}>Delete incomplete</button>}
                     <button className="btn sm danger" onClick={() => delSeries(s)}>Delete all</button>
                   </div>
-                  {(chapters[s.title] ?? []).map((ch) => (
-                    <div className="dm-chapter" key={ch.name}>
+                  {[...(chapters[s.title] ?? [])].sort((a, b) => Number(a.complete) - Number(b.complete)).map((ch) => (
+                    <div className={'dm-chapter' + (ch.complete ? '' : ' bad')} key={ch.name}>
                       <div className="ext-info">
-                        <div className="dm-ch-name">{ch.name}</div>
+                        <div className="dm-ch-name">{ch.name}{!ch.complete && <span className="dm-badge red">INCOMPLETE</span>}</div>
                         <div className="ext-sub">{ch.pages} page{ch.pages === 1 ? '' : 's'} · {fmtSize(ch.bytes)}{ch.cbz ? ' · CBZ' : ''}</div>
                       </div>
                       <button className="btn sm danger" onClick={() => delChapter(s.title, ch)}>Delete</button>

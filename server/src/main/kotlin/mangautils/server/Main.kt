@@ -131,8 +131,8 @@ private data class LibraryDto(
     val kbps: Double, val error: String, val failedChapters: List<DlChapterReq>,
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
-@Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val bytes: Long, val hasCover: Boolean)
-@Serializable private data class ManagedChapterDto(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean)
+@Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
+@Serializable private data class ManagedChapterDto(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean, val complete: Boolean)
 
 @Serializable
 private data class HistoryDto(
@@ -441,16 +441,24 @@ fun Application.module() {
         // ---- Download manager (browse / delete on-disk content) ----
         get("/api/downloads/manage") {
             val list = withContext(Dispatchers.IO) {
-                DownloadStore.listSeries().map { ManagedSeriesDto(it.title, it.chapters, it.bytes, it.hasCover) }
+                DownloadStore.listSeries().map { ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover) }
             }
             call.respond(list)
         }
         get("/api/downloads/manage/chapters") {
             val title = call.queryParam("title") ?: return@get call.respond(HttpStatusCode.BadRequest)
             val list = withContext(Dispatchers.IO) {
-                DownloadStore.listChapters(title).map { ManagedChapterDto(it.name, it.pages, it.bytes, it.cbz) }
+                DownloadStore.listChapters(title).map { ManagedChapterDto(it.name, it.pages, it.bytes, it.cbz, it.complete) }
             }
             call.respond(list)
+        }
+        // Delete every incomplete (interrupted) chapter of a series so they can be re-downloaded.
+        post("/api/downloads/manage/delete-incomplete") {
+            val title = call.queryParam("title") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val n = withContext(Dispatchers.IO) {
+                DownloadStore.listChapters(title).filterNot { it.complete }.onEach { DownloadStore.deleteChapter(title, it.name) }.size
+            }
+            call.respond(CountDto(n))
         }
         delete("/api/downloads/chapter") {
             val title = call.queryParam("title") ?: return@delete call.respond(HttpStatusCode.BadRequest)

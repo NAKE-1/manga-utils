@@ -17,8 +17,9 @@ import kotlin.io.path.name
  * Downloads live at `<downloadsDir>/<title>/<chapter>/…` (folder of pages) or `<chapter>.cbz`.
  */
 object DownloadStore {
-    data class Series(val title: String, val chapters: Int, val bytes: Long, val hasCover: Boolean)
-    data class Chapter(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean)
+    data class Series(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
+    /** [complete] = the chapter finished writing (has ComicInfo.xml). Missing it ⇒ interrupted/partial. */
+    data class Chapter(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean, val complete: Boolean)
 
     private val root: Path get() = AppConfig.downloadsDir
 
@@ -29,7 +30,8 @@ object DownloadStore {
             st.filter { it.isDirectory() }.map { dir ->
                 val chs = chapterEntries(dir)
                 val hasCover = runCatching { Files.list(dir).use { s -> s.anyMatch { it.name.startsWith("cover.") } } }.getOrDefault(false)
-                Series(dir.name, chs.size, chs.sumOf { sizeOf(it) }, hasCover)
+                val incomplete = chs.count { !hasComicInfo(it, it.name.endsWith(".cbz")) }
+                Series(dir.name, chs.size, incomplete, chs.sumOf { sizeOf(it) }, hasCover)
             }.toList()
         }.sortedBy { it.title.lowercase() }
     }
@@ -45,6 +47,7 @@ object DownloadStore {
                 pages = pageCount(p, cbz),
                 bytes = sizeOf(p),
                 cbz = cbz,
+                complete = hasComicInfo(p, cbz),
             )
         }.sortedBy { it.name.lowercase() }
     }
@@ -67,6 +70,15 @@ object DownloadStore {
         runCatching {
             Files.list(dir).use { st -> st.filter { it.isDirectory() || it.name.endsWith(".cbz") }.toList() }
         }.getOrDefault(emptyList())
+
+    /** A finished chapter has ComicInfo.xml (written last). Absent ⇒ the download was interrupted. */
+    private fun hasComicInfo(p: Path, cbz: Boolean): Boolean = runCatching {
+        if (cbz) {
+            java.util.zip.ZipFile(p.toFile()).use { z -> z.getEntry("ComicInfo.xml") != null } && pageCount(p, true) > 0
+        } else {
+            Files.exists(p.resolve("ComicInfo.xml")) && pageCount(p, false) > 0
+        }
+    }.getOrDefault(false)
 
     private fun pageCount(p: Path, cbz: Boolean): Int = runCatching {
         if (cbz) {
