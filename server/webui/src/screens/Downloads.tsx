@@ -100,13 +100,13 @@ function TaskCard({ t, onStop, onRetry }: { t: DlTask; onStop: () => void; onRet
           ? <button className="dl-link" onClick={onStop}>Stop</button>
           : failed && t.failedChapters.length
             ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
-            : <span className={'dl-state ' + (failed ? 'failed' : t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : 'Done'}</span>}
+            : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
       </div>
       <div className="dlc-sub">
         <span>
           {queued ? 'Queued' : running
             ? `Chapter ${chapterNo} of ${t.total}${t.currentChapter ? ` · ${t.currentChapter}` : ''}`
-            : `${t.done}/${t.total} chapter${t.total === 1 ? '' : 's'}${failed ? ` · ${t.failed} failed` : ' done'}`}
+            : `${t.done}/${t.total} chapter${t.total === 1 ? '' : 's'}${failed ? (t.failed > 0 ? ` · ${t.failed} failed` : ' · failed') : ' done'}`}
         </span>
         {running && t.pagesTotal > 0 && <span className="dlc-count">{t.pagesDone}/{t.pagesTotal}{t.kbps > 0 ? ` · ${fmtSpeed(t.kbps)}` : ''}</span>}
       </div>

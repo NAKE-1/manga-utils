@@ -8,6 +8,7 @@ package mangautils.server
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
+import mangautils.core.download.ExistingPolicy
 import mangautils.core.download.SourceRef
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
@@ -106,10 +107,13 @@ object DownloadQueue {
         task.state = "running"
         runCatching {
             val s = SettingsStore.get()
+            // The web queue is headless — there's no prompt, so ASK must fall back to SKIP
+            // (the ASK path needs an interactive ExistingPrompt and otherwise errors).
+            val policy = if (s.existingBehavior == ExistingPolicy.ASK) ExistingPolicy.SKIP else s.existingBehavior
             val dm = DownloadManager(
                 concurrency = s.downloadConcurrency,
                 retries = s.downloadRetries,
-                existingPolicy = s.existingBehavior,
+                existingPolicy = policy,
                 listener = { p ->
                     task.currentChapter = p.chapter
                     task.currentChapterUrl = task.nameToUrl(p.chapter)
