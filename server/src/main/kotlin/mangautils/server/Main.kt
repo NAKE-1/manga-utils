@@ -20,6 +20,7 @@ import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -282,7 +283,14 @@ fun main() {
 
 fun Application.module() {
     install(DefaultHeaders)
-    install(CallLogging)
+    install(CallLogging) {
+        // Don't log the high-frequency poll + static-asset traffic (the Downloads screen hits
+        // /api/downloads every second, images stream constantly) — it floods the console.
+        filter { call ->
+            val p = call.request.path()
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history")
+        }
+    }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
     install(CORS) {
         anyHost() // Tailscale-only deployment; no auth.
