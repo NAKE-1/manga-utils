@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { api, coverUrl, LibraryEntry, HistoryItem } from '../api'
+import { api, coverUrl, dlState, LibraryEntry, HistoryItem } from '../api'
 import { CoverCard } from '../components/CoverCard'
 
 const TITLES: Record<string, string> = {
@@ -68,7 +68,7 @@ export function ListPage() {
   } else {
     const entries = (kind === 'updates' ? library.filter((e) => e.newChapters > 0) : [...library]).sort((a, b) => a.title.localeCompare(b.title))
     cards = entries.map((e) => (
-      <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} subtitle={lastLine(e)} badge={e.newChapters} />
+      <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} subtitle={lastLine(e)} badge={e.newChapters} dl={dlState(e)} />
     ))
   }
 

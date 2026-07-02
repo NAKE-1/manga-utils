@@ -123,6 +123,15 @@ img { display: block; }
   border-radius: 50%; background: var(--accent); color: #fff;
   font-size: 12px; font-weight: 800; display: grid; place-items: center; padding: 0 5px;
 }
+/* Download-status dot: green = all chapters downloaded, yellow = some. */
+.dl-badge {
+  position: absolute; bottom: 6px; right: 6px; z-index: 3;
+  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.45);
+}
+.dl-badge svg { width: 13px; height: 13px; }
+.dl-badge.all { background: #22c55e; }
+.dl-badge.some { background: #eab308; }
 .cover-remove {
   position: absolute; top: 6px; right: 6px; z-index: 3; width: 26px; height: 26px;
   border-radius: 50%; background: rgba(0,0,0,0.62); color: #fff; font-size: 12px; line-height: 1;

@@ -113,6 +113,9 @@ private data class LibraryDto(
     val lastNumber: Float = -1f,
     val lastName: String = "",
     val lastDate: Long = 0,
+    /** Download-status badge on the cover: downloaded vs total known chapters. */
+    val downloadedChapters: Int = 0,
+    val totalChapters: Int = 0,
 )
 
 @Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int)
@@ -460,8 +463,9 @@ fun Application.module() {
             val entries = withContext(Dispatchers.IO) {
                 LibraryService.list().map {
                     val last = it.knownChapters.maxByOrNull { c -> c.number }
+                    val downloaded = runCatching { DownloadManager.downloadCount(it.title) }.getOrDefault(0)
                     LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size,
-                        last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0)
+                        last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0, downloaded, it.knownChapters.size)
                 }
             }
             call.respond(entries)

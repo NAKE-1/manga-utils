@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { IconDownload } from './icons'
 
 // Warm the detail (server + browser cache) on hover/press so the tap opens instantly.
 const prefetched = new Set<string>()
@@ -21,9 +22,10 @@ type Props = {
   badge?: number
   grid?: boolean
   onRemove?: () => void
+  dl?: 'all' | 'some'
 }
 
-export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid, onRemove }: Props) {
+export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid, onRemove, dl }: Props) {
   const nav = useNavigate()
   const [loaded, setLoaded] = useState(false)
   const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
@@ -51,6 +53,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
         )}
         {type && <span className={'type-badge ' + type}>{type}</span>}
         {!!badge && badge > 0 && <span className="badge-tl">{badge}</span>}
+        {dl && <span className={'dl-badge ' + dl} title={dl === 'all' ? 'All chapters downloaded' : 'Some chapters downloaded'}><IconDownload /></span>}
       </div>
       <div className="cover-title">{title}</div>
       {subtitle && <div className="cover-sub">{subtitle}</div>}

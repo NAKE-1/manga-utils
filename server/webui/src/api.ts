@@ -40,6 +40,15 @@ export interface LibraryEntry {
   lastNumber: number
   lastName: string
   lastDate: number
+  downloadedChapters: number
+  totalChapters: number
+}
+
+/** Cover download-status badge: green when all chapters are downloaded, yellow for some, none otherwise. */
+export function dlState(e: { downloadedChapters?: number; totalChapters?: number }): 'all' | 'some' | undefined {
+  const dl = e.downloadedChapters ?? 0, total = e.totalChapters ?? 0
+  if (dl <= 0) return undefined
+  return total > 0 && dl >= total ? 'all' : 'some'
 }
 
 export interface HistoryItem {

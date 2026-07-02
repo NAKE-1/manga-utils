@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, coverUrl, LibraryEntry, HistoryItem } from '../api'
+import { api, coverUrl, dlState, LibraryEntry, HistoryItem } from '../api'
 import { Carousel, GridSection } from '../components/Section'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
@@ -75,6 +75,7 @@ export function Home() {
               cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)}
               badge={e.newChapters}
               subtitle={`${e.newChapters} new`}
+              dl={dlState(e)}
             />
           ))}
         </Carousel>
@@ -82,7 +83,7 @@ export function Home() {
 
       <GridSection title="Library" to="/list/library">
         {libraryAZ.map((e) => (
-          <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} badge={e.newChapters} />
+          <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} badge={e.newChapters} dl={dlState(e)} />
         ))}
       </GridSection>
     </>
