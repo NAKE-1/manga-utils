@@ -17,7 +17,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.Cache
-import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.brotli.BrotliInterceptor
 import okhttp3.logging.HttpLoggingInterceptor
@@ -60,16 +59,7 @@ class NetworkHelper(
             val builder =
                 OkHttpClient
                     .Builder()
-                    // The client is now shared per source (SourceManager caches instances), so all of a
-                    // source's traffic funnels through ONE dispatcher. OkHttp's default of 5 requests per
-                    // host would serialize cover grids/search behind each other; raise it so image-heavy
-                    // screens stay parallel. (Downloads still cap page concurrency via downloadConcurrency.)
-                    .dispatcher(
-                        Dispatcher().apply {
-                            maxRequests = 64
-                            maxRequestsPerHost = 24
-                        },
-                    ).cookieJar(PersistentCookieJar(cookieStore))
+                    .cookieJar(PersistentCookieJar(cookieStore))
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
                     .callTimeout(2, TimeUnit.MINUTES)
