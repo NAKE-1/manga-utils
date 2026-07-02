@@ -284,7 +284,12 @@ img { display: block; }
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + var(--safe-b));
   background: rgba(0,0,0,0.6); color: #eaeaef; font-size: 12px; font-weight: 700;
   padding: 6px 12px; border-radius: 999px; pointer-events: none; backdrop-filter: blur(4px);
+  transition: opacity .22s ease;
 }
+
+/* Chrome group fades in/out together instead of popping. */
+.reader-chrome { transition: opacity .22s ease; }
+.r-fade-out { opacity: 0; pointer-events: none; }
 
 /* Free-floating chrome — no full-width bars, each control sits on its own dark chip. */
 .reader-left { position: fixed; left: 10px; top: calc(10px + var(--safe-t)); z-index: 10;

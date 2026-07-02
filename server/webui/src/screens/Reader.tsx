@@ -142,36 +142,34 @@ export function Reader() {
         )}
       </div>
 
-      {/* Minimal progress pill when chrome hidden */}
-      {!chrome && count ? (
-        <div className="reader-pill">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div>
+      {/* Minimal progress pill when chrome hidden — fades opposite the chrome. */}
+      {count ? (
+        <div className={'reader-pill' + (chrome ? ' r-fade-out' : '')}>{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div>
       ) : null}
 
-      {/* Chrome — free-floating, no full-width bars */}
-      {chrome && (
-        <>
-          <div className="reader-left" onClick={(e) => e.stopPropagation()}>
-            <button className="r-icon" onClick={() => nav(-1)} aria-label="Back"><IconArrowLeft /></button>
-            <button className="r-icon" onClick={() => nav('/')} aria-label="Home"><IconHome /></button>
-          </div>
+      {/* Chrome — free-floating, no full-width bars. Kept mounted so it can fade in/out. */}
+      <div className={'reader-chrome' + (chrome ? '' : ' r-fade-out')}>
+        <div className="reader-left" onClick={(e) => e.stopPropagation()}>
+          <button className="r-icon" onClick={() => nav(-1)} aria-label="Back"><IconArrowLeft /></button>
+          <button className="r-icon" onClick={() => nav('/')} aria-label="Home"><IconHome /></button>
+        </div>
 
-          <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}</div>
+        <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}</div>
 
-          <div className="reader-nav" onClick={(e) => e.stopPropagation()}>
-            {count ? <div className="reader-progress">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div> : null}
-            <div className="reader-navrow">
-              <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
-              <div className="reader-chip">{name || `Chapter ${curNum}`}</div>
-              <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
-            </div>
+        <div className="reader-nav" onClick={(e) => e.stopPropagation()}>
+          {count ? <div className="reader-progress">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div> : null}
+          <div className="reader-navrow">
+            <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
+            <div className="reader-chip">{name || `Chapter ${curNum}`}</div>
+            <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
           </div>
+        </div>
 
-          <div className="reader-tools" onClick={(e) => e.stopPropagation()}>
-            <button className="r-icon" onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
-            <button className="r-icon" onClick={() => setShowSettings(true)} aria-label="Settings"><IconSettings /></button>
-          </div>
-        </>
-      )}
+        <div className="reader-tools" onClick={(e) => e.stopPropagation()}>
+          <button className="r-icon" onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
+          <button className="r-icon" onClick={() => setShowSettings(true)} aria-label="Settings"><IconSettings /></button>
+        </div>
+      </div>
 
       {/* Settings bottom-sheet */}
       {showSettings && (
