@@ -203,7 +203,6 @@ private data class DevStatsDto(
     val systemRamUsedMb: Long,
     val systemRamTotalMb: Long,
     val processCpuPct: Double,
-    val systemCpuPct: Double,
     val threads: Int,
     val activeDownloads: Int,
     val queuedDownloads: Int,
@@ -271,7 +270,6 @@ private fun devStats(): DevStatsDto {
         systemRamUsedMb = (sysTotal - sysFree) / mb,
         systemRamTotalMb = sysTotal / mb,
         processCpuPct = pct(sunOs?.processCpuLoad),
-        systemCpuPct = pct(sunOs?.cpuLoad),
         threads = threads,
         activeDownloads = DownloadQueue.activeCount(),
         queuedDownloads = DownloadQueue.queuedCount(),
@@ -607,8 +605,13 @@ fun Application.module() {
 
         get("/api/history") {
             val items = withContext(Dispatchers.IO) {
+                // Backfill a missing cover from the library so Continue-reading cards keep their art
+                // even for older entries (recorded before covers were stored / from sources that
+                // omit the cover in details).
+                val lib = LibraryStore.list().associateBy { it.sourceId to it.mangaUrl }
                 HistoryStore.list().map {
-                    HistoryDto(it.sourceId.toString(), it.mangaUrl, it.mangaTitle, it.thumbnailUrl, it.chapterUrl, it.chapterName, it.readAt)
+                    val thumb = it.thumbnailUrl?.takeIf { t -> t.isNotBlank() } ?: lib[it.sourceId to it.mangaUrl]?.thumbnailUrl
+                    HistoryDto(it.sourceId.toString(), it.mangaUrl, it.mangaTitle, thumb, it.chapterUrl, it.chapterName, it.readAt)
                 }
             }
             call.respond(items)
@@ -620,7 +623,12 @@ fun Application.module() {
             val chapter = call.queryParam("chapter") ?: return@post call.respond(HttpStatusCode.BadRequest)
             val mangaTitle = call.queryParam("title") ?: manga
             val name = call.queryParam("name") ?: ""
-            val thumb = call.queryParam("thumb")
+            // Bake the cover into the history entry so it survives later library removal — prefer the
+            // client-supplied thumb, else fall back to the library entry's cover (recorded while it's
+            // still in the library).
+            val thumb = withContext(Dispatchers.IO) {
+                call.queryParam("thumb")?.takeIf { it.isNotBlank() } ?: LibraryStore.find(id, manga)?.thumbnailUrl
+            }
             withContext(Dispatchers.IO) { HistoryStore.record(id, manga, mangaTitle, chapter, name, thumb) }
             call.respond(HttpStatusCode.OK)
         }

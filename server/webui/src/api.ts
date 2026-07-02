@@ -183,7 +183,7 @@ export interface DevStats {
   pid: number; uptimeMs: number; processRssMb: number
   heapUsedMb: number; heapCommittedMb: number; heapMaxMb: number; nonHeapUsedMb: number
   systemRamUsedMb: number; systemRamTotalMb: number
-  processCpuPct: number; systemCpuPct: number
+  processCpuPct: number
   threads: number; activeDownloads: number; queuedDownloads: number; installedSources: number
   jvm: string; os: string
 }

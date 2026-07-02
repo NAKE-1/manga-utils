@@ -115,8 +115,10 @@ export function Reader() {
     const p = max > 0 ? el.scrollTop / max : 0
     setProgress(p)
     setPage(Math.min(count, Math.max(1, Math.round(p * (count - 1)) + 1)))
-    // Once you start reading (scroll away from the top), hide the chrome.
-    if (chrome && el.scrollTop > 40) setChrome(false)
+    // Chrome shows at the start and again at the END of the chapter (so prev/next are there when you
+    // finish); in between, scrolling away from the top hides it.
+    const nearBottom = max > 0 && max - el.scrollTop < 120
+    if (nearBottom) { if (!chrome) setChrome(true) } else if (chrome && el.scrollTop > 40) setChrome(false)
   }
 
   // Tap does nothing (so reading isn't interrupted); a double-tap toggles the chrome.

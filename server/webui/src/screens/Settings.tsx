@@ -22,6 +22,13 @@ export function Settings() {
   const [clearing, setClearing] = useState(false)
   const [clearMsg, setClearMsg] = useState('')
   const [stats, setStats] = useState<DevStats | null>(null)
+  const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
+
+  function toggleDevContinueRemove() {
+    const v = !devContinueRemove
+    setDevContinueRemove(v)
+    localStorage.setItem('dev.continueRemove', v ? '1' : '0')
+  }
 
   useEffect(() => {
     api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
@@ -168,7 +175,6 @@ export function Settings() {
             <>
               <div className="diag-result">
                 <div className="diag-stat"><span className="diag-num">{stats.processCpuPct.toFixed(0)}<small>%</small></span><span className="diag-lbl">Process CPU</span></div>
-                <div className="diag-stat"><span className="diag-num">{stats.systemCpuPct.toFixed(0)}<small>%</small></span><span className="diag-lbl">System CPU</span></div>
                 <div className="diag-stat"><span className="diag-num">{stats.threads}</span><span className="diag-lbl">Threads</span></div>
                 <div className="diag-stat"><span className="diag-num">{fmtUptime(stats.uptimeMs)}</span><span className="diag-lbl">Uptime</span></div>
               </div>
@@ -207,6 +213,16 @@ export function Settings() {
               <div className="diag-stat"><span className="diag-num">{Math.round(diag.sampleBytes / 1024)}<small>KB</small></span><span className="diag-lbl">Sample</span></div>
             </div>
           ) : <div className="set-msg err">{diag.error || 'Test failed'}</div>)}
+        </div>
+
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleDevContinueRemove}>
+            <div>
+              <div className="set-row-label">Continue-reading remove buttons</div>
+              <div className="set-hint">Show a ✕ on each Continue-reading card to remove it individually.</div>
+            </div>
+            <span className={'switch' + (devContinueRemove ? ' on' : '')}><span className="knob" /></span>
+          </button>
         </div>
 
         <div className="set-card">

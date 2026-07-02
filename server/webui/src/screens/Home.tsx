@@ -9,6 +9,7 @@ export function Home() {
   const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [failed, setFailed] = useState(false)
+  const [devRemove] = useState(() => localStorage.getItem('dev.continueRemove') === '1')
 
   function load() {
     setFailed(false); setLibrary(null)
@@ -16,6 +17,12 @@ export function Home() {
     api.history().then(setHistory).catch(() => {})
   }
   useEffect(load, [])
+
+  async function removeContinue(h: HistoryItem) {
+    setHistory((hs) => hs.filter((x) => !(x.sourceId === h.sourceId && x.mangaUrl === h.mangaUrl)))
+    await api.deleteHistory(h.sourceId, h.mangaUrl).catch(() => {})
+    api.history().then(setHistory).catch(() => {})
+  }
 
   if (failed) return <ErrorPanel onRetry={load} message="Couldn't load your library." />
   if (library === null) return <SkeletonGrid />
@@ -51,6 +58,7 @@ export function Home() {
               title={h.mangaTitle}
               cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)}
               subtitle={h.chapterName}
+              onRemove={devRemove ? () => removeContinue(h) : undefined}
             />
           ))}
         </Carousel>
