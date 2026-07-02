@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
+
+const fmtUptime = (ms: number) => {
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60)
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`
+}
 
 export function Settings() {
   const nav = useNavigate()
@@ -16,11 +21,21 @@ export function Settings() {
   const [languages, setLanguages] = useState<string[]>([])
   const [clearing, setClearing] = useState(false)
   const [clearMsg, setClearMsg] = useState('')
+  const [stats, setStats] = useState<DevStats | null>(null)
 
   useEffect(() => {
     api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
+  }, [])
+
+  // Live server stats — poll while the Settings page is open.
+  useEffect(() => {
+    let alive = true
+    const tick = () => api.devStats().then((s) => { if (alive) setStats(s) }).catch(() => {})
+    tick()
+    const t = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(t) }
   }, [])
 
   async function toggleLang(code: string) {
@@ -146,6 +161,30 @@ export function Settings() {
 
       <section className="set-section">
         <div className="set-section-h">Developer</div>
+
+        <div className="set-card">
+          <div className="set-row-label">Server status</div>
+          {!stats ? <div className="set-hint">Loading…</div> : (
+            <>
+              <div className="diag-result">
+                <div className="diag-stat"><span className="diag-num">{stats.processCpuPct.toFixed(0)}<small>%</small></span><span className="diag-lbl">Process CPU</span></div>
+                <div className="diag-stat"><span className="diag-num">{stats.systemCpuPct.toFixed(0)}<small>%</small></span><span className="diag-lbl">System CPU</span></div>
+                <div className="diag-stat"><span className="diag-num">{stats.threads}</span><span className="diag-lbl">Threads</span></div>
+                <div className="diag-stat"><span className="diag-num">{fmtUptime(stats.uptimeMs)}</span><span className="diag-lbl">Uptime</span></div>
+              </div>
+              <div className="set-kv"><span>Heap (used / max)</span><code>{stats.heapUsedMb} / {stats.heapMaxMb} MB</code></div>
+              <div className="dlc-bar"><div className="dlc-fill" style={{ width: Math.min(100, Math.round((stats.heapUsedMb / Math.max(1, stats.heapMaxMb)) * 100)) + '%' }} /></div>
+              <div className="set-kv"><span>Heap committed</span><code>{stats.heapCommittedMb} MB</code></div>
+              <div className="set-kv"><span>Off-heap</span><code>{stats.nonHeapUsedMb} MB</code></div>
+              <div className="set-kv"><span>System RAM</span><code>{(stats.systemRamUsedMb / 1024).toFixed(1)} / {(stats.systemRamTotalMb / 1024).toFixed(1)} GB</code></div>
+              <div className="set-kv"><span>Downloads</span><code>{stats.activeDownloads} active · {stats.queuedDownloads} queued</code></div>
+              <div className="set-kv"><span>Installed sources</span><code>{stats.installedSources}</code></div>
+              <div className="set-kv"><span>PID</span><code>{stats.pid}</code></div>
+              <div className="set-kv"><span>Runtime</span><code>{stats.jvm}</code></div>
+              <div className="set-kv"><span>Host</span><code>{stats.os}</code></div>
+            </>
+          )}
+        </div>
 
         <div className="set-card">
           <div className="set-row-label">Extensions &amp; repositories</div>

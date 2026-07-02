@@ -28,7 +28,14 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
   const [loaded, setLoaded] = useState(false)
   const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
   return (
-    <div className={'cover-card' + (grid ? ' full' : '')} onClick={go} onPointerEnter={() => prefetchDetail(sourceId, url)} onPointerDown={() => prefetchDetail(sourceId, url)}>
+    <div
+      className={'cover-card' + (grid ? ' full' : '')}
+      onClick={go}
+      // Prefetch only on hover-capable (mouse) devices: on touch, pointerenter fires at tap time so
+      // it gives no head start — it just double-fetches the detail and slows the info page. Phone-first.
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') prefetchDetail(sourceId, url) }}
+      onPointerDown={(e) => { if (e.pointerType === 'mouse') prefetchDetail(sourceId, url) }}
+    >
       <div className="cover-frame">
         {!loaded && <div className="cover-skel skeleton" />}
         {onRemove && <button className="cover-remove" aria-label="Remove" onClick={(e) => { e.stopPropagation(); onRemove() }}>✕</button>}

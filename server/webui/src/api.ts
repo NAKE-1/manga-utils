@@ -124,6 +124,7 @@ export const api = {
     return r.json()
   },
   diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
+  devStats: () => getJson<DevStats>('/api/dev/stats'),
   deleteHistory: (id: string, manga: string) =>
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
   clearHistory: () => fetch('/api/history/clear', { method: 'POST' }),
@@ -178,6 +179,14 @@ export interface ExtAvailable { pkg: string; name: string; version: string; lang
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
+export interface DevStats {
+  pid: number; uptimeMs: number
+  heapUsedMb: number; heapCommittedMb: number; heapMaxMb: number; nonHeapUsedMb: number
+  systemRamUsedMb: number; systemRamTotalMb: number
+  processCpuPct: number; systemCpuPct: number
+  threads: number; activeDownloads: number; queuedDownloads: number; installedSources: number
+  jvm: string; os: string
+}
 
 export const STATUS_LABELS: Record<number, string> = {
   0: '', 1: 'Ongoing', 2: 'Completed', 3: 'Licensed', 4: 'Publishing finished', 5: 'Cancelled', 6: 'Hiatus',

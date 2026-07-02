@@ -191,6 +191,58 @@ private data class CountDto(val count: Int)
 @Serializable
 private data class PagesDto(val count: Int)
 
+@Serializable
+private data class DevStatsDto(
+    val pid: Long,
+    val uptimeMs: Long,
+    val heapUsedMb: Long,
+    val heapCommittedMb: Long,
+    val heapMaxMb: Long,
+    val nonHeapUsedMb: Long,
+    val systemRamUsedMb: Long,
+    val systemRamTotalMb: Long,
+    val processCpuPct: Double,
+    val systemCpuPct: Double,
+    val threads: Int,
+    val activeDownloads: Int,
+    val queuedDownloads: Int,
+    val installedSources: Int,
+    val jvm: String,
+    val os: String,
+)
+
+/** Live JVM/host stats for the Developer panel. */
+private fun devStats(): DevStatsDto {
+    val mb = 1024L * 1024L
+    val rt = java.lang.management.ManagementFactory.getRuntimeMXBean()
+    val mem = java.lang.management.ManagementFactory.getMemoryMXBean()
+    val heap = mem.heapMemoryUsage
+    val nonHeap = mem.nonHeapMemoryUsage
+    val threads = java.lang.management.ManagementFactory.getThreadMXBean().threadCount
+    val sunOs = java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
+    val sysTotal = sunOs?.totalMemorySize ?: 0L
+    val sysFree = sunOs?.freeMemorySize ?: 0L
+    fun pct(d: Double?): Double = if (d == null || d < 0) 0.0 else Math.round(d * 1000) / 10.0
+    return DevStatsDto(
+        pid = ProcessHandle.current().pid(),
+        uptimeMs = rt.uptime,
+        heapUsedMb = heap.used / mb,
+        heapCommittedMb = heap.committed / mb,
+        heapMaxMb = (if (heap.max > 0) heap.max else heap.committed) / mb,
+        nonHeapUsedMb = nonHeap.used / mb,
+        systemRamUsedMb = (sysTotal - sysFree) / mb,
+        systemRamTotalMb = sysTotal / mb,
+        processCpuPct = pct(sunOs?.processCpuLoad),
+        systemCpuPct = pct(sunOs?.cpuLoad),
+        threads = threads,
+        activeDownloads = DownloadQueue.activeCount(),
+        queuedDownloads = DownloadQueue.queuedCount(),
+        installedSources = runCatching { SourceManager.listInstalledSources().size }.getOrDefault(0),
+        jvm = "${System.getProperty("java.vm.name")} ${System.getProperty("java.version")}",
+        os = "${System.getProperty("os.name")} ${System.getProperty("os.arch")}",
+    )
+}
+
 // ---- mappers --------------------------------------------------------------------------------
 
 private fun SManga.toDto(sourceId: Long) = MangaDto(
@@ -288,7 +340,7 @@ fun Application.module() {
         // /api/downloads every second, images stream constantly) — it floods the console.
         filter { call ->
             val p = call.request.path()
-            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history")
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -579,6 +631,7 @@ fun Application.module() {
             val r = withContext(Dispatchers.IO) { Diagnostics.run(id) }
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
+        get("/api/dev/stats") { call.respond(devStats()) }
 
         // ---- Extensions + repositories ----
         get("/api/extensions") {
