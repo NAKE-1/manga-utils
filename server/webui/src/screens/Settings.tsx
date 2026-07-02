@@ -172,6 +172,7 @@ export function Settings() {
                 <div className="diag-stat"><span className="diag-num">{stats.threads}</span><span className="diag-lbl">Threads</span></div>
                 <div className="diag-stat"><span className="diag-num">{fmtUptime(stats.uptimeMs)}</span><span className="diag-lbl">Uptime</span></div>
               </div>
+              <div className="set-kv"><span>Process RAM (RSS)</span><code>{stats.processRssMb >= 0 ? `${stats.processRssMb} MB` : 'n/a'}</code></div>
               <div className="set-kv"><span>Heap (used / max)</span><code>{stats.heapUsedMb} / {stats.heapMaxMb} MB</code></div>
               <div className="dlc-bar"><div className="dlc-fill" style={{ width: Math.min(100, Math.round((stats.heapUsedMb / Math.max(1, stats.heapMaxMb)) * 100)) + '%' }} /></div>
               <div className="set-kv"><span>Heap committed</span><code>{stats.heapCommittedMb} MB</code></div>

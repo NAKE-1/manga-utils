@@ -180,7 +180,7 @@ export interface ExtAvailable { pkg: string; name: string; version: string; lang
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
 export interface DevStats {
-  pid: number; uptimeMs: number
+  pid: number; uptimeMs: number; processRssMb: number
   heapUsedMb: number; heapCommittedMb: number; heapMaxMb: number; nonHeapUsedMb: number
   systemRamUsedMb: number; systemRamTotalMb: number
   processCpuPct: number; systemCpuPct: number

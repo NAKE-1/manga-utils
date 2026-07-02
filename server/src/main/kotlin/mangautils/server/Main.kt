@@ -195,6 +195,7 @@ private data class PagesDto(val count: Int)
 private data class DevStatsDto(
     val pid: Long,
     val uptimeMs: Long,
+    val processRssMb: Long, // real resident memory (Task-Manager working set); -1 if unknown
     val heapUsedMb: Long,
     val heapCommittedMb: Long,
     val heapMaxMb: Long,
@@ -211,6 +212,42 @@ private data class DevStatsDto(
     val os: String,
 )
 
+// Resident set size (real process RAM). Cached briefly so 2s polling doesn't spawn tasklist each time.
+@Volatile private var rssCacheVal = -1L
+@Volatile private var rssCacheAt = 0L
+
+@Synchronized
+private fun processRssBytes(): Long {
+    val now = System.currentTimeMillis()
+    if (rssCacheVal > 0 && now - rssCacheAt < 3000) return rssCacheVal
+    val v = readRssBytes()
+    if (v > 0) { rssCacheVal = v; rssCacheAt = now }
+    return v
+}
+
+private fun readRssBytes(): Long {
+    // Linux (the deploy target): /proc/self/statm — fields are pages; [1] = resident.
+    runCatching {
+        val statm = java.nio.file.Path.of("/proc/self/statm")
+        if (java.nio.file.Files.exists(statm)) {
+            val resident = java.nio.file.Files.readString(statm).trim().split(" ")[1].toLong()
+            return resident * 4096L
+        }
+    }
+    // Windows (dev): tasklist working set, e.g. "277,000 K".
+    runCatching {
+        val pid = ProcessHandle.current().pid()
+        val proc = ProcessBuilder("tasklist", "/FI", "PID eq $pid", "/FO", "CSV", "/NH")
+            .redirectErrorStream(true).start()
+        val out = proc.inputStream.bufferedReader().readText()
+        proc.waitFor()
+        val kb = Regex("\"([\\d.,]+) K\"").findAll(out).lastOrNull()?.groupValues?.get(1)
+            ?.replace(",", "")?.replace(".", "")?.toLongOrNull()
+        if (kb != null) return kb * 1024L
+    }
+    return -1L
+}
+
 /** Live JVM/host stats for the Developer panel. */
 private fun devStats(): DevStatsDto {
     val mb = 1024L * 1024L
@@ -226,6 +263,7 @@ private fun devStats(): DevStatsDto {
     return DevStatsDto(
         pid = ProcessHandle.current().pid(),
         uptimeMs = rt.uptime,
+        processRssMb = processRssBytes().let { if (it > 0) it / mb else -1L },
         heapUsedMb = heap.used / mb,
         heapCommittedMb = heap.committed / mb,
         heapMaxMb = (if (heap.max > 0) heap.max else heap.committed) / mb,
