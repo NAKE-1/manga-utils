@@ -16,22 +16,10 @@ import mangautils.core.extension.InstalledStore
 import mangautils.core.extension.internal.ExtensionLoader
 import mangautils.core.runtime.ExtensionRuntime
 import org.slf4j.LoggerFactory
-import java.util.concurrent.ConcurrentHashMap
 
 /** Registry/loader for the sources provided by installed extensions. */
 object SourceManager {
     private val log = LoggerFactory.getLogger(javaClass)
-
-    /**
-     * Loaded source instances, kept alive so we don't re-instantiate the extension (reload its class
-     * from the jar) on every browse/detail/image/download — sources are effectively singletons, like
-     * Mihon/Suwayomi. Reusing them also reuses each source's OkHttp client (connection pooling).
-     * Cleared by [invalidate] when an extension is installed/updated/removed.
-     */
-    private val sourceCache = ConcurrentHashMap<Long, Source>()
-
-    /** Drop cached source instances (call after an extension is installed/updated/removed). */
-    fun invalidate() = sourceCache.clear()
 
     /** All sources across installed extensions (cheap; reads metadata only). */
     fun listInstalledSources(): List<InstalledSource> =
@@ -39,18 +27,17 @@ object SourceManager {
 
     /** Instantiate and return the live [Source] with [sourceId], or null if not installed. */
     fun loadSource(sourceId: Long): Source? {
-        sourceCache[sourceId]?.let { return it }
         val ext = InstalledStore.findExtensionForSource(sourceId) ?: return null
         return loadSourcesOf(ext).firstOrNull { it.id == sourceId }
     }
 
-    /** Instantiate every [Source] an extension provides (boots the runtime as needed), and cache them. */
+    /** Instantiate every [Source] an extension provides (boots the runtime as needed). */
     fun loadSourcesOf(ext: InstalledExtension): List<Source> {
         ExtensionRuntime.ensureStarted()
         return ext.classNames.flatMap { className ->
             val instance = ExtensionLoader.loadExtensionInstance(ext.jarPath, className)
             expand(instance)
-        }.onEach { sourceCache[it.id] = it }
+        }
     }
 
     /** A loaded entry class is either a single Source or a factory of several. */
