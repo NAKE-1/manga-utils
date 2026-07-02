@@ -26,9 +26,11 @@ object SourceImage {
     ): ByteArray? {
         if (url.isBlank()) return null
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
+        // Use the isolated image client so bulk cover grids don't starve interactive search/detail.
+        val client = SourceManager.imageClient(sourceId) ?: src.client
         return try {
             val request = Request.Builder().url(url).headers(src.headers).build()
-            src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
+            client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
         } catch (e: Exception) {
             log.debug("cover fetch failed {}: {}", url, e.message)
             null

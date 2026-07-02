@@ -15,6 +15,8 @@ import mangautils.core.extension.InstalledSource
 import mangautils.core.extension.InstalledStore
 import mangautils.core.extension.internal.ExtensionLoader
 import mangautils.core.runtime.ExtensionRuntime
+import okhttp3.Dispatcher
+import okhttp3.OkHttpClient
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
@@ -30,8 +32,26 @@ object SourceManager {
      */
     private val sourceCache = ConcurrentHashMap<Long, Source>()
 
-    /** Drop cached source instances (call after an extension is installed/updated/removed). */
-    fun invalidate() = sourceCache.clear()
+    /**
+     * Per-source client for BULK image fetching (cover grids). It reuses the source's client — same
+     * interceptors, cookies, Cloudflare setup and connection pool — but with an isolated [Dispatcher]
+     * so a wall of cover loads can't consume the per-host request slots that interactive search /
+     * detail requests need on the source's main client. The per-host cap is kept MODERATE on purpose:
+     * covers are full-size posters (often 1-4 MB), so too many at once saturate bandwidth and stall
+     * the small search/detail responses. Cleared with [sourceCache].
+     */
+    private val imageClients = ConcurrentHashMap<Long, OkHttpClient>()
+    private val imageDispatcher = Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 8 }
+
+    /** Drop cached source instances + their image clients (after an extension is installed/updated/removed). */
+    fun invalidate() { sourceCache.clear(); imageClients.clear() }
+
+    /** A client for bulk image/cover fetching: the source's client + pool + interceptors, isolated dispatcher. */
+    fun imageClient(sourceId: Long): OkHttpClient? {
+        imageClients[sourceId]?.let { return it }
+        val src = loadSource(sourceId) as? HttpSource ?: return null
+        return src.client.newBuilder().dispatcher(imageDispatcher).build().also { imageClients[sourceId] = it }
+    }
 
     /** All sources across installed extensions (cheap; reads metadata only). */
     fun listInstalledSources(): List<InstalledSource> =
