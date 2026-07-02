@@ -17,22 +17,32 @@ function pushRecent(q: string) {
 
 type GlobalRow = { src: Source; items: Manga[]; error: string | null; loading: boolean }
 
+// Snapshot of the Search screen, kept across navigation so tapping into a manga and hitting Back
+// returns to the same query + results + scroll instead of a blank Popular view. Module-scoped =
+// survives unmount within the SPA session.
+type SearchCache = {
+  sourceId: string; mode: Mode; input: string; query: string
+  items: Manga[]; page: number; hasNext: boolean; globalRows: GlobalRow[]; scrollTop: number
+}
+let searchCache: SearchCache | null = null
+
 export function Search() {
   const [sources, setSources] = useState<Source[]>([])
-  const [sourceId, setSourceId] = useState<string>(localStorage.getItem('browse.source') || '')
-  const [mode, setMode] = useState<Mode>('popular')
-  const [input, setInput] = useState('')
-  const [query, setQuery] = useState('')
-  const [items, setItems] = useState<Manga[]>([])
-  const [page, setPage] = useState(1)
-  const [hasNext, setHasNext] = useState(false)
+  const [sourceId, setSourceId] = useState<string>(searchCache?.sourceId || localStorage.getItem('browse.source') || '')
+  const [mode, setMode] = useState<Mode>(searchCache?.mode ?? 'popular')
+  const [input, setInput] = useState(searchCache?.input ?? '')
+  const [query, setQuery] = useState(searchCache?.query ?? '')
+  const [items, setItems] = useState<Manga[]>(searchCache?.items ?? [])
+  const [page, setPage] = useState(searchCache?.page ?? 1)
+  const [hasNext, setHasNext] = useState(searchCache?.hasNext ?? false)
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [recent, setRecent] = useState<string[]>(recents())
-  const [globalRows, setGlobalRows] = useState<GlobalRow[]>([])
+  const [globalRows, setGlobalRows] = useState<GlobalRow[]>(searchCache?.globalRows ?? [])
   const sentinel = useRef<HTMLDivElement>(null)
   const busy = useRef(false)
   const cfTimer = useRef<number | undefined>(undefined)
+  const didHydrate = useRef(!!searchCache) // skip the initial auto-fetch when restoring cached results
 
   // A source that just revealed Cloudflare gets re-coloured in the picker (debounced refetch).
   function refreshSourcesSoon() {
@@ -56,6 +66,15 @@ export function Search() {
   // Remember the last-used source immediately on pick, so reopening Search restores it.
   function pickSource(id: string) { localStorage.setItem('browse.source', id); setSourceId(id) }
 
+  // Keep a live snapshot; save it (with scroll) on unmount and restore scroll on mount.
+  const snapRef = useRef<SearchCache | null>(null)
+  snapRef.current = { sourceId, mode, input, query, items, page, hasNext, globalRows, scrollTop: 0 }
+  useEffect(() => {
+    const scroller = document.querySelector('main')
+    if (searchCache && scroller) { const y = searchCache.scrollTop; requestAnimationFrame(() => scroller.scrollTo(0, y)) }
+    return () => { if (snapRef.current) { snapRef.current.scrollTop = scroller?.scrollTop ?? 0; searchCache = snapRef.current } }
+  }, [])
+
   // ---- Single-source browse/search ----
   function fetchPage(p: number) {
     if (!sourceId || isGlobal || busy.current) return
@@ -69,7 +88,12 @@ export function Search() {
     }).finally(() => { busy.current = false; setLoading(false); refreshSourcesSoon() })
   }
 
-  useEffect(() => { if (sourceId && !isGlobal) { setItems([]); setHasNext(false); setPage(1); fetchPage(1) } }, [sourceId, mode, query])
+  useEffect(() => {
+    if (!sourceId || isGlobal) return
+    if (didHydrate.current) { didHydrate.current = false; return } // restored from cache — keep results
+    setItems([]); setHasNext(false); setPage(1); fetchPage(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceId, mode, query])
 
   useEffect(() => {
     const el = sentinel.current
@@ -82,6 +106,7 @@ export function Search() {
   // ---- Global search: fan out to every source, one section each ----
   useEffect(() => {
     if (!isGlobal) return
+    if (didHydrate.current) { didHydrate.current = false; return } // restored — keep cached global rows
     const q = query.trim()
     if (!q || sources.length === 0) { setGlobalRows([]); return }
     setGlobalRows(sources.map((s) => ({ src: s, items: [], error: null, loading: true })))
