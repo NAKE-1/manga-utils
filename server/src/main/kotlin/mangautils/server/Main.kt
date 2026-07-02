@@ -596,6 +596,7 @@ fun Application.module() {
             val pkg = call.receive<InstallReq>().pkg
             availCache = null // a fresh install/update should re-read repos next browse
             val r = withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(pkg) } }
+            SourceManager.invalidate() // drop cached source instances so the new/updated jar loads
             r.fold(
                 onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
                 onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(it.message ?: "Install failed")) },
@@ -610,6 +611,7 @@ fun Application.module() {
                     java.nio.file.Files.deleteIfExists(AppConfig.extensionsDir.resolve("$pkg.apk"))
                 }
             }
+            SourceManager.invalidate() // the removed extension's sources must not stay cached
             call.respond(HttpStatusCode.OK)
         }
         get("/api/extensions/available") {
