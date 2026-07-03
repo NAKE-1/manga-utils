@@ -19,10 +19,8 @@ const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
  * dedupChapters so prev/next move one real chapter at a time. Keeps source order (newest-first).
  */
 /** One page in the strip — reserves height with a spinner until the image loads, then fades it in. */
-function ReaderPage({ src, sizing, loading, onSettled }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy'; onSettled?: () => void }) {
+function ReaderPage({ src, sizing, loading }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy' }) {
   const [loaded, setLoaded] = useState(false)
-  const settled = useRef(false)
-  const settle = () => { if (!settled.current) { settled.current = true; onSettled?.() } } // fire once (loaded or failed)
   return (
     <div className={'page-slot' + (loaded ? ' loaded' : '')}>
       {!loaded && <div className="spinner sm" />}
@@ -32,8 +30,8 @@ function ReaderPage({ src, sizing, loading, onSettled }: { src: string; sizing: 
         alt=""
         loading={loading}
         draggable={false}
-        onLoad={() => { setLoaded(true); settle() }}
-        onError={(e) => { const img = e.currentTarget; if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = src + '&r=1' } else settle() }}
+        onLoad={() => setLoaded(true)}
+        onError={(e) => { const img = e.currentTarget; if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = src + '&r=1' } }}
       />
     </div>
   )
@@ -91,7 +89,6 @@ export function Reader() {
   const nav = useNavigate()
 
   const [count, setCount] = useState<number | null>(null)
-  const [loadedCount, setLoadedCount] = useState(0) // how many of this chapter's pages have finished loading
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [page, setPage] = useState(1)
   const [progress, setProgress] = useState(0)
@@ -124,8 +121,7 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
 
   useEffect(() => {
-    setCount(null); setPage(1); setProgress(0); setLoadedCount(0)
-    prefetchedNext.current = '' // re-arm next-chapter preload for the new chapter
+    setCount(null); setPage(1); setProgress(0)
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -146,27 +142,16 @@ export function Reader() {
   const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
   const totalCh = (() => { const m = Math.max(0, ...navList.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : navList.length })()
 
-  // Preload the NEXT chapter into the browser cache so advancing is instant — but only once the
-  // CURRENT chapter has fully finished loading on THIS device (every page settled), so it never
-  // competes for bandwidth with pages still draining over a slow/relayed link. In Eager the whole
-  // chapter loads, so "all settled" is a clean idle signal → warm the entire next chapter. Other
-  // modes never fully load, so they just warm the first few once you pass halfway.
+  // Prefetch the next chapter's page list + first images once you pass ~50% of this chapter.
   const prefetchedNext = useRef('')
   useEffect(() => {
-    if (!nextCh || prefetchedNext.current === nextCh.url) return
-    const eagerIdle = loadMode === 'eager' && count != null && count > 0 && loadedCount >= count
-    const otherHalf = loadMode !== 'eager' && progress > 0.5
-    if (!eagerIdle && !otherHalf) return
-    prefetchedNext.current = nextCh.url
-    console.log(`[reader] ${eagerIdle ? 'current chapter fully loaded' : 'past 50%'} — preloading next "${nextCh.name || nextCh.url}"`)
-    api.pages(sourceId, nextCh.url, title, nextCh.name).then((r) => {
-      const n = loadMode === 'eager' ? r.count : Math.min(5, r.count)
-      for (let i = 0; i < n; i++) {
-        fetch(pageUrl(sourceId, nextCh.url, i, title, nextCh.name), { priority: 'low' } as RequestInit)
-          .then((res) => res.blob()).catch(() => {})
-      }
-    }).catch(() => { prefetchedNext.current = '' })
-  }, [progress, nextCh, sourceId, title, loadMode, count, loadedCount])
+    if (progress > 0.5 && nextCh && prefetchedNext.current !== nextCh.url) {
+      prefetchedNext.current = nextCh.url
+      api.pages(sourceId, nextCh.url, title, nextCh.name)
+        .then((r) => { for (let i = 0; i < Math.min(5, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) } })
+        .catch(() => {})
+    }
+  }, [progress, nextCh, sourceId, title])
 
   function openChapter(c?: Chapter) {
     if (!c) return
@@ -204,7 +189,7 @@ export function Reader() {
             {Array.from({ length: count }, (_, i) => (
               loadMode === 'blob'
                 ? <BlobPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} />
-                : <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={loadMode === 'eager' ? 'eager' : loadMode === 'lazy' ? 'lazy' : (i < preload ? 'eager' : 'lazy')} onSettled={() => setLoadedCount((c) => c + 1)} />
+                : <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={loadMode === 'eager' ? 'eager' : loadMode === 'lazy' ? 'lazy' : (i < preload ? 'eager' : 'lazy')} />
             ))}
           </div>
         )}
