@@ -424,7 +424,8 @@ fun Application.module() {
         // /api/downloads every second, images stream constantly) — it floods the console.
         filter { call ->
             val p = call.request.path()
-            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p.startsWith("/api/net"))
+            // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -698,6 +699,7 @@ fun Application.module() {
                 // Reading a new chapter clears its "new" flag; the "!" badge disappears once none remain.
                 if (read) LibraryService.markChapterSeen(id, manga, chapter)
             }
+            if (read) log.info("READ     chapter {}", chapter) // one clean line per chapter opened
             call.respond(HttpStatusCode.OK)
         }
 
@@ -964,7 +966,8 @@ fun Application.module() {
             val name = call.queryParam("name")
             // Next-chapter preload requests are marked so they're visible in the log even for
             // cached/downloaded pages (normal /img/page logging stays filtered to keep the console clean).
-            if (call.request.headers["X-Preload"] != null) log.info("preload page {} (chapter={})", index, chapter)
+            // One line per preloaded chapter (on its first page) instead of one per page.
+            if (call.request.headers["X-Preload"] != null && index == 0) log.info("PRELOAD  next chapter {}", chapter)
             val bytes = withContext(Dispatchers.IO) {
                 val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name) }.getOrNull() else null
                 if (local != null) {
