@@ -118,7 +118,8 @@ private data class LibraryDto(
     val totalChapters: Int = 0,
 )
 
-@Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int)
+@Serializable private data class UpdatedTitleDto(val title: String, val count: Int)
+@Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int, val titles: List<UpdatedTitleDto> = emptyList())
 @Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean)
 
 // Live progress of a running library-update scan, for the "Check updates" percentage.
@@ -497,7 +498,10 @@ fun Application.module() {
                     LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
                 } finally { libUpdateRunning = false }
             }
-            call.respond(UpdateSummaryDto(results.sumOf { it.newChapters.size }, results.count { it.newChapters.isNotEmpty() }))
+            val titles = results.filter { it.newChapters.isNotEmpty() }
+                .sortedByDescending { it.newChapters.size }
+                .map { UpdatedTitleDto(it.entry.title, it.newChapters.size) }
+            call.respond(UpdateSummaryDto(titles.sumOf { it.count }, titles.size, titles))
         }
         get("/api/library/update/progress") { call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning)) }
         // Clear every series' "new chapters" flag (the ! badges) at once.

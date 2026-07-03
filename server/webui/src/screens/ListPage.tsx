@@ -33,6 +33,7 @@ export function ListPage() {
   const [updating, setUpdating] = useState(false)
   const [updatePct, setUpdatePct] = useState(0)
   const [updateMsg, setUpdateMsg] = useState('')
+  const [updatedTitles, setUpdatedTitles] = useState<{ title: string; count: number }[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -42,7 +43,7 @@ export function ListPage() {
   }, [])
 
   async function checkUpdates() {
-    setUpdating(true); setUpdateMsg(''); setUpdatePct(0)
+    setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatePct(0)
     const poll = setInterval(() => {
       api.updateProgress().then((p) => { if (p.total > 0) setUpdatePct(Math.round((p.done / p.total) * 100)) }).catch(() => {})
     }, 400)
@@ -50,7 +51,9 @@ export function ListPage() {
     clearInterval(poll)
     await api.library().then(setLibrary).catch(() => {})
     setUpdating(false); setUpdatePct(0)
-    setUpdateMsg(!r ? 'Update failed' : r.newChapters > 0 ? `${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'} across ${r.updatedManga} title${r.updatedManga === 1 ? '' : 's'}` : 'No new chapters found')
+    if (!r) { setUpdateMsg('Update failed'); setUpdatedTitles([]) }
+    else if (r.titles.length === 0) { setUpdateMsg('No new chapters found'); setUpdatedTitles([]) }
+    else { setUpdateMsg(''); setUpdatedTitles(r.titles) }
   }
 
   if (!ready) return <div className="spinner" />
@@ -58,6 +61,7 @@ export function ListPage() {
   let cards
   if (kind === 'continue') {
     const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
+    const newByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.newChapters]))
     const seen = new Set<string>()
     cards = [...history]
       .sort((a, b) => b.readAt - a.readAt)
@@ -68,7 +72,7 @@ export function ListPage() {
         return true
       })
       .map((h) => (
-        <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)} subtitle={h.chapterName} />
+        <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)} subtitle={h.chapterName} badge={newByKey.get(h.sourceId + '|' + h.mangaUrl)} />
       ))
   } else {
     const entries = (kind === 'updates' ? library.filter((e) => e.newChapters > 0) : [...library]).sort((a, b) => a.title.localeCompare(b.title))
@@ -89,6 +93,13 @@ export function ListPage() {
         )}
       </div>
       {updateMsg && <div className="update-msg">{updateMsg}</div>}
+      {updatedTitles.length > 0 && (
+        <div className="update-list">
+          {updatedTitles.map((t) => (
+            <div key={t.title} className="update-line"><span className="ul-name">{t.title}</span><span className="ul-count">{t.count} new</span></div>
+          ))}
+        </div>
+      )}
       {cards.length ? <div className="grid">{cards}</div> : <div className="center-msg">Nothing here yet.</div>}
     </>
   )

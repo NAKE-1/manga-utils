@@ -222,6 +222,10 @@ img { display: block; }
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 8px; }
 .list-title { font-size: 19px; font-weight: 800; }
 .update-msg { padding: 0 16px 10px; font-size: 13px; color: var(--muted); }
+.update-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 5px; }
+.update-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
+.ul-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ul-count { color: var(--accent); font-weight: 800; flex: 0 0 auto; }
 .upd-row { display: flex; align-items: center; gap: 8px; }
 .upd-pct { font-size: 13px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .chapter-bm { width: 16px; height: 16px; color: var(--accent); flex: 0 0 auto; }

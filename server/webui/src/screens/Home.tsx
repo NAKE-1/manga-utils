@@ -29,6 +29,8 @@ export function Home() {
 
   // History stores no cover, so fall back to the library entry's thumbnail.
   const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
+  // New-chapter count per manga, so Continue-reading cards can show the "!" badge too.
+  const newByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.newChapters]))
   // Continue reading: most-recently read first (leftmost), one entry per manga.
   const seen = new Set<string>()
   const continueReading = [...history]
@@ -39,7 +41,6 @@ export function Home() {
       seen.add(k)
       return true
     })
-  const updates = library.filter((e) => e.newChapters > 0)
   const libraryAZ = [...library].sort((a, b) => a.title.localeCompare(b.title))
 
   if (library.length === 0 && continueReading.length === 0) {
@@ -58,24 +59,8 @@ export function Home() {
               title={h.mangaTitle}
               cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)}
               subtitle={h.chapterName}
+              badge={newByKey.get(h.sourceId + '|' + h.mangaUrl)}
               onRemove={devRemove ? () => removeContinue(h) : undefined}
-            />
-          ))}
-        </Carousel>
-      )}
-
-      {updates.length > 0 && (
-        <Carousel title="Updates" to="/list/updates">
-          {updates.map((e) => (
-            <CoverCard
-              key={e.sourceId + e.url}
-              sourceId={e.sourceId}
-              url={e.url}
-              title={e.title}
-              cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)}
-              badge={e.newChapters}
-              subtitle={`${e.newChapters} new`}
-              dl={dlState(e)}
             />
           ))}
         </Carousel>
