@@ -387,6 +387,8 @@ fun main() {
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
     // Detect Cloudflare-protected sources in the background (loads each source once).
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
+    // Warm the download-manager series cache in the background so its first open is instant, not a ~3s scan.
+    Thread { runCatching { mangautils.core.download.DownloadStore.listSeries() } }.apply { isDaemon = true; name = "dl-warm" }.start()
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)

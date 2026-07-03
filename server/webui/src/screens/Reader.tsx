@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, pageUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings } from '../components/icons'
@@ -23,6 +23,13 @@ function ReaderPage({ src, sizing, loading, priority, index, onStatus }: { src: 
   const [status, setStatus] = useState<'load' | 'ok' | 'err'>('load')
   const [bust, setBust] = useState(0)
   const url = bust ? src + '&retry=' + bust : src
+  // Safety net: if a page never fires load OR error (stalled/truncated connection), don't spin forever —
+  // fail it after 25s so the reload button appears instead of an image that reloads endlessly.
+  useEffect(() => {
+    if (status !== 'load') return
+    const t = setTimeout(() => { setStatus('err'); onStatus?.(index, true) }, 25000)
+    return () => clearTimeout(t)
+  }, [status, url, index, onStatus])
   // No silent auto-retry: a page that fails shows a reload button; only a tap re-fetches it.
   function retry(e: React.MouseEvent) { e.stopPropagation(); setStatus('load'); onStatus?.(index, false); setBust((b) => b + 1) }
   return (
@@ -110,14 +117,15 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
 
   // Track which pages are currently in a failed state (idempotent via the Set), for the trouble banner.
-  function reportStatus(i: number, failed: boolean) {
+  // useCallback keeps its identity stable so the per-page load timeout isn't reset every render.
+  const reportStatus = useCallback((i: number, failed: boolean) => {
     setFailedPages((prev) => {
       if (failed === prev.has(i)) return prev
       const next = new Set(prev)
       if (failed) next.add(i); else next.delete(i)
       return next
     })
-  }
+  }, [])
 
   useEffect(() => {
     setCount(null); setPage(1); setProgress(0); setFailedPages(new Set())
