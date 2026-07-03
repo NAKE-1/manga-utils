@@ -339,6 +339,7 @@ img { display: block; }
 .sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: var(--muted-2); margin: 6px auto 12px; }
 .sheet-title { font-size: 19px; font-weight: 800; margin-bottom: 14px; }
 .sheet-label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 8px; }
+.sheet-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 18px; font-size: 15px; font-weight: 600; color: var(--text); }
 .seg { display: flex; gap: 8px; }
 .seg-btn { flex: 1; padding: 11px; border-radius: 10px; background: var(--card-2); color: var(--text); font-weight: 700; font-size: 14px; cursor: pointer; }
 .seg-btn.on { background: var(--accent); color: #fff; }

@@ -64,10 +64,14 @@ export function Reader() {
   const [showSettings, setShowSettings] = useState(false)
   const [sizing, setSizing] = useState<Sizing>(lsGet('reader.sizing', 'clamp') as Sizing)
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
+  const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
+  const [showPill, setShowPill] = useState<boolean>(lsGet('reader.pill', '1') === '1')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { localStorage.setItem('reader.sizing', sizing) }, [sizing])
   useEffect(() => { localStorage.setItem('reader.gap', String(gap)) }, [gap])
+  useEffect(() => { localStorage.setItem('reader.preload', String(preload)) }, [preload])
+  useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
 
   useEffect(() => {
     setCount(null); setPage(1); setProgress(0)
@@ -136,14 +140,14 @@ export function Reader() {
         {count !== null && count > 0 && (
           <div className="strip" style={{ gap: gap + 'px' }}>
             {Array.from({ length: count }, (_, i) => (
-              <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} eager={i < 3} />
+              <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} eager={i < preload} />
             ))}
           </div>
         )}
       </div>
 
       {/* Minimal progress pill when chrome hidden — fades opposite the chrome. */}
-      {count ? (
+      {count && showPill ? (
         <div className={'reader-pill' + (chrome ? ' r-fade-out' : '')}>{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div>
       ) : null}
 
@@ -186,6 +190,14 @@ export function Reader() {
 
             <div className="sheet-label">Strip gap · {gap}px</div>
             <input className="slider" type="range" min={0} max={40} value={gap} onChange={(e) => setGap(Number(e.target.value))} />
+
+            <div className="sheet-label">Preload · {preload} page{preload === 1 ? '' : 's'}</div>
+            <input className="slider" type="range" min={0} max={10} value={preload} onChange={(e) => setPreload(Number(e.target.value))} />
+
+            <button className="sheet-toggle" onClick={() => setShowPill((v) => !v)}>
+              <span>Progress pill</span>
+              <span className={'switch' + (showPill ? ' on' : '')}><span className="knob" /></span>
+            </button>
           </div>
         </div>
       )}
