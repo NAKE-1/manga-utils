@@ -85,6 +85,7 @@ export function Reader() {
 
   const [count, setCount] = useState<number | null>(null)
   const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
+  const [warnAck, setWarnAck] = useState(0) // banner dismissed at this failure count; reappears if more fail
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [page, setPage] = useState(1)
   const [progress, setProgress] = useState(0)
@@ -133,7 +134,7 @@ export function Reader() {
   }, [])
 
   useEffect(() => {
-    setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setShowChapters(false)
+    setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false)
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
@@ -259,9 +260,13 @@ export function Reader() {
         )}
       </div>
 
-      {/* Source-trouble banner: shown when pages are failing, so it's never a silent infinite spinner. */}
-      {failedPages.size > 0 && (
-        <div className="reader-warn">⚠ {failedPages.size} page{failedPages.size > 1 ? 's' : ''} failed to load — the source may be having trouble. Tap a failed page to retry.</div>
+      {/* Source-trouble banner: shown when pages are failing, so it's never a silent infinite spinner.
+          Dismissable (acknowledge) — reappears only if more pages fail after you dismiss it. */}
+      {failedPages.size > warnAck && (
+        <div className="reader-warn">
+          <span className="reader-warn-txt">⚠ {failedPages.size} page{failedPages.size > 1 ? 's' : ''} failed to load - the source may be having trouble. Tap a failed page to retry.</span>
+          <button className="reader-warn-x" onClick={() => setWarnAck(failedPages.size)}>Dismiss</button>
+        </div>
       )}
 
       {/* Minimal progress pill when chrome hidden — fades opposite the chrome. */}
@@ -303,14 +308,17 @@ export function Reader() {
           >
             <div className="sheet-drag" onPointerDown={sheetDown} onPointerMove={sheetMove} onPointerUp={sheetUp} onPointerCancel={sheetUp}>
               <div className="sheet-handle" />
-              <div className="sheet-title">Chapters · {chapters.length}</div>
+              <div className="sheet-headrow">
+                <span className="sheet-title">Chapters · {chapters.length}</span>
+                <button className="sheet-close" onClick={closeSheet} aria-label="Close">✕</button>
+              </div>
             </div>
             <div className="chap-list">
               {chapterGroups.map((g) => g.variants.length === 1
                 ? chapterRow(g.variants[0])
                 : (
                   <div className="chap-group" key={g.key}>
-                    <div className="chap-group-h">CH. {g.number > 0 ? g.number : '—'} · {g.variants.length} versions</div>
+                    <div className="chap-group-h">CH. {g.number > 0 ? g.number : '?'} · {g.variants.length} versions</div>
                     {g.variants.map((c) => chapterRow(c, true))}
                   </div>
                 ))}

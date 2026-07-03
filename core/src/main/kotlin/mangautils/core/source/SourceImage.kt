@@ -63,11 +63,19 @@ object SourceImage {
                 // instead of spinning on the client's full ~30s socket timeout.
                 withTimeout(12_000) {
                     if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
-                    src.getImage(page).use { if (it.isSuccessful) it.body?.bytes() else null }
+                    src.getImage(page).use { resp ->
+                        if (resp.isSuccessful) {
+                            resp.body?.bytes()
+                        } else {
+                            log.warn("page {} failed: HTTP {} {}", page.index, resp.code, page.imageUrl)
+                            null
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
-            log.debug("page fetch failed (index {}): {}", page.index, e.message)
+            // Visible at INFO+ so image failures can actually be troubleshot (timeout, reset, 5xx, …).
+            log.warn("page {} failed: {} ({})", page.index, e.message ?: e::class.simpleName, page.imageUrl)
             null
         }
     }

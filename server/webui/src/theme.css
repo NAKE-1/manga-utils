@@ -366,8 +366,19 @@ img { display: block; }
 .reader-warn {
   position: fixed; left: 12px; right: 12px; bottom: calc(16px + var(--safe-b)); z-index: 50;
   background: #2a1f0a; color: #f5c451; border: 1px solid #5a4a1a; border-radius: 12px;
-  padding: 10px 14px; font-size: 13px; font-weight: 600; text-align: center; backdrop-filter: blur(4px);
+  padding: 10px 12px 10px 14px; font-size: 13px; font-weight: 600; backdrop-filter: blur(4px);
+  display: flex; align-items: center; gap: 10px;
 }
+.reader-warn-txt { flex: 1; }
+.reader-warn-x { flex: none; background: rgba(245,196,81,0.16); color: #f5c451; border: 1px solid #6a561f;
+  border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
+.reader-warn-x:active { background: rgba(245,196,81,0.28); }
+
+/* Chapter-sheet header row: title + close button. */
+.sheet-headrow { display: flex; align-items: center; justify-content: space-between; }
+.sheet-close { flex: none; background: #232329; color: #cfcfd7; border: none; border-radius: 999px;
+  width: 30px; height: 30px; font-size: 15px; cursor: pointer; margin-bottom: 12px; }
+.sheet-close:active { background: #34343c; }
 
 /* Chrome group fades in/out together instead of popping. */
 .reader-chrome { transition: opacity .32s ease; }
@@ -399,19 +410,20 @@ img { display: block; }
   width: 100%; text-align: left; background: transparent; color: var(--text);
   border: none; border-bottom: 1px solid #1e1e24; padding: 13px 6px; cursor: pointer; font-family: inherit; }
 .chap-item:active { background: #17171a; }
-.chap-item.current { background: #1a1730; border-radius: 8px; border-bottom-color: transparent; }
+.chap-item.current { background: #241f42; border-radius: 8px; border-bottom-color: transparent; }
 .chap-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.chap-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chap-meta { font-size: 12px; color: var(--muted, #8a8a92); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chap-item.read .chap-name { color: var(--muted, #78787f); font-weight: 600; } /* read = dimmed, like detail */
-.chap-item.read .chap-meta { opacity: .65; }
+.chap-name { font-size: 15px; font-weight: 600; color: #edecf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-meta { font-size: 12px; color: #9ea4b0; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-item.current .chap-name { color: #cfc6ff; }
+.chap-item.read .chap-name { color: #6f6f79; font-weight: 500; } /* read = clearly dimmed vs the bright unread name */
+.chap-item.read .chap-meta { color: #5a5a63; }
 .chap-tags { flex: none; display: flex; align-items: center; gap: 10px; }
 .chap-cur { font-size: 11px; font-weight: 700; color: var(--accent, #a99cf5); background: #0e0e10; padding: 3px 9px; border-radius: 999px; }
 .chap-check { color: #4ade80; font-weight: 700; font-size: 15px; }
 .chap-dl { color: #22c55e; font-weight: 700; }
 /* A chapter with multiple scanlator versions: "CH. N" header + indented variants. */
 .chap-group { display: flex; flex-direction: column; }
-.chap-group-h { font-size: 11px; font-weight: 800; color: #8a8a92; padding: 12px 6px 4px; letter-spacing: 0.04em; }
+.chap-group-h { font-size: 12px; font-weight: 800; color: #c3c3cf; padding: 14px 6px 5px; letter-spacing: 0.04em; }
 .chap-item.variant { padding-left: 18px; }
 .chap-item.variant .chap-name { font-size: 14px; font-weight: 500; }
 .reader-tools { position: fixed; right: 10px; bottom: calc(12px + var(--safe-b)); z-index: 10;

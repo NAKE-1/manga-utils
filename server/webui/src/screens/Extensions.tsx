@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, ExtInstalled, ExtAvailable } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
+import { toast } from '../components/Toast'
 
 type Tab = 'installed' | 'browse' | 'repos'
 const cleanName = (n: string) => n.replace(/^Tachiyomi:\s*/i, '')
@@ -45,9 +46,15 @@ export function Extensions() {
 
   async function install(pkg: string, label: string) {
     setBusy((b) => ({ ...b, [pkg]: label }))
-    await api.extInstall(pkg).catch(() => {})
-    setBusy((b) => { const n = { ...b }; delete n[pkg]; return n })
-    setUpdates((u) => { const n = new Set(u); n.delete(pkg); return n })
+    try {
+      const r = await api.extInstall(pkg)
+      toast(`${label.startsWith('Updat') ? 'Updated' : 'Installed'} ${cleanName(r.name || pkg)}${r.sources ? ` · ${r.sources} source${r.sources === 1 ? '' : 's'}` : ''}`, 'success')
+      setUpdates((u) => { const n = new Set(u); n.delete(pkg); return n }) // only clear the "update available" badge on real success
+    } catch (e) {
+      toast(`${label.startsWith('Updat') ? 'Update' : 'Install'} failed: ${e instanceof Error ? e.message : 'error'}`, 'error')
+    } finally {
+      setBusy((b) => { const n = { ...b }; delete n[pkg]; return n })
+    }
     loadInstalled(); if (tab === 'browse') loadBrowse()
   }
   async function updateAll() { for (const pkg of Array.from(updates)) await install(pkg, 'Updating…') }

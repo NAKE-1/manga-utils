@@ -1027,6 +1027,7 @@ private fun sourceErrorMessage(e: Throwable): String =
 
 /** Record a failure: Cloudflare blocks stay "up but blocked"; anything else marks the source down. */
 private fun markFailure(sourceId: Long, e: Throwable) {
+    log.warn("source {} call failed: {}", sourceId, e.message ?: e::class.simpleName) // visible so 5xx can be troubleshot
     if (e.message?.contains("Cloudflare", ignoreCase = true) == true) {
         CloudflareState.mark(sourceId)
         SourceHealth.markUp(sourceId)
