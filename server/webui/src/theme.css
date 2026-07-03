@@ -420,6 +420,10 @@ img { display: block; }
 .set-input { width: 100%; margin-top: 10px; background: var(--bg-2, #161618); border: 1px solid var(--border); border-radius: 10px;
   color: var(--text); font-size: 14px; padding: 11px 12px; outline: none; }
 .set-input:focus { border-color: var(--accent); }
+.set-select { width: 100%; margin-top: 10px; background: var(--bg-2, #161618); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text); font-size: 14px; padding: 11px 12px; outline: none; }
+.set-select:focus { border-color: var(--accent); }
+.set-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .set-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
 .btn:disabled { opacity: .5; }

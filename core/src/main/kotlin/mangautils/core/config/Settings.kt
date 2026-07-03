@@ -71,4 +71,11 @@ data class Settings(
     val readerBackground: String = "THEME",
     /** Skip duplicate chapters (scanlator de-dup) when navigating in the reader. */
     val readerSkipDuplicates: Boolean = true,
+    // ---- Scheduled updates ----
+    /** Periodically check the whole library for new chapters in the background. */
+    val autoUpdate: Boolean = false,
+    /** How often the background update runs, in hours. */
+    val autoUpdateHours: Int = 12,
+    /** When an update finds new chapters (scheduled OR manual), auto-enqueue them for download. */
+    val autoDownloadNew: Boolean = false,
 )

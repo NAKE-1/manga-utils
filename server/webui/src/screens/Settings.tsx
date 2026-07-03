@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
@@ -25,6 +25,10 @@ export function Settings() {
   const [clearingNew, setClearingNew] = useState(false)
   const [clearNewMsg, setClearNewMsg] = useState('')
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
+  const [library, setLibrary] = useState<LibraryEntry[]>([])
+  const [simManga, setSimManga] = useState('')
+  const [simMsg, setSimMsg] = useState('')
+  const [simRunning, setSimRunning] = useState(false)
   const [stats, setStats] = useState<DevStats | null>(null)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
 
@@ -38,7 +42,33 @@ export function Settings() {
     api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
+    api.library().then(setLibrary).catch(() => {})
   }, [])
+
+  async function toggleAutoUpdate() {
+    if (!info) return
+    const s = await api.saveSettings({ autoUpdate: !info.autoUpdate }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function setAutoHours(n: number) {
+    const s = await api.saveSettings({ autoUpdateHours: Math.max(1, Math.min(168, n)) }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function toggleAutoDownload() {
+    if (!info) return
+    const s = await api.saveSettings({ autoDownloadNew: !info.autoDownloadNew }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function simulate() {
+    const i = simManga.indexOf('|'); if (i < 0) return
+    const sid = simManga.slice(0, i), url = simManga.slice(i + 1)
+    setSimRunning(true); setSimMsg('')
+    const r = await api.simulateUpdate(sid, url).catch(() => null)
+    setSimRunning(false)
+    if (!r) setSimMsg('Failed')
+    else if (r.newChapters < 0) setSimMsg('Open the manga once first (no chapters known yet)')
+    else setSimMsg(`${r.title}: ${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'}${r.autoDownloaded ? ' · auto-downloading' : ''}`)
+  }
 
   // Live server stats — poll while the Settings page is open.
   useEffect(() => {
@@ -192,7 +222,54 @@ export function Settings() {
       </section>
 
       <section className="set-section">
+        <div className="set-section-h">Automatic updates</div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleAutoUpdate}>
+            <div>
+              <div className="set-row-label">Check for updates automatically</div>
+              <div className="set-hint">Periodically scan your whole library for new chapters in the background.</div>
+            </div>
+            <span className={'switch' + (info?.autoUpdate ? ' on' : '')}><span className="knob" /></span>
+          </button>
+          {info?.autoUpdate && (
+            <div className="set-inline">
+              <span className="set-row-label">Every</span>
+              <div className="stepper">
+                <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) <= 1} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) - 1)}>−</button>
+                <span className="step-val">{info?.autoUpdateHours ?? 12}h</span>
+                <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) >= 168} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) + 1)}>+</button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleAutoDownload}>
+            <div>
+              <div className="set-row-label">Auto-download new chapters</div>
+              <div className="set-hint">When an update finds new chapters (scheduled or manual), queue them for download automatically.</div>
+            </div>
+            <span className={'switch' + (info?.autoDownloadNew ? ' on' : '')}><span className="knob" /></span>
+          </button>
+        </div>
+      </section>
+
+      <section className="set-section">
         <div className="set-section-h">Developer</div>
+
+        <div className="set-card">
+          <div className="set-row-label">Simulate a new chapter (test)</div>
+          <div className="set-hint">Makes a library manga look like it got an update — sets its “!” badge, and auto-downloads it if that setting is on.</div>
+          <select className="set-select" value={simManga} onChange={(e) => setSimManga(e.target.value)}>
+            <option value="">Pick a manga…</option>
+            {[...library].sort((a, b) => a.title.localeCompare(b.title)).map((e) => (
+              <option key={e.sourceId + '|' + e.url} value={e.sourceId + '|' + e.url}>{e.title}</option>
+            ))}
+          </select>
+          <div className="set-actions">
+            <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
+            {simMsg && <span className="set-msg">{simMsg}</span>}
+          </div>
+        </div>
 
         <div className="set-card">
           <div className="set-row-label">Server status</div>

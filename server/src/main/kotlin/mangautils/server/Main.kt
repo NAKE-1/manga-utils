@@ -121,6 +121,7 @@ private data class LibraryDto(
 @Serializable private data class UpdatedTitleDto(val title: String, val count: Int)
 @Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int, val titles: List<UpdatedTitleDto> = emptyList())
 @Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean)
+@Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
@@ -167,6 +168,9 @@ private data class SettingsDto(
     val perSourceParallel: Boolean,
     val visibleLanguages: List<String>,
     val cloudflareBypass: Boolean,
+    val autoUpdate: Boolean,
+    val autoUpdateHours: Int,
+    val autoDownloadNew: Boolean,
 )
 
 @Serializable
@@ -177,6 +181,15 @@ private data class SettingsPatch(
     val parallelDownloads: Int? = null,
     val perSourceParallel: Boolean? = null,
     val visibleLanguages: List<String>? = null,
+    val autoUpdate: Boolean? = null,
+    val autoUpdateHours: Int? = null,
+    val autoDownloadNew: Boolean? = null,
+)
+
+private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
+    s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
+    s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
+    s.visibleLanguages, CLOUDFLARE_BYPASS, s.autoUpdate, s.autoUpdateHours, s.autoDownloadNew,
 )
 
 @Serializable
@@ -374,6 +387,7 @@ fun main() {
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
     // Detect Cloudflare-protected sources in the background (loads each source once).
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
+    UpdateScheduler.reschedule() // start background library updates if enabled in settings
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
@@ -498,6 +512,7 @@ fun Application.module() {
                     LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
                 } finally { libUpdateRunning = false }
             }
+            UpdateScheduler.autoDownloadNew(results) // honor the auto-download setting for manual checks too
             val titles = results.filter { it.newChapters.isNotEmpty() }
                 .sortedByDescending { it.newChapters.size }
                 .map { UpdatedTitleDto(it.entry.title, it.newChapters.size) }
@@ -712,10 +727,7 @@ fun Application.module() {
         }
 
         // ---- Settings + diagnostics ----
-        get("/api/settings") {
-            val s = SettingsStore.get()
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel, s.visibleLanguages, CLOUDFLARE_BYPASS))
-        }
+        get("/api/settings") { call.respond(settingsDto(SettingsStore.get())) }
         post("/api/settings") {
             val body = call.receive<SettingsPatch>()
             var s = SettingsStore.get()
@@ -736,9 +748,13 @@ fun Application.module() {
             body.parallelDownloads?.let { s = s.copy(parallelDownloads = it.coerceIn(1, 8)) }
             body.perSourceParallel?.let { s = s.copy(perSourceParallel = it) }
             body.visibleLanguages?.let { s = s.copy(visibleLanguages = it.map { l -> l.lowercase() }.distinct()) }
+            body.autoUpdate?.let { s = s.copy(autoUpdate = it) }
+            body.autoUpdateHours?.let { s = s.copy(autoUpdateHours = it.coerceIn(1, 168)) }
+            body.autoDownloadNew?.let { s = s.copy(autoDownloadNew = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
-            call.respond(SettingsDto(s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(), s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel, s.visibleLanguages, CLOUDFLARE_BYPASS))
+            UpdateScheduler.reschedule() // apply any change to the auto-update interval/toggle
+            call.respond(settingsDto(s))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
@@ -746,6 +762,26 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        // TEST: make the app think a library manga got a new chapter — forgets its latest known
+        // chapter so the next update re-detects it as new (setting the "!" badge, and auto-downloading
+        // it if that setting is on). Reversible: the update re-adds it to knownChapters.
+        post("/api/dev/simulate-update") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val result = withContext(Dispatchers.IO) {
+                val entry = LibraryStore.find(id, manga) ?: return@withContext null
+                if (entry.knownChapters.isEmpty()) return@withContext SimulateDto(entry.title, -1, false)
+                val latest = entry.knownChapters.maxByOrNull { it.number } ?: entry.knownChapters.last()
+                entry.knownChapters = entry.knownChapters.filterNot { it.url == latest.url }.toMutableList()
+                LibraryStore.upsert(entry)
+                val results = LibraryService.update(listOf(LibraryStore.find(id, manga)!!))
+                UpdateScheduler.autoDownloadNew(results)
+                val n = results.sumOf { it.newChapters.size }
+                SimulateDto(entry.title, n, SettingsStore.get().autoDownloadNew && n > 0)
+            }
+            if (result == null) call.respond(HttpStatusCode.NotFound, ErrorDto("Not in your library"))
+            else call.respond(result)
+        }
 
         // ---- Extensions + repositories ----
         get("/api/extensions") {
