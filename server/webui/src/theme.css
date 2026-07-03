@@ -313,6 +313,15 @@ img { display: block; }
 }
 .page-fail-icon { font-size: 26px; line-height: 1; margin-bottom: 2px; }
 
+/* Downloads storage overview. */
+.dm-overview { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 12px 12px; }
+.dm-stat { flex: 1; min-width: 88px; background: #17171a; border: 1px solid #24242a; border-radius: 12px; padding: 11px 13px;
+  display: flex; flex-direction: column; gap: 2px; }
+.dm-stat.wide { flex-basis: 100%; }
+.dm-stat-n { font-size: 17px; font-weight: 800; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-stat.wide .dm-stat-n { font-size: 14px; }
+.dm-stat-l { font-size: 11px; color: #8a8a92; text-transform: uppercase; letter-spacing: 0.03em; }
+
 /* Library search + sort/filter toolbar. */
 .lib-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; }
 .lib-search { flex: 1; min-width: 0; background: #17171a; border: 1px solid #2a2a30; border-radius: 10px;

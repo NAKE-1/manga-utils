@@ -83,7 +83,19 @@ export function DownloadsManager() {
         <div className="center-msg">Nothing downloaded yet.</div>
       ) : (
         <>
-          <div className="update-msg">{series.length} series · {fmtSize(series.reduce((a, s) => a + s.bytes, 0))} on disk</div>
+          {(() => {
+            const totalBytes = series.reduce((a, s) => a + s.bytes, 0)
+            const totalCh = series.reduce((a, s) => a + s.chapters, 0)
+            const biggest = series.reduce((m, s) => (s.bytes > (m?.bytes ?? -1) ? s : m), null as ManagedSeries | null)
+            return (
+              <div className="dm-overview">
+                <div className="dm-stat"><span className="dm-stat-n">{fmtSize(totalBytes)}</span><span className="dm-stat-l">on disk</span></div>
+                <div className="dm-stat"><span className="dm-stat-n">{series.length}</span><span className="dm-stat-l">series</span></div>
+                <div className="dm-stat"><span className="dm-stat-n">{totalCh}</span><span className="dm-stat-l">chapters</span></div>
+                {biggest && <div className="dm-stat wide"><span className="dm-stat-n">{biggest.title}</span><span className="dm-stat-l">largest · {fmtSize(biggest.bytes)}</span></div>}
+              </div>
+            )
+          })()}
           {series.map((s) => (
             <div key={s.title} className="dm-series">
               <button className="dm-row" onClick={() => toggle(s.title)}>
