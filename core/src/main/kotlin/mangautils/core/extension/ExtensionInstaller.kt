@@ -77,8 +77,10 @@ class ExtensionInstaller(
         val classNames = classMeta.split(";").map { resolveClassName(pkgName, it.trim()) }
         val nsfw = metaData.getString(ExtensionLoader.METADATA_NSFW) == "1" || entry.isNsfw
 
-        // 3. translate DEX -> jar, then fold in the APK's bundled assets
+        // 3. translate DEX -> jar, then fold in the APK's bundled assets. Release any loaded class loader
+        // for this jar first, or Windows keeps the old .jar locked and the overwrite fails (update case).
         log.info("Translating {} -> {}", apkPath, jarPath)
+        ExtensionLoader.releaseJar(jarPath.toString())
         ExtensionLoader.dex2jar(apkPath.toString(), jarPath.toString())
         ExtensionLoader.mergeApkAssetsIntoJar(apkPath.toString(), jarPath.toString())
 

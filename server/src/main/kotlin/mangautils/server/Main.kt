@@ -858,7 +858,10 @@ fun Application.module() {
             val r = withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(pkg) } }
             r.fold(
                 onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
-                onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(it.message ?: "Install failed")) },
+                onFailure = {
+                    log.warn("extension install/update failed for {}: {}", pkg, it.message, it) // log the real cause
+                    call.respond(HttpStatusCode.BadGateway, ErrorDto(it.message ?: "Install failed"))
+                },
             )
         }
         delete("/api/extensions") {

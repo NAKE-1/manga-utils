@@ -151,6 +151,16 @@ object ExtensionLoader {
 
     private val jarLoaderMap = mutableMapOf<String, URLClassLoader>()
 
+    /**
+     * Close and evict the cached class loader for [jarPath] so the .jar can be overwritten or deleted.
+     * On Windows an open URLClassLoader keeps the file locked, which otherwise breaks extension updates
+     * ("the process cannot access the file"). The jar is reopened fresh on the next load.
+     */
+    @Synchronized
+    fun releaseJar(jarPath: String) {
+        jarLoaderMap.remove(jarPath)?.let { runCatching { it.close() } }
+    }
+
     /** Instantiate the extension entry [className] from [jarPath] (a Source or SourceFactory). */
     fun loadExtensionInstance(
         jarPath: String,
