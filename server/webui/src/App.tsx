@@ -11,19 +11,26 @@ import { Extensions } from './screens/Extensions'
 import { Downloads } from './screens/Downloads'
 import { DownloadsManager } from './screens/DownloadsManager'
 import { Stub } from './screens/Stub'
+import { Toasts, DownloadWatcher } from './components/Toast'
 
 export function App() {
   const loc = useLocation()
   // The reader is full-screen — no top bar / tab bar.
   if (loc.pathname.startsWith('/reader/')) {
     return (
-      <Routes>
-        <Route path="/reader/:sourceId" element={<Reader />} />
-      </Routes>
+      <>
+        <DownloadWatcher />
+        <Toasts />
+        <Routes>
+          <Route path="/reader/:sourceId" element={<Reader />} />
+        </Routes>
+      </>
     )
   }
   return (
     <div className="app">
+      <DownloadWatcher />
+      <Toasts />
       <TopBar />
       <main>
         <Routes>
