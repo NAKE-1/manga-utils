@@ -135,6 +135,7 @@ export const api = {
   },
   diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
   devStats: () => getJson<DevStats>('/api/dev/stats'),
+  version: () => getJson<VersionInfo>('/api/version'),
   simulateUpdate: (source: string, manga: string) => fetch(`/api/dev/simulate-update?source=${source}&manga=${encodeURIComponent(manga)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ title: string; newChapters: number; autoDownloaded: boolean }>),
   deleteHistory: (id: string, manga: string) =>
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
@@ -199,6 +200,12 @@ export interface DevStats {
   processCpuPct: number
   threads: number; activeDownloads: number; queuedDownloads: number; installedSources: number
   jvm: string; os: string
+}
+
+export interface VersionInfo {
+  version: string; commit: string; buildTime: string
+  tech: { role: string; tech: string }[]
+  changelog: { sha: string; date: string; subject: string }[]
 }
 
 export const STATUS_LABELS: Record<number, string> = {

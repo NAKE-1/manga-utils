@@ -312,6 +312,20 @@ img { display: block; }
   font-size: 14px; font-weight: 600; text-align: center;
 }
 .page-fail-icon { font-size: 26px; line-height: 1; margin-bottom: 2px; }
+
+/* About / Technical details */
+.about-ver { color: #b9b9c2; font-size: 13px; margin: 2px 0 12px; }
+.about-ver code { background: #0e0e10; padding: 1px 6px; border-radius: 6px; color: #a99cf5; }
+.tech-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tech-table tr { border-top: 1px solid #26262c; }
+.tech-table tr:first-child { border-top: none; }
+.tech-role { color: #9a9aa2; padding: 7px 8px 7px 0; white-space: nowrap; vertical-align: top; }
+.tech-val { color: #eaeaef; padding: 7px 0; text-align: right; }
+.changelog { margin-top: 10px; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.cl-row { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid #1e1e24; }
+.cl-meta { color: #8a8a92; font-size: 11px; }
+.cl-meta code { color: #a99cf5; background: #0e0e10; padding: 0 4px; border-radius: 4px; }
+.cl-sub { color: #d6d6de; font-size: 13px; }
 .page-fail-sub { color: #9a9aa2; font-size: 12px; font-weight: 500; }
 .page-fail:active { background: #202026; }
 

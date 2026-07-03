@@ -1,3 +1,5 @@
+import java.time.LocalDateTime
+
 // server — the Ktor web backend for the phone-first web UI. Reuses the `core` engine directly
 // (same as `desktop`), exposes it over HTTP, and serves the built React frontend from resources.
 plugins {
@@ -59,4 +61,27 @@ val webBuild by tasks.registering(Exec::class) {
 }
 
 tasks.named("processResources") { dependsOn(webBuild) }
+
+// ---- Build stamp: bake version / commit / date / recent changelog into resources at build time ----
+// Read at runtime by the /api/version endpoint so every device can show exactly which build it runs.
+val buildInfoDir = layout.buildDirectory.dir("generated/buildinfo")
+val generateBuildInfo by tasks.registering {
+    outputs.dir(buildInfoDir)
+    outputs.upToDateWhen { false } // always re-stamp: commit/date change without source edits
+    doLast {
+        fun git(vararg a: String): String = runCatching {
+            val p = ProcessBuilder(listOf("git", *a)).directory(rootDir).redirectErrorStream(true).start()
+            p.inputStream.bufferedReader().readText().trim().also { p.waitFor() }
+        }.getOrDefault("")
+        val dir = buildInfoDir.get().asFile.apply { mkdirs() }
+        val commit = git("rev-parse", "--short", "HEAD").ifBlank { "unknown" }
+        dir.resolve("build-info.properties").writeText(
+            "version=0.1.0\ncommit=$commit\nbuildTime=${LocalDateTime.now().withNano(0)}\n",
+        )
+        // sha \t date \t subject, newest first — parsed into the changelog list at runtime.
+        dir.resolve("changelog.tsv").writeText(git("log", "-n", "50", "--pretty=format:%h\t%ad\t%s", "--date=short"))
+    }
+}
+sourceSets.named("main") { resources.srcDir(buildInfoDir) }
+tasks.named("processResources") { dependsOn(generateBuildInfo) }
 

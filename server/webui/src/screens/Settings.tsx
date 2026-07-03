@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
@@ -32,6 +32,8 @@ export function Settings() {
   const [net, setNet] = useState<{ pingMs: number; downMbps: number; upMbps: number } | null>(null)
   const [netRunning, setNetRunning] = useState(false)
   const [stats, setStats] = useState<DevStats | null>(null)
+  const [about, setAbout] = useState<VersionInfo | null>(null)
+  const [showChangelog, setShowChangelog] = useState(false)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
 
   function toggleDevContinueRemove() {
@@ -43,6 +45,7 @@ export function Settings() {
   useEffect(() => {
     api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
+    api.version().then(setAbout).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
     api.library().then(setLibrary).catch(() => {})
   }, [])
@@ -367,6 +370,36 @@ export function Settings() {
           <div className="set-row-label">Server paths</div>
           <div className="set-kv"><span>Downloads</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
           <div className="set-kv"><span>Data folder</span><code>{info?.dataDir || '…'}</code></div>
+        </div>
+
+        <div className="set-section-h">About</div>
+        <div className="set-card">
+          {about ? (
+            <>
+              <div className="set-row-label">manga-utils · web</div>
+              <div className="about-ver">v{about.version} · <code>{about.commit}</code> · built {about.buildTime.replace('T', ' ')}</div>
+              <table className="tech-table">
+                <tbody>
+                  {about.tech.map((t) => (
+                    <tr key={t.role}><td className="tech-role">{t.role}</td><td className="tech-val">{t.tech}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="set-actions">
+                <button className="btn" onClick={() => setShowChangelog((v) => !v)}>{showChangelog ? 'Hide' : 'Show'} changelog ({about.changelog.length})</button>
+              </div>
+              {showChangelog && (
+                <div className="changelog">
+                  {about.changelog.map((c) => (
+                    <div className="cl-row" key={c.sha}>
+                      <span className="cl-meta"><code>{c.sha}</code> · {c.date}</span>
+                      <span className="cl-sub">{c.subject}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : <div className="set-hint">Loading build info…</div>}
         </div>
       </section>
 

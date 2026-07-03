@@ -71,6 +71,28 @@ const val CLOUDFLARE_BYPASS = false
 @Serializable
 private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String, val down: Boolean)
 
+@Serializable private data class TechDto(val role: String, val tech: String)
+@Serializable private data class ChangeDto(val sha: String, val date: String, val subject: String)
+@Serializable private data class VersionDto(
+    val version: String, val commit: String, val buildTime: String,
+    val tech: List<TechDto>, val changelog: List<ChangeDto>,
+)
+
+// The app's technical stack, shown on the About screen (our version of Atsumaru's "Technical details").
+private val TECH_STACK = listOf(
+    TechDto("Language / engine", "Kotlin (JVM)"),
+    TechDto("Backend / server", "Ktor (Netty)"),
+    TechDto("Manga sources", "Tachiyomi/Mihon extensions + OkHttp"),
+    TechDto("Frontend UI", "React + TypeScript"),
+    TechDto("Frontend bundler", "Vite (Rollup internally)"),
+    TechDto("Styling", "Hand-rolled CSS"),
+    TechDto("Routing", "React Router"),
+    TechDto("Data store", "Flat JSON files on disk (no DB)"),
+    TechDto("Downloads", "Folders / CBZ on disk"),
+    TechDto("Remote access", "Tailscale (tailnet-only, no auth)"),
+    TechDto("Build", "Gradle"),
+)
+
 @Serializable
 private data class MangaDto(
     val sourceId: String,
@@ -775,6 +797,25 @@ fun Application.module() {
         post("/api/net/up") {
             val n = call.receive<ByteArray>().size
             call.respondBytes(n.toString().toByteArray())
+        }
+
+        // Build info + tech stack + recent changelog (baked into resources at build time). Lets each
+        // device show exactly which build it's running.
+        get("/api/version") {
+            val cl = object {}.javaClass
+            val props = java.util.Properties().apply { cl.getResourceAsStream("/build-info.properties")?.use { load(it) } }
+            val changelog = cl.getResourceAsStream("/changelog.tsv")?.bufferedReader()?.use { r -> r.readLines() }
+                ?.mapNotNull { line -> line.split("\t").takeIf { it.size >= 3 }?.let { ChangeDto(it[0], it[1], it.drop(2).joinToString("\t")) } }
+                ?: emptyList()
+            call.respond(
+                VersionDto(
+                    version = props.getProperty("version", "dev"),
+                    commit = props.getProperty("commit", "unknown"),
+                    buildTime = props.getProperty("buildTime", ""),
+                    tech = TECH_STACK,
+                    changelog = changelog,
+                ),
+            )
         }
         // TEST: make the app think a library manga got a new chapter — forgets its latest known
         // chapter so the next update re-detects it as new (setting the "!" badge, and auto-downloading
