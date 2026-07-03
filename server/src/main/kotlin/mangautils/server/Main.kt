@@ -119,6 +119,12 @@ private data class LibraryDto(
 )
 
 @Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int)
+@Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean)
+
+// Live progress of a running library-update scan, for the "Check updates" percentage.
+@Volatile private var libUpdateDone = 0
+@Volatile private var libUpdateTotal = 0
+@Volatile private var libUpdateRunning = false
 
 @Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "")
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
@@ -379,7 +385,7 @@ fun Application.module() {
         // /api/downloads every second, images stream constantly) — it floods the console.
         filter { call ->
             val p = call.request.path()
-            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats")
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -473,9 +479,15 @@ fun Application.module() {
 
         // Scan the whole library for new chapters (like the desktop). Updates per-manga newChapters.
         post("/api/library/update") {
-            val results = withContext(Dispatchers.IO) { LibraryService.update() }
+            val results = withContext(Dispatchers.IO) {
+                libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0
+                try {
+                    LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
+                } finally { libUpdateRunning = false }
+            }
             call.respond(UpdateSummaryDto(results.sumOf { it.newChapters.size }, results.count { it.newChapters.isNotEmpty() }))
         }
+        get("/api/library/update/progress") { call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning)) }
 
         // ---- Per-manga state for the detail page (in-library + read + bookmarked) ----
         get("/api/manga/state") {

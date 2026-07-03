@@ -88,7 +88,9 @@ img { display: block; }
 .section-head .chev { color: var(--muted); width: 20px; height: 20px; }
 .carousel {
   display: flex; gap: 12px; overflow-x: auto; padding: 0 16px 4px;
-  scroll-snap-type: x mandatory; scrollbar-width: none;
+  /* scroll-padding so mandatory snap respects the 16px inset — otherwise mobile snaps the first
+     cover flush to the edge, eating the left padding (grid sections keep their 16px). */
+  scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none;
 }
 .carousel::-webkit-scrollbar { display: none; }
 .carousel > * { scroll-snap-align: start; flex: 0 0 auto; }
@@ -220,6 +222,8 @@ img { display: block; }
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 8px; }
 .list-title { font-size: 19px; font-weight: 800; }
 .update-msg { padding: 0 16px 10px; font-size: 13px; color: var(--muted); }
+.upd-row { display: flex; align-items: center; gap: 8px; }
+.upd-pct { font-size: 13px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .chapter-bm { width: 16px; height: 16px; color: var(--accent); flex: 0 0 auto; }
 .chapter-dl { width: 16px; height: 16px; color: var(--accent); flex: 0 0 auto; }
 
@@ -524,7 +528,10 @@ img { display: block; }
 @keyframes sk { to { background-position: -200% 0; } }
 
 /* Content fade-in on route change for a livelier feel */
-main > * { animation: fade-up .22s ease both; }
+/* `backwards` (not `both`): keeps the no-flash entrance but doesn't retain a filled transform —
+   a lingering transform makes a containing block that traps position:fixed overlays (confirm
+   dialogs/sheets) so they center to the page height instead of the viewport. */
+main > * { animation: fade-up .22s ease backwards; }
 @keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---- Interactivity: cursor + transitions; hover effects only on pointer devices ---- */

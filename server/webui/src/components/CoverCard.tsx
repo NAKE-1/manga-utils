@@ -52,7 +52,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
           />
         )}
         {type && <span className={'type-badge ' + type}>{type}</span>}
-        {!!badge && badge > 0 && <span className="badge-tl">{badge}</span>}
+        {!!badge && badge > 0 && <span className="badge-tl" title={`${badge} new chapter${badge === 1 ? '' : 's'}`}>!</span>}
         {dl && <span className={'dl-badge ' + dl} title={dl === 'all' ? 'All chapters downloaded' : 'Some chapters downloaded'}><IconDownload /></span>}
       </div>
       <div className="cover-title">{title}</div>

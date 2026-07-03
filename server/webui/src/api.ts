@@ -96,6 +96,7 @@ export const api = {
   languages: () => getJson<string[]>('/api/languages'),
   library: () => getJson<LibraryEntry[]>('/api/library'),
   updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number }>),
+  updateProgress: () => getJson<{ done: number; total: number; running: boolean }>('/api/library/update/progress'),
   history: () => getJson<HistoryItem[]>('/api/history'),
   popular: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`),
   latest: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`),

@@ -31,6 +31,7 @@ export function ListPage() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [ready, setReady] = useState(false)
   const [updating, setUpdating] = useState(false)
+  const [updatePct, setUpdatePct] = useState(0)
   const [updateMsg, setUpdateMsg] = useState('')
 
   useEffect(() => {
@@ -41,10 +42,14 @@ export function ListPage() {
   }, [])
 
   async function checkUpdates() {
-    setUpdating(true); setUpdateMsg('')
+    setUpdating(true); setUpdateMsg(''); setUpdatePct(0)
+    const poll = setInterval(() => {
+      api.updateProgress().then((p) => { if (p.total > 0) setUpdatePct(Math.round((p.done / p.total) * 100)) }).catch(() => {})
+    }, 400)
     const r = await api.updateLibrary().catch(() => null)
+    clearInterval(poll)
     await api.library().then(setLibrary).catch(() => {})
-    setUpdating(false)
+    setUpdating(false); setUpdatePct(0)
     setUpdateMsg(!r ? 'Update failed' : r.newChapters > 0 ? `${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'} across ${r.updatedManga} title${r.updatedManga === 1 ? '' : 's'}` : 'No new chapters found')
   }
 
@@ -76,7 +81,12 @@ export function ListPage() {
     <>
       <div className="list-head">
         <span className="list-title">{TITLES[kind] ?? 'List'}</span>
-        {kind !== 'continue' && <button className="btn" disabled={updating} onClick={checkUpdates}>{updating ? 'Checking…' : 'Check updates'}</button>}
+        {kind !== 'continue' && (
+          <div className="upd-row">
+            {updating && updatePct > 0 && <span className="upd-pct">{updatePct}%</span>}
+            <button className="btn" disabled={updating} onClick={checkUpdates}>{updating ? 'Checking…' : 'Check updates'}</button>
+          </div>
+        )}
       </div>
       {updateMsg && <div className="update-msg">{updateMsg}</div>}
       {cards.length ? <div className="grid">{cards}</div> : <div className="center-msg">Nothing here yet.</div>}

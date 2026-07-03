@@ -103,28 +103,38 @@ object LibraryService {
      * Re-check [entries] (default: the whole library) for new chapters since the last snapshot,
      * updating each entry's snapshot. Returns one [UpdateResult] per entry.
      */
-    fun update(entries: List<LibraryEntry> = LibraryStore.list()): List<UpdateResult> =
-        entries.map { entry ->
-            val source = SourceManager.loadSource(entry.sourceId)
-            if (source == null) {
-                log.warn("Source {} for '{}' not installed; skipping", entry.sourceId, entry.title)
-                return@map UpdateResult(entry, emptyList())
-            }
-            val current =
-                runCatching { runBlocking { source.getChapterList(seed(entry.mangaUrl)) } }
-                    .getOrElse {
-                        log.warn("Update failed for '{}': {}", entry.title, it.message)
-                        return@map UpdateResult(entry, emptyList())
-                    }
-            val knownUrls = entry.knownChapters.map { it.url }.toSet()
-            val newChapters = current.filter { it.url !in knownUrls }.map { it.toRef() }
-            entry.knownChapters = current.map { it.toRef() }.toMutableList()
-            // Accumulate unseen new-chapter urls for the badge (only after the first snapshot exists).
-            if (knownUrls.isNotEmpty()) newChapters.forEach { if (it.url !in entry.newChapters) entry.newChapters.add(it.url) }
-            entry.lastCheckedAt = System.currentTimeMillis()
-            LibraryStore.upsert(entry)
-            UpdateResult(entry, newChapters)
+    fun update(
+        entries: List<LibraryEntry> = LibraryStore.list(),
+        onProgress: ((done: Int, total: Int) -> Unit)? = null,
+    ): List<UpdateResult> {
+        val total = entries.size
+        return entries.mapIndexed { i, entry ->
+            val result = updateOne(entry)
+            onProgress?.invoke(i + 1, total)
+            result
         }
+    }
+
+    private fun updateOne(entry: LibraryEntry): UpdateResult {
+        val source = SourceManager.loadSource(entry.sourceId) ?: run {
+            log.warn("Source {} for '{}' not installed; skipping", entry.sourceId, entry.title)
+            return UpdateResult(entry, emptyList())
+        }
+        val current =
+            runCatching { runBlocking { source.getChapterList(seed(entry.mangaUrl)) } }
+                .getOrElse {
+                    log.warn("Update failed for '{}': {}", entry.title, it.message)
+                    return UpdateResult(entry, emptyList())
+                }
+        val knownUrls = entry.knownChapters.map { it.url }.toSet()
+        val newChapters = current.filter { it.url !in knownUrls }.map { it.toRef() }
+        entry.knownChapters = current.map { it.toRef() }.toMutableList()
+        // Accumulate unseen new-chapter urls for the badge (only after the first snapshot exists).
+        if (knownUrls.isNotEmpty()) newChapters.forEach { if (it.url !in entry.newChapters) entry.newChapters.add(it.url) }
+        entry.lastCheckedAt = System.currentTimeMillis()
+        LibraryStore.upsert(entry)
+        return UpdateResult(entry, newChapters)
+    }
 
     /** Clear the "new chapters" flag for a series (called when the user opens it). */
     fun markSeen(sourceId: Long, mangaUrl: String) {
