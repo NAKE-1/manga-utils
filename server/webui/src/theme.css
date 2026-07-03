@@ -340,6 +340,18 @@ img { display: block; }
 .sheet-title { font-size: 19px; font-weight: 800; margin-bottom: 14px; }
 .sheet-label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 8px; }
 .sheet-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 18px; font-size: 15px; font-weight: 600; color: var(--text); }
+/* Reader loading-mode options: title + description + a radio on the right. */
+.load-opts { display: flex; flex-direction: column; }
+.load-opt { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 12px 2px; border-bottom: 1px solid var(--border); color: var(--text); cursor: pointer; }
+.load-opt:last-child { border-bottom: none; }
+.load-opt-text { flex: 1; min-width: 0; }
+.load-opt-title { font-size: 15px; font-weight: 700; }
+.load-opt-desc { font-size: 12px; color: var(--muted); line-height: 1.35; margin-top: 2px; }
+.load-opt .radio { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--muted); }
+.load-opt.on .radio { border-color: var(--accent); background:
+  radial-gradient(circle, var(--accent) 0 5px, transparent 6px); }
+.load-opt.on .load-opt-title { color: var(--accent); }
 .seg { display: flex; gap: 8px; }
 .seg-btn { flex: 1; padding: 11px; border-radius: 10px; background: var(--card-2); color: var(--text); font-weight: 700; font-size: 14px; cursor: pointer; }
 .seg-btn.on { background: var(--accent); color: #fff; }
