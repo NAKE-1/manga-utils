@@ -358,17 +358,27 @@ img { display: block; }
   white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
 .reader-chip:active { background: rgba(40,40,44,0.95); }
 
-/* In-reader chapter list (opened by tapping the chapter chip). */
-.chapters-sheet { max-height: 78vh; display: flex; flex-direction: column; }
+/* In-reader chapter list (opened by tapping the chapter chip). Capped so a scrim gap always shows
+   above it (tap there or drag the handle down to close). */
+.chapters-sheet { max-height: 72vh; display: flex; flex-direction: column; }
 .chap-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-bottom: 4px; }
 .chap-item { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   width: 100%; text-align: left; background: var(--card2, #1a1a1e); color: var(--text);
-  border: 1px solid transparent; border-radius: 10px; padding: 12px 14px; font-size: 14px; cursor: pointer; }
+  border: 1px solid transparent; border-radius: 10px; padding: 12px 14px; font-size: 14px; cursor: pointer;
+  font-family: inherit; }
 .chap-item:active { background: #242429; }
 .chap-item.current { border-color: var(--accent, #7c6cf0); background: #1e1b2e; }
-.chap-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chap-cur { flex: none; font-size: 11px; font-weight: 700; color: var(--accent, #a99cf5);
-  background: #0e0e10; padding: 2px 8px; border-radius: 999px; }
+.chap-item.read .chap-name { color: #78787f; } /* read chapters dimmed, like the detail list */
+.chap-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.chap-tags { flex: none; display: flex; align-items: center; gap: 8px; }
+.chap-cur { font-size: 11px; font-weight: 700; color: var(--accent, #a99cf5); background: #0e0e10; padding: 2px 8px; border-radius: 999px; }
+.chap-check { color: #4ade80; font-weight: 700; }
+.chap-scan { font-size: 11px; color: #9a9aa2; background: #0e0e10; padding: 2px 7px; border-radius: 6px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-dl { color: #22c55e; font-weight: 700; }
+/* A chapter that has multiple scanlator versions: header + indented variants. */
+.chap-group { display: flex; flex-direction: column; gap: 3px; padding: 4px 0; }
+.chap-group-h { font-size: 11px; font-weight: 700; color: #8a8a92; padding: 2px 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+.chap-item.variant { margin-left: 12px; background: #141417; }
 .reader-tools { position: fixed; right: 10px; bottom: calc(12px + var(--safe-b)); z-index: 10;
   display: flex; flex-direction: column; gap: 10px; animation: fade-in .16s ease; }
 .r-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff;

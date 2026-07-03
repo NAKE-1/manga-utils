@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, pageUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings } from '../components/icons'
@@ -91,6 +91,7 @@ export function Reader() {
   const [chrome, setChrome] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [showChapters, setShowChapters] = useState(false)
+  const [readUrls, setReadUrls] = useState<Set<string>>(new Set())
   const [sizing, setSizing] = useState<Sizing>(lsGet('reader.sizing', 'clamp') as Sizing)
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
@@ -101,7 +102,7 @@ export function Reader() {
   const dragStartY = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  function closeSheet() { setShowSettings(false); setSheetDrag(0); setDragging(false) }
+  function closeSheet() { setShowSettings(false); setShowChapters(false); setSheetDrag(0); setDragging(false) }
   function sheetDown(e: React.PointerEvent) { dragStartY.current = e.clientY; setDragging(true); e.currentTarget.setPointerCapture(e.pointerId) }
   function sheetMove(e: React.PointerEvent) { if (dragging) setSheetDrag(Math.max(0, e.clientY - dragStartY.current)) }
   function sheetUp() {
@@ -132,6 +133,7 @@ export function Reader() {
     setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setShowChapters(false)
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
+    api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
     api.setRead(sourceId, manga, chapter, true)
     api.detail(sourceId, manga)
@@ -174,6 +176,40 @@ export function Reader() {
     if (!c) return
     // replace: don't pile chapter views onto history, so Back always returns to the manga screen.
     nav(`/reader/${sourceId}?manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(c.url)}&name=${encodeURIComponent(c.name)}&title=${encodeURIComponent(title)}`, { replace: true })
+  }
+
+  // Group the full chapter list by number so multiple scanlator versions (Alpha/Gamma/Delta…) of the
+  // same chapter appear together; unnumbered chapters stay separate.
+  const chapterGroups = useMemo(() => {
+    const groups: { key: string; number: number; variants: Chapter[] }[] = []
+    const byNum = new Map<number, number>()
+    for (const c of chapters) {
+      if (c.number > 0 && byNum.has(c.number)) { groups[byNum.get(c.number)!].variants.push(c); continue }
+      if (c.number > 0) byNum.set(c.number, groups.length)
+      groups.push({ key: c.number > 0 ? 'n' + c.number : c.url, number: c.number, variants: [c] })
+    }
+    return groups
+  }, [chapters])
+
+  // One chapter row. `variant` = a scanlator alternative shown under a grouped chapter header.
+  function chapterRow(c: Chapter, variant = false) {
+    const read = readUrls.has(c.url)
+    const current = c.url === chapter
+    return (
+      <button
+        key={c.url}
+        className={'chap-item' + (current ? ' current' : '') + (read ? ' read' : '') + (variant ? ' variant' : '')}
+        onClick={() => { setShowChapters(false); if (!current) openChapter(c) }}
+      >
+        <span className="chap-name">{variant ? (c.scanlator || 'Unknown group') : (c.name || `Chapter ${c.number}`)}</span>
+        <span className="chap-tags">
+          {c.downloaded && <span className="chap-dl" title="Downloaded">↓</span>}
+          {!variant && c.scanlator && <span className="chap-scan">{c.scanlator}</span>}
+          {read && !current && <span className="chap-check" title="Read">✓</span>}
+          {current && <span className="chap-cur">Reading</span>}
+        </span>
+      </button>
+    )
   }
 
   function onScroll() {
@@ -250,21 +286,25 @@ export function Reader() {
 
       {/* Settings bottom-sheet */}
       {showChapters && (
-        <div className="sheet-scrim" onClick={() => setShowChapters(false)}>
-          <div className="sheet chapters-sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="sheet-handle" />
-            <div className="sheet-title">Chapters · {navList.length}</div>
+        <div className="sheet-scrim" onClick={closeSheet}>
+          <div
+            className="sheet chapters-sheet"
+            style={{ transform: `translateY(${sheetDrag}px)`, transition: dragging ? 'none' : 'transform .2s ease' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sheet-drag" onPointerDown={sheetDown} onPointerMove={sheetMove} onPointerUp={sheetUp} onPointerCancel={sheetUp}>
+              <div className="sheet-handle" />
+              <div className="sheet-title">Chapters · {chapters.length}</div>
+            </div>
             <div className="chap-list">
-              {navList.map((c) => (
-                <button
-                  key={c.url}
-                  className={'chap-item' + (c.url === chapter ? ' current' : '')}
-                  onClick={() => { setShowChapters(false); if (c.url !== chapter) openChapter(c) }}
-                >
-                  <span className="chap-name">{c.name || `Chapter ${c.number}`}</span>
-                  {c.url === chapter && <span className="chap-cur">Reading</span>}
-                </button>
-              ))}
+              {chapterGroups.map((g) => g.variants.length === 1
+                ? chapterRow(g.variants[0])
+                : (
+                  <div className="chap-group" key={g.key}>
+                    <div className="chap-group-h">Chapter {g.number > 0 ? g.number : ''} · {g.variants.length} groups</div>
+                    {g.variants.map((c) => chapterRow(c, true))}
+                  </div>
+                ))}
             </div>
           </div>
         </div>
