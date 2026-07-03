@@ -145,6 +145,12 @@ object LibraryService {
         }
     }
 
+    /** Drop one chapter from the "new" set (called when it's read) — the badge clears once none remain. */
+    fun markChapterSeen(sourceId: Long, mangaUrl: String, chapterUrl: String) {
+        val entry = LibraryStore.find(sourceId, mangaUrl) ?: return
+        if (entry.newChapters.remove(chapterUrl)) LibraryStore.upsert(entry)
+    }
+
     private fun SChapter.toRef() =
         ChapterRef(
             url = url,

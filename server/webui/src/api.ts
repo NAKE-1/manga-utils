@@ -138,6 +138,7 @@ export const api = {
   deleteHistory: (id: string, manga: string) =>
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}`, { method: 'DELETE' }),
   clearHistory: () => fetch('/api/history/clear', { method: 'POST' }),
+  clearNewChapters: () => fetch('/api/library/clear-new', { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
 
   // Extensions + repositories
   extensions: () => getJson<ExtInstalled[]>('/api/extensions'),

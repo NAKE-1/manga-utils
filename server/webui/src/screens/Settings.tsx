@@ -21,6 +21,8 @@ export function Settings() {
   const [languages, setLanguages] = useState<string[]>([])
   const [clearing, setClearing] = useState(false)
   const [clearMsg, setClearMsg] = useState('')
+  const [clearingNew, setClearingNew] = useState(false)
+  const [clearNewMsg, setClearNewMsg] = useState('')
   const [stats, setStats] = useState<DevStats | null>(null)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
 
@@ -81,6 +83,11 @@ export function Settings() {
     setClearing(true); setClearMsg('')
     await api.clearHistory().catch(() => {})
     setClearing(false); setClearMsg('Cleared')
+  }
+  async function clearNewBadges() {
+    setClearingNew(true); setClearNewMsg('')
+    const r = await api.clearNewChapters().catch(() => ({ count: 0 }))
+    setClearingNew(false); setClearNewMsg(r.count > 0 ? `Cleared ${r.count}` : 'Nothing to clear')
   }
 
   async function runDiag() {
@@ -162,6 +169,10 @@ export function Settings() {
           <div className="set-actions">
             <button className="btn danger" disabled={clearing} onClick={clearContinue}>{clearing ? 'Clearing…' : 'Clear continue reading'}</button>
             {clearMsg && <span className="set-msg">{clearMsg}</span>}
+          </div>
+          <div className="set-actions">
+            <button className="btn" disabled={clearingNew} onClick={clearNewBadges}>{clearingNew ? 'Clearing…' : 'Clear new-chapter badges'}</button>
+            {clearNewMsg && <span className="set-msg">{clearNewMsg}</span>}
           </div>
         </div>
       </section>

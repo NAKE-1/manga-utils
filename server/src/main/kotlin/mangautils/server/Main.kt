@@ -500,6 +500,14 @@ fun Application.module() {
             call.respond(UpdateSummaryDto(results.sumOf { it.newChapters.size }, results.count { it.newChapters.isNotEmpty() }))
         }
         get("/api/library/update/progress") { call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning)) }
+        // Clear every series' "new chapters" flag (the ! badges) at once.
+        post("/api/library/clear-new") {
+            val n = withContext(Dispatchers.IO) {
+                LibraryStore.list().filter { it.newChapters.isNotEmpty() }
+                    .onEach { LibraryService.markSeen(it.sourceId, it.mangaUrl) }.size
+            }
+            call.respond(CountDto(n))
+        }
 
         // ---- Per-manga state for the detail page (in-library + read + bookmarked) ----
         get("/api/manga/state") {
@@ -642,7 +650,11 @@ fun Application.module() {
             val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
             val chapter = call.queryParam("chapter") ?: return@post call.respond(HttpStatusCode.BadRequest)
             val read = call.queryParam("read")?.toBoolean() ?: true
-            withContext(Dispatchers.IO) { ReadStore.setRead(id, manga, chapter, read) }
+            withContext(Dispatchers.IO) {
+                ReadStore.setRead(id, manga, chapter, read)
+                // Reading a new chapter clears its "new" flag; the "!" badge disappears once none remain.
+                if (read) LibraryService.markChapterSeen(id, manga, chapter)
+            }
             call.respond(HttpStatusCode.OK)
         }
 
