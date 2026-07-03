@@ -333,9 +333,12 @@ img { display: block; }
 
 /* Reader settings bottom-sheet */
 .sheet-scrim { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; animation: fade-in .14s ease; }
-.sheet { width: 100%; background: var(--card); border-radius: 18px 18px 0 0; padding: 8px 18px calc(22px + var(--safe-b));
-  animation: sheet-up .2s ease both; }
+.sheet { width: 100%; background: var(--card); border-radius: 18px 18px 0 0; padding: 0 18px calc(22px + var(--safe-b));
+  max-height: 88vh; overflow-y: auto; animation: sheet-up .2s ease backwards; }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+/* Grab area (handle + title): drag it down to dismiss. Sticky so it stays reachable while scrolling. */
+.sheet-drag { position: sticky; top: 0; z-index: 1; background: var(--card); padding: 8px 0 2px; touch-action: none; cursor: grab; }
+.sheet-drag:active { cursor: grabbing; }
 .sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: var(--muted-2); margin: 6px auto 12px; }
 .sheet-title { font-size: 19px; font-weight: 800; margin-bottom: 14px; }
 .sheet-label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 8px; }

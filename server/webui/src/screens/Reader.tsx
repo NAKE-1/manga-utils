@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, pageUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings } from '../components/icons'
@@ -99,7 +99,20 @@ export function Reader() {
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
   const [showPill, setShowPill] = useState<boolean>(lsGet('reader.pill', '1') === '1')
   const [loadMode, setLoadMode] = useState<LoadMode>(lsGet('reader.loadmode', 'balanced') as LoadMode)
+  const [sheetDrag, setSheetDrag] = useState(0)
+  const [dragging, setDragging] = useState(false)
+  const dragStartY = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  function closeSheet() { setShowSettings(false); setSheetDrag(0); setDragging(false) }
+  function sheetDown(e: React.PointerEvent) { dragStartY.current = e.clientY; setDragging(true); e.currentTarget.setPointerCapture(e.pointerId) }
+  function sheetMove(e: React.PointerEvent) { if (dragging) setSheetDrag(Math.max(0, e.clientY - dragStartY.current)) }
+  function sheetUp() {
+    if (!dragging) return
+    setDragging(false)
+    if (sheetDrag > 90) { setSheetDrag(700); setTimeout(closeSheet, 200) } // fling/drag past threshold → slide out & close
+    else setSheetDrag(0) // snap back
+  }
 
   useEffect(() => { localStorage.setItem('reader.sizing', sizing) }, [sizing])
   useEffect(() => { localStorage.setItem('reader.gap', String(gap)) }, [gap])
@@ -213,10 +226,16 @@ export function Reader() {
 
       {/* Settings bottom-sheet */}
       {showSettings && (
-        <div className="sheet-scrim" onClick={() => setShowSettings(false)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="sheet-handle" />
-            <div className="sheet-title">Reader settings</div>
+        <div className="sheet-scrim" onClick={closeSheet}>
+          <div
+            className="sheet"
+            style={{ transform: `translateY(${sheetDrag}px)`, transition: dragging ? 'none' : 'transform .2s ease' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sheet-drag" onPointerDown={sheetDown} onPointerMove={sheetMove} onPointerUp={sheetUp} onPointerCancel={sheetUp}>
+              <div className="sheet-handle" />
+              <div className="sheet-title">Reader settings</div>
+            </div>
 
             <div className="sheet-label">Strip sizing</div>
             <div className="seg">
