@@ -23,15 +23,41 @@ object DownloadStore {
 
     private val root: Path get() = AppConfig.downloadsDir
 
-    /** Every downloaded series (a sub-folder of the downloads dir), newest-modified first. */
+    // Building the series list stats every page file on disk, so it's cached. Every change the app makes
+    // (download finished, chapter deleted) calls invalidate() for instant correctness; the TTL is only a
+    // safety net for files changed OUTSIDE the app (e.g. deleted in a file explorer).
+    @Volatile private var seriesCache: List<Series>? = null
+    @Volatile private var cachedAt = 0L
+    private val cacheLock = Any()
+    private const val CACHE_TTL_MS = 60_000L
+
+    /** Drop the cached series list so the next [listSeries] re-scans disk. */
+    fun invalidate() {
+        seriesCache = null
+    }
+
+    /** Every downloaded series (a sub-folder of the downloads dir), title-sorted. Cached (see above). */
     fun listSeries(): List<Series> {
+        val hit = seriesCache
+        if (hit != null && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) return hit
+        // Only one thread re-walks at a time; the rest wait and reuse its result (no thundering herd).
+        return synchronized(cacheLock) {
+            val again = seriesCache
+            if (again != null && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) {
+                again
+            } else {
+                computeSeries().also { seriesCache = it; cachedAt = System.currentTimeMillis() }
+            }
+        }
+    }
+
+    private fun computeSeries(): List<Series> {
         if (!Files.isDirectory(root)) return emptyList()
         return Files.list(root).use { st ->
             st.filter { it.isDirectory() }.map { dir ->
-                val chs = chapterEntries(dir)
+                val stats = chapterEntries(dir).map { statChapter(it) }
                 val hasCover = runCatching { Files.list(dir).use { s -> s.anyMatch { it.name.startsWith("cover.") } } }.getOrDefault(false)
-                val incomplete = chs.count { !hasComicInfo(it, it.name.endsWith(".cbz")) }
-                Series(dir.name, chs.size, incomplete, chs.sumOf { sizeOf(it) }, hasCover)
+                Series(dir.name, stats.size, stats.count { !it.complete }, stats.sumOf { it.bytes }, hasCover)
             }.toList()
         }.sortedBy { it.title.lowercase() }
     }
@@ -42,12 +68,13 @@ object DownloadStore {
         if (!dir.isDirectory()) return emptyList()
         return chapterEntries(dir).map { p ->
             val cbz = p.name.endsWith(".cbz")
+            val s = statChapter(p)
             Chapter(
                 name = if (cbz) p.name.removeSuffix(".cbz") else p.name,
-                pages = pageCount(p, cbz),
-                bytes = sizeOf(p),
+                pages = s.pages,
+                bytes = s.bytes,
                 cbz = cbz,
-                complete = hasComicInfo(p, cbz),
+                complete = s.complete,
             )
         }.sortedBy { it.name.lowercase() }
     }
@@ -63,6 +90,7 @@ object DownloadStore {
             runCatching { Files.walk(folder).use { st -> st.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } } }
             removed = true
         }
+        if (removed) invalidate()
         return removed
     }
 
@@ -71,25 +99,38 @@ object DownloadStore {
             Files.list(dir).use { st -> st.filter { it.isDirectory() || it.name.endsWith(".cbz") }.toList() }
         }.getOrDefault(emptyList())
 
-    /** A finished chapter has ComicInfo.xml (written last). Absent ⇒ the download was interrupted. */
-    private fun hasComicInfo(p: Path, cbz: Boolean): Boolean = runCatching {
-        if (cbz) {
-            java.util.zip.ZipFile(p.toFile()).use { z -> z.getEntry("ComicInfo.xml") != null } && pageCount(p, true) > 0
-        } else {
-            Files.exists(p.resolve("ComicInfo.xml")) && pageCount(p, false) > 0
-        }
-    }.getOrDefault(false)
+    private data class ChapterStat(val pages: Int, val bytes: Long, val complete: Boolean)
 
-    private fun pageCount(p: Path, cbz: Boolean): Int = runCatching {
-        if (cbz) {
-            java.util.zip.ZipFile(p.toFile()).use { z -> z.entries().asSequence().count { !it.isDirectory && !it.name.endsWith("ComicInfo.xml") } }
+    /**
+     * Scan a chapter (page folder or .cbz) in ONE pass → page count, total bytes, and whether it
+     * finished. A finished chapter has ComicInfo.xml (written last) and at least one page; missing
+     * ComicInfo ⇒ the download was interrupted.
+     */
+    private fun statChapter(p: Path): ChapterStat = runCatching {
+        if (p.name.endsWith(".cbz")) {
+            var pages = 0
+            var hasInfo = false
+            java.util.zip.ZipFile(p.toFile()).use { z ->
+                val entries = z.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    if (entry.name.endsWith("ComicInfo.xml")) hasInfo = true else pages++
+                }
+            }
+            ChapterStat(pages, runCatching { Files.size(p) }.getOrDefault(0L), hasInfo && pages > 0)
         } else {
-            Files.list(p).use { st -> st.filter { !it.isDirectory() && it.name != "ComicInfo.xml" }.count().toInt() }
+            var pages = 0
+            var bytes = 0L
+            var hasInfo = false
+            Files.list(p).use { st ->
+                st.forEach { child ->
+                    if (Files.isDirectory(child)) return@forEach
+                    bytes += runCatching { Files.size(child) }.getOrDefault(0L)
+                    if (child.name == "ComicInfo.xml") hasInfo = true else pages++
+                }
+            }
+            ChapterStat(pages, bytes, hasInfo && pages > 0)
         }
-    }.getOrDefault(0)
-
-    private fun sizeOf(p: Path): Long = runCatching {
-        if (p.isDirectory()) Files.walk(p).use { st -> st.filter { !it.isDirectory() }.mapToLong { Files.size(it) }.sum() }
-        else Files.size(p)
-    }.getOrDefault(0)
+    }.getOrDefault(ChapterStat(0, 0, false))
 }

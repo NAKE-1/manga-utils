@@ -184,6 +184,8 @@ class DownloadManager(
                 } else {
                     FolderWriter.write(dest, images, comicInfo(title, details, chapter, images.size))
                 }
+                DownloadStore.invalidate() // a chapter just landed on disk — refresh the manager's cached list
+
                 job.attempts.add(
                     JobAttempt(
                         sourceId = cand.sourceId,
