@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, Source, SettingsInfo, DiagResult, DevStats } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
+import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
 const fmtUptime = (ms: number) => {
   const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60)
@@ -23,6 +24,7 @@ export function Settings() {
   const [clearMsg, setClearMsg] = useState('')
   const [clearingNew, setClearingNew] = useState(false)
   const [clearNewMsg, setClearNewMsg] = useState('')
+  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
   const [stats, setStats] = useState<DevStats | null>(null)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
 
@@ -79,15 +81,27 @@ export function Settings() {
     const s = await api.saveSettings({ perSourceParallel: !info.perSourceParallel }).catch(() => null)
     if (s) setInfo(s)
   }
-  async function clearContinue() {
-    setClearing(true); setClearMsg('')
-    await api.clearHistory().catch(() => {})
-    setClearing(false); setClearMsg('Cleared')
+  function clearContinue() {
+    setConfirm({
+      title: 'Clear continue reading?', message: 'Remove every item from Continue reading (your reading history)?',
+      confirmLabel: 'Clear', danger: true, onCancel: () => setConfirm(null),
+      onConfirm: async () => {
+        setConfirm(null); setClearing(true); setClearMsg('')
+        await api.clearHistory().catch(() => {})
+        setClearing(false); setClearMsg('Cleared')
+      },
+    })
   }
-  async function clearNewBadges() {
-    setClearingNew(true); setClearNewMsg('')
-    const r = await api.clearNewChapters().catch(() => ({ count: 0 }))
-    setClearingNew(false); setClearNewMsg(r.count > 0 ? `Cleared ${r.count}` : 'Nothing to clear')
+  function clearNewBadges() {
+    setConfirm({
+      title: 'Clear new-chapter badges?', message: 'Remove the “!” new-chapter indicator from every series?',
+      confirmLabel: 'Clear', danger: true, onCancel: () => setConfirm(null),
+      onConfirm: async () => {
+        setConfirm(null); setClearingNew(true); setClearNewMsg('')
+        const r = await api.clearNewChapters().catch(() => ({ count: 0 }))
+        setClearingNew(false); setClearNewMsg(r.count > 0 ? `Cleared ${r.count}` : 'Nothing to clear')
+      },
+    })
   }
 
   async function runDiag() {
@@ -242,6 +256,8 @@ export function Settings() {
           <div className="set-kv"><span>Data folder</span><code>{info?.dataDir || '…'}</code></div>
         </div>
       </section>
+
+      {confirm && <ConfirmDialog spec={confirm} />}
     </div>
   )
 }
