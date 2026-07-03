@@ -361,24 +361,26 @@ img { display: block; }
 /* In-reader chapter list (opened by tapping the chapter chip). Capped so a scrim gap always shows
    above it (tap there or drag the handle down to close). */
 .chapters-sheet { max-height: 72vh; display: flex; flex-direction: column; }
-.chap-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-bottom: 4px; }
-.chap-item { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  width: 100%; text-align: left; background: var(--card2, #1a1a1e); color: var(--text);
-  border: 1px solid transparent; border-radius: 10px; padding: 12px 14px; font-size: 14px; cursor: pointer;
-  font-family: inherit; }
-.chap-item:active { background: #242429; }
-.chap-item.current { border-color: var(--accent, #7c6cf0); background: #1e1b2e; }
-.chap-item.read .chap-name { color: #78787f; } /* read chapters dimmed, like the detail list */
-.chap-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.chap-tags { flex: none; display: flex; align-items: center; gap: 8px; }
-.chap-cur { font-size: 11px; font-weight: 700; color: var(--accent, #a99cf5); background: #0e0e10; padding: 2px 8px; border-radius: 999px; }
-.chap-check { color: #4ade80; font-weight: 700; }
-.chap-scan { font-size: 11px; color: #9a9aa2; background: #0e0e10; padding: 2px 7px; border-radius: 6px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-list { overflow-y: auto; display: flex; flex-direction: column; }
+.chap-item { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; background: transparent; color: var(--text);
+  border: none; border-bottom: 1px solid #1e1e24; padding: 13px 6px; cursor: pointer; font-family: inherit; }
+.chap-item:active { background: #17171a; }
+.chap-item.current { background: #1a1730; border-radius: 8px; border-bottom-color: transparent; }
+.chap-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chap-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-meta { font-size: 12px; color: var(--muted, #8a8a92); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-item.read .chap-name { color: var(--muted, #78787f); font-weight: 600; } /* read = dimmed, like detail */
+.chap-item.read .chap-meta { opacity: .65; }
+.chap-tags { flex: none; display: flex; align-items: center; gap: 10px; }
+.chap-cur { font-size: 11px; font-weight: 700; color: var(--accent, #a99cf5); background: #0e0e10; padding: 3px 9px; border-radius: 999px; }
+.chap-check { color: #4ade80; font-weight: 700; font-size: 15px; }
 .chap-dl { color: #22c55e; font-weight: 700; }
-/* A chapter that has multiple scanlator versions: header + indented variants. */
-.chap-group { display: flex; flex-direction: column; gap: 3px; padding: 4px 0; }
-.chap-group-h { font-size: 11px; font-weight: 700; color: #8a8a92; padding: 2px 4px; text-transform: uppercase; letter-spacing: 0.03em; }
-.chap-item.variant { margin-left: 12px; background: #141417; }
+/* A chapter with multiple scanlator versions: "CH. N" header + indented variants. */
+.chap-group { display: flex; flex-direction: column; }
+.chap-group-h { font-size: 11px; font-weight: 800; color: #8a8a92; padding: 12px 6px 4px; letter-spacing: 0.04em; }
+.chap-item.variant { padding-left: 18px; }
+.chap-item.variant .chap-name { font-size: 14px; font-weight: 500; }
 .reader-tools { position: fixed; right: 10px; bottom: calc(12px + var(--safe-b)); z-index: 10;
   display: flex; flex-direction: column; gap: 10px; animation: fade-in .16s ease; }
 .r-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff;

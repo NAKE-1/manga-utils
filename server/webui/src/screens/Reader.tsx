@@ -92,6 +92,7 @@ export function Reader() {
   const [showSettings, setShowSettings] = useState(false)
   const [showChapters, setShowChapters] = useState(false)
   const [readUrls, setReadUrls] = useState<Set<string>>(new Set())
+  const currentChapRef = useRef<HTMLButtonElement>(null)
   const [sizing, setSizing] = useState<Sizing>(lsGet('reader.sizing', 'clamp') as Sizing)
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
@@ -117,6 +118,8 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.preload', String(preload)) }, [preload])
   useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
+  // Center the current chapter when the chapter list opens.
+  useEffect(() => { if (showChapters) requestAnimationFrame(() => currentChapRef.current?.scrollIntoView({ block: 'center' })) }, [showChapters])
 
   // Track which pages are currently in a failed state (idempotent via the Set), for the trouble banner.
   // useCallback keeps its identity stable so the per-page load timeout isn't reset every render.
@@ -191,20 +194,26 @@ export function Reader() {
     return groups
   }, [chapters])
 
-  // One chapter row. `variant` = a scanlator alternative shown under a grouped chapter header.
+  // One chapter row — mirrors the detail page's list (name + scanlator·date meta). `variant` = a
+  // scanlator alternative shown under a grouped chapter header (its name is the scanlator).
   function chapterRow(c: Chapter, variant = false) {
     const read = readUrls.has(c.url)
     const current = c.url === chapter
+    const date = c.dateUpload > 0 ? new Date(c.dateUpload).toLocaleDateString() : null
+    const meta = [variant ? null : c.scanlator, date].filter(Boolean).join('  ·  ')
     return (
       <button
         key={c.url}
+        ref={current ? currentChapRef : undefined}
         className={'chap-item' + (current ? ' current' : '') + (read ? ' read' : '') + (variant ? ' variant' : '')}
         onClick={() => { setShowChapters(false); if (!current) openChapter(c) }}
       >
-        <span className="chap-name">{variant ? (c.scanlator || 'Unknown group') : (c.name || `Chapter ${c.number}`)}</span>
+        <span className="chap-text">
+          <span className="chap-name">{variant ? (c.scanlator || 'Unknown group') : (c.name || `Chapter ${c.number}`)}</span>
+          {meta && <span className="chap-meta">{meta}</span>}
+        </span>
         <span className="chap-tags">
           {c.downloaded && <span className="chap-dl" title="Downloaded">↓</span>}
-          {!variant && c.scanlator && <span className="chap-scan">{c.scanlator}</span>}
           {read && !current && <span className="chap-check" title="Read">✓</span>}
           {current && <span className="chap-cur">Reading</span>}
         </span>
@@ -301,7 +310,7 @@ export function Reader() {
                 ? chapterRow(g.variants[0])
                 : (
                   <div className="chap-group" key={g.key}>
-                    <div className="chap-group-h">Chapter {g.number > 0 ? g.number : ''} · {g.variants.length} groups</div>
+                    <div className="chap-group-h">CH. {g.number > 0 ? g.number : '—'} · {g.variants.length} versions</div>
                     {g.variants.map((c) => chapterRow(c, true))}
                   </div>
                 ))}
