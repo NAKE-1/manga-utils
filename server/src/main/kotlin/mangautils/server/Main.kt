@@ -400,7 +400,7 @@ fun Application.module() {
         // /api/downloads every second, images stream constantly) — it floods the console.
         filter { call ->
             val p = call.request.path()
-            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress")
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p.startsWith("/api/net"))
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -762,6 +762,18 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+
+        // ---- Client<->host speed test (phone <-> server over Tailscale). Timed on the client. ----
+        get("/api/net/ping") { call.respondBytes("pong".toByteArray()) }
+        get("/api/net/down") {
+            val n = (call.queryParam("bytes")?.toIntOrNull() ?: 8_000_000).coerceIn(1, 64_000_000)
+            call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
+            call.respondBytes(ByteArray(n), io.ktor.http.ContentType.Application.OctetStream)
+        }
+        post("/api/net/up") {
+            val n = call.receive<ByteArray>().size
+            call.respondBytes(n.toString().toByteArray())
+        }
         // TEST: make the app think a library manga got a new chapter — forgets its latest known
         // chapter so the next update re-detects it as new (setting the "!" badge, and auto-downloading
         // it if that setting is on). Reversible: the update re-adds it to knownChapters.

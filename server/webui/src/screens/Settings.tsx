@@ -29,6 +29,8 @@ export function Settings() {
   const [simManga, setSimManga] = useState('')
   const [simMsg, setSimMsg] = useState('')
   const [simRunning, setSimRunning] = useState(false)
+  const [net, setNet] = useState<{ pingMs: number; downMbps: number; upMbps: number } | null>(null)
+  const [netRunning, setNetRunning] = useState(false)
   const [stats, setStats] = useState<DevStats | null>(null)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
 
@@ -132,6 +134,25 @@ export function Settings() {
         setClearingNew(false); setClearNewMsg(r.count > 0 ? `Cleared ${r.count}` : 'Nothing to clear')
       },
     })
+  }
+
+  async function runNetTest() {
+    setNetRunning(true); setNet(null)
+    const mbps = (bytes: number, ms: number) => (bytes * 8) / (ms / 1000) / 1e6
+    try {
+      // Ping: several round-trips, keep the best (least jittery).
+      let best = Infinity
+      for (let i = 0; i < 5; i++) { const t = performance.now(); await fetch('/api/net/ping', { cache: 'no-store' }); best = Math.min(best, performance.now() - t) }
+      // Download: fetch 8 MB and time the full body.
+      const dn = 8_000_000; let t = performance.now()
+      const buf = await (await fetch(`/api/net/down?bytes=${dn}`, { cache: 'no-store' })).arrayBuffer()
+      const downMbps = mbps(buf.byteLength, performance.now() - t)
+      // Upload: POST 4 MB and time it.
+      const up = 4_000_000; t = performance.now()
+      await fetch('/api/net/up', { method: 'POST', body: new Uint8Array(up) })
+      const upMbps = mbps(up, performance.now() - t)
+      setNet({ pingMs: best, downMbps, upMbps })
+    } catch { setNet(null) } finally { setNetRunning(false) }
   }
 
   async function runDiag() {
@@ -299,6 +320,21 @@ export function Settings() {
           <div className="set-row-label">Extensions &amp; repositories</div>
           <div className="set-hint">Install, update or remove extensions and manage repos.</div>
           <div className="set-actions"><button className="btn primary" onClick={() => nav('/extensions')}>Open manager</button></div>
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Connection speed (this device ↔ server)</div>
+          <div className="set-hint">Ping and up/down throughput between your phone and the server over your network. Transfers ~12 MB.</div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={netRunning} onClick={runNetTest}>{netRunning ? 'Testing…' : 'Run speed test'}</button>
+          </div>
+          {net && (
+            <div className="diag-result">
+              <div className="diag-stat"><span className="diag-num">{Math.round(net.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
+              <div className="diag-stat"><span className="diag-num">{net.downMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Download</span></div>
+              <div className="diag-stat"><span className="diag-num">{net.upMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Upload</span></div>
+            </div>
+          )}
         </div>
 
         <div className="set-card">
