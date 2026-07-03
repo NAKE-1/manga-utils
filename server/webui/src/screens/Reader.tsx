@@ -4,12 +4,12 @@ import { api, pageUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings } from '../components/icons'
 
 type Sizing = 'clamp' | 'natural'
-type LoadMode = 'balanced' | 'eager' | 'lazy' | 'blob'
+type LoadMode = 'hybrid' | 'eager' | 'balanced' | 'lazy'
 const LOAD_MODES: { id: LoadMode; label: string; desc: string }[] = [
-  { id: 'balanced', label: 'Balanced', desc: 'Preloads the next few pages, loads the rest as you scroll. Best all-round.' },
-  { id: 'eager', label: 'Eager', desc: 'Loads every page immediately. Fastest, but heaviest on memory & data — can choke weak phones.' },
-  { id: 'lazy', label: 'Lazy', desc: 'Loads each page only as it scrolls into view. Lightest on memory & data; pages may pop in.' },
-  { id: 'blob', label: 'Memory-safe', desc: 'Downloads pages near the screen and frees off-screen ones. Best for weak devices or very long chapters.' },
+  { id: 'hybrid', label: 'Eager-Hybrid', desc: 'Loads the first pages at high priority and the rest in the background — feels instant even on a slow or relayed link. Recommended.' },
+  { id: 'eager', label: 'Eager', desc: 'Loads every page at once, all equal priority. Great on a strong connection; can choke a slow one.' },
+  { id: 'balanced', label: 'Balanced', desc: 'Loads the first few pages, then the rest as you scroll.' },
+  { id: 'lazy', label: 'Lazy', desc: 'Loads each page only as it scrolls into view. Lightest on data; pages may pop in.' },
 ]
 const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
 
@@ -19,7 +19,7 @@ const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
  * dedupChapters so prev/next move one real chapter at a time. Keeps source order (newest-first).
  */
 /** One page in the strip — reserves height with a spinner until the image loads, then fades it in. */
-function ReaderPage({ src, sizing, loading }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy' }) {
+function ReaderPage({ src, sizing, loading, priority }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy'; priority?: 'high' | 'low' }) {
   const [loaded, setLoaded] = useState(false)
   return (
     <div className={'page-slot' + (loaded ? ' loaded' : '')}>
@@ -29,35 +29,11 @@ function ReaderPage({ src, sizing, loading }: { src: string; sizing: Sizing; loa
         src={src}
         alt=""
         loading={loading}
+        fetchPriority={priority}
         draggable={false}
         onLoad={() => setLoaded(true)}
         onError={(e) => { const img = e.currentTarget; if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = src + '&r=1' } }}
       />
-    </div>
-  )
-}
-
-/** Memory-safe page: fetch to an object URL when near the viewport, revoke it once far off-screen. */
-function BlobPage({ src, sizing }: { src: string; sizing: Sizing }) {
-  const [url, setUrl] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    let obj = ''
-    const io = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting) {
-        if (!obj) fetch(src).then((r) => r.blob()).then((b) => { obj = URL.createObjectURL(b); setUrl(obj) }).catch(() => {})
-      } else if (obj) { URL.revokeObjectURL(obj); obj = ''; setUrl(''); setLoaded(false) }
-    }, { rootMargin: '1000px 0px' })
-    io.observe(el)
-    return () => { io.disconnect(); if (obj) URL.revokeObjectURL(obj) }
-  }, [src])
-  return (
-    <div ref={ref} className={'page-slot' + (loaded ? ' loaded' : '')}>
-      {!loaded && <div className="spinner sm" />}
-      {url && <img className={'page ' + sizing + (loaded ? ' loaded' : '')} src={url} alt="" draggable={false} onLoad={() => setLoaded(true)} />}
     </div>
   )
 }
@@ -98,7 +74,7 @@ export function Reader() {
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
   const [showPill, setShowPill] = useState<boolean>(lsGet('reader.pill', '1') === '1')
-  const [loadMode, setLoadMode] = useState<LoadMode>(lsGet('reader.loadmode', 'balanced') as LoadMode)
+  const [loadMode, setLoadMode] = useState<LoadMode>((() => { const m = lsGet('reader.loadmode', 'hybrid'); return (m === 'blob' ? 'hybrid' : m) as LoadMode })())
   const [sheetDrag, setSheetDrag] = useState(0)
   const [dragging, setDragging] = useState(false)
   const dragStartY = useRef(0)
@@ -142,15 +118,24 @@ export function Reader() {
   const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
   const totalCh = (() => { const m = Math.max(0, ...navList.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : navList.length })()
 
-  // Prefetch the next chapter's page list + first images once you pass ~50% of this chapter.
+  // Warm the next chapter's first pages once you're halfway, so advancing feels instant. Fires as soon
+  // as BOTH hold (progress>0.5 AND the chapter list has loaded); the effect re-runs when nextCh appears,
+  // so a fast scroll that reaches 50% before the chapter list finishes still triggers it once ready.
+  // Requests carry X-Preload so the server logs them even for cached/downloaded pages.
   const prefetchedNext = useRef('')
   useEffect(() => {
-    if (progress > 0.5 && nextCh && prefetchedNext.current !== nextCh.url) {
-      prefetchedNext.current = nextCh.url
-      api.pages(sourceId, nextCh.url, title, nextCh.name)
-        .then((r) => { for (let i = 0; i < Math.min(5, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) } })
-        .catch(() => {})
-    }
+    if (progress <= 0.5) return
+    if (!nextCh) { console.log('[reader] past 50% — waiting for chapter list to preload next'); return }
+    if (prefetchedNext.current === nextCh.url) return
+    prefetchedNext.current = nextCh.url
+    api.pages(sourceId, nextCh.url, title, nextCh.name).then((r) => {
+      const n = Math.min(6, r.count)
+      console.log(`[reader] preloading next chapter "${nextCh.name || nextCh.url}" — ${n}/${r.count} pages`)
+      for (let i = 0; i < n; i++) {
+        fetch(pageUrl(sourceId, nextCh.url, i, title, nextCh.name), { headers: { 'X-Preload': '1' }, priority: 'low' } as RequestInit)
+          .then((res) => res.blob()).catch(() => {})
+      }
+    }).catch(() => { prefetchedNext.current = '' })
   }, [progress, nextCh, sourceId, title])
 
   function openChapter(c?: Chapter) {
@@ -186,11 +171,13 @@ export function Reader() {
         {count === 0 && <div className="center-msg" style={{ color: '#ccc' }}>Couldn't load this chapter's pages.</div>}
         {count !== null && count > 0 && (
           <div className="strip" style={{ gap: gap + 'px' }}>
-            {Array.from({ length: count }, (_, i) => (
-              loadMode === 'blob'
-                ? <BlobPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} />
-                : <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={loadMode === 'eager' ? 'eager' : loadMode === 'lazy' ? 'lazy' : (i < preload ? 'eager' : 'lazy')} />
-            ))}
+            {Array.from({ length: count }, (_, i) => {
+              // hybrid: all eager, first `preload` at HIGH priority + the rest LOW (visible pages win the pipe).
+              // eager: all eager, equal. balanced: first `preload` eager then lazy. lazy: all lazy.
+              const eager = loadMode === 'hybrid' || loadMode === 'eager' || (loadMode === 'balanced' && i < preload)
+              const priority = loadMode === 'hybrid' ? (i < preload ? 'high' : 'low') : undefined
+              return <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={eager ? 'eager' : 'lazy'} priority={priority} />
+            })}
           </div>
         )}
       </div>

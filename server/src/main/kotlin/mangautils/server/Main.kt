@@ -919,6 +919,9 @@ fun Application.module() {
             val index = call.queryParam("index")?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val title = call.queryParam("title")
             val name = call.queryParam("name")
+            // Next-chapter preload requests are marked so they're visible in the log even for
+            // cached/downloaded pages (normal /img/page logging stays filtered to keep the console clean).
+            if (call.request.headers["X-Preload"] != null) log.info("preload page {} (chapter={})", index, chapter)
             val bytes = withContext(Dispatchers.IO) {
                 val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name) }.getOrNull() else null
                 if (local != null) {
