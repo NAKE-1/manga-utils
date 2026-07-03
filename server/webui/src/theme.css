@@ -311,6 +311,7 @@ img { display: block; }
   background: #17171a; color: #f5c451; border: 1px dashed #4a4a52; border-radius: 12px;
   font-size: 14px; font-weight: 600; text-align: center;
 }
+.page-fail-icon { font-size: 26px; line-height: 1; margin-bottom: 2px; }
 .page-fail-sub { color: #9a9aa2; font-size: 12px; font-weight: 500; }
 .page-fail:active { background: #202026; }
 

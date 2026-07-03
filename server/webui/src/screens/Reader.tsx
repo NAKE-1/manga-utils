@@ -22,20 +22,17 @@ const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
 function ReaderPage({ src, sizing, loading, priority, index, onStatus }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy'; priority?: 'high' | 'low'; index: number; onStatus?: (i: number, failed: boolean) => void }) {
   const [status, setStatus] = useState<'load' | 'ok' | 'err'>('load')
   const [bust, setBust] = useState(0)
-  const autoTried = useRef(false)
   const url = bust ? src + '&retry=' + bust : src
-  function fail() {
-    if (!autoTried.current) { autoTried.current = true; setBust((b) => b + 1) } // one silent auto-retry
-    else { setStatus('err'); onStatus?.(index, true) }
-  }
-  function retry(e: React.MouseEvent) { e.stopPropagation(); autoTried.current = false; setStatus('load'); onStatus?.(index, false); setBust((b) => b + 1) }
+  // No silent auto-retry: a page that fails shows a reload button; only a tap re-fetches it.
+  function retry(e: React.MouseEvent) { e.stopPropagation(); setStatus('load'); onStatus?.(index, false); setBust((b) => b + 1) }
   return (
     <div className={'page-slot' + (status === 'ok' ? ' loaded' : '')}>
       {status === 'load' && <div className="spinner sm" />}
       {status === 'err' ? (
         <button type="button" className="page-fail" onClick={retry}>
+          <span className="page-fail-icon">↻</span>
           <span>⚠ Page {index + 1} didn't load</span>
-          <span className="page-fail-sub">Tap to retry</span>
+          <span className="page-fail-sub">Tap to reload</span>
         </button>
       ) : (
         <img
@@ -46,7 +43,7 @@ function ReaderPage({ src, sizing, loading, priority, index, onStatus }: { src: 
           fetchPriority={priority}
           draggable={false}
           onLoad={() => { setStatus('ok'); onStatus?.(index, false) }}
-          onError={fail}
+          onError={() => { setStatus('err'); onStatus?.(index, true) }}
         />
       )}
     </div>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      Keep the server console readable. Our own messages and request logs stay at INFO; the noisy
+      framework DEBUG output is silenced: Netty internals, per-page network traces (NetworkHelper),
+      extension class-loading, and the benign "Connection reset" stack traces Ktor logs at DEBUG when
+      a client (phone) drops an in-flight connection. Bump any of these to DEBUG when diagnosing.
+    -->
+    <logger name="mangautils" level="INFO" />
+    <logger name="io.ktor" level="INFO" />
+    <logger name="io.netty" level="WARN" />
+    <logger name="eu.kanade" level="INFO" />
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+</configuration>
