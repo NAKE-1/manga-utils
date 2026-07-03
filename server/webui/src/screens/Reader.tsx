@@ -122,6 +122,7 @@ export function Reader() {
 
   useEffect(() => {
     setCount(null); setPage(1); setProgress(0)
+    prefetchedNext.current = '' // re-arm next-chapter preload for the new chapter
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -142,16 +143,23 @@ export function Reader() {
   const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
   const totalCh = (() => { const m = Math.max(0, ...navList.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : navList.length })()
 
-  // Prefetch the next chapter's page list + first images once you pass ~50% of this chapter.
+  // Once you pass ~50% of this chapter, warm the NEXT chapter into the browser cache so the
+  // chapter change is instant. Eager warms the WHOLE next chapter; other modes just the first few.
+  // Uses low-priority fetch (HTTP cache only, no image decode) so it never starves the page you're
+  // reading — it fills the leftover bandwidth while you read the back half of this chapter.
   const prefetchedNext = useRef('')
   useEffect(() => {
-    if (progress > 0.5 && nextCh && prefetchedNext.current !== nextCh.url) {
-      prefetchedNext.current = nextCh.url
-      api.pages(sourceId, nextCh.url, title, nextCh.name)
-        .then((r) => { for (let i = 0; i < Math.min(5, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) } })
-        .catch(() => {})
-    }
-  }, [progress, nextCh, sourceId, title])
+    if (progress <= 0.5 || !nextCh || prefetchedNext.current === nextCh.url) return
+    prefetchedNext.current = nextCh.url
+    api.pages(sourceId, nextCh.url, title, nextCh.name).then((r) => {
+      const count = loadMode === 'eager' ? r.count : Math.min(5, r.count)
+      console.log(`[reader] preloading next chapter "${nextCh.name || nextCh.url}" — ${count}/${r.count} pages`)
+      for (let i = 0; i < count; i++) {
+        fetch(pageUrl(sourceId, nextCh.url, i, title, nextCh.name), { priority: 'low' } as RequestInit)
+          .then((res) => res.blob()).catch(() => {})
+      }
+    }).catch(() => { prefetchedNext.current = '' })
+  }, [progress, nextCh, sourceId, title, loadMode])
 
   function openChapter(c?: Chapter) {
     if (!c) return
