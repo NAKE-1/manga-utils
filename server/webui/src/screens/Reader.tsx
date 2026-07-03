@@ -90,6 +90,7 @@ export function Reader() {
   const [progress, setProgress] = useState(0)
   const [chrome, setChrome] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
+  const [showChapters, setShowChapters] = useState(false)
   const [sizing, setSizing] = useState<Sizing>(lsGet('reader.sizing', 'clamp') as Sizing)
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
@@ -128,7 +129,7 @@ export function Reader() {
   }, [])
 
   useEffect(() => {
-    setCount(null); setPage(1); setProgress(0); setFailedPages(new Set())
+    setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setShowChapters(false)
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -236,7 +237,7 @@ export function Reader() {
           {count ? <div className="reader-progress">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div> : null}
           <div className="reader-navrow">
             <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
-            <div className="reader-chip">{name || `Chapter ${curNum}`}</div>
+            <button className="reader-chip" onClick={() => setShowChapters(true)} title="Chapter list">{name || `Chapter ${curNum}`}</button>
             <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
           </div>
         </div>
@@ -248,6 +249,27 @@ export function Reader() {
       </div>
 
       {/* Settings bottom-sheet */}
+      {showChapters && (
+        <div className="sheet-scrim" onClick={() => setShowChapters(false)}>
+          <div className="sheet chapters-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-handle" />
+            <div className="sheet-title">Chapters · {navList.length}</div>
+            <div className="chap-list">
+              {navList.map((c) => (
+                <button
+                  key={c.url}
+                  className={'chap-item' + (c.url === chapter ? ' current' : '')}
+                  onClick={() => { setShowChapters(false); if (c.url !== chapter) openChapter(c) }}
+                >
+                  <span className="chap-name">{c.name || `Chapter ${c.number}`}</span>
+                  {c.url === chapter && <span className="chap-cur">Reading</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div className="sheet-scrim" onClick={closeSheet}>
           <div

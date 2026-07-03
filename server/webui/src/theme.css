@@ -353,8 +353,22 @@ img { display: block; }
 .reader-progress { background: rgba(26,26,28,0.9); backdrop-filter: blur(6px); color: #eaeaef;
   font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 999px; }
 .reader-chip { background: rgba(26,26,28,0.9); backdrop-filter: blur(6px); color: var(--text);
-  font-size: 14px; font-weight: 700; padding: 11px 18px; border-radius: 12px;
+  font-size: 14px; font-weight: 700; padding: 11px 18px; border-radius: 12px; cursor: pointer;
+  border: none; font-family: inherit; line-height: normal;
   white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+.reader-chip:active { background: rgba(40,40,44,0.95); }
+
+/* In-reader chapter list (opened by tapping the chapter chip). */
+.chapters-sheet { max-height: 78vh; display: flex; flex-direction: column; }
+.chap-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-bottom: 4px; }
+.chap-item { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; text-align: left; background: var(--card2, #1a1a1e); color: var(--text);
+  border: 1px solid transparent; border-radius: 10px; padding: 12px 14px; font-size: 14px; cursor: pointer; }
+.chap-item:active { background: #242429; }
+.chap-item.current { border-color: var(--accent, #7c6cf0); background: #1e1b2e; }
+.chap-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chap-cur { flex: none; font-size: 11px; font-weight: 700; color: var(--accent, #a99cf5);
+  background: #0e0e10; padding: 2px 8px; border-radius: 999px; }
 .reader-tools { position: fixed; right: 10px; bottom: calc(12px + var(--safe-b)); z-index: 10;
   display: flex; flex-direction: column; gap: 10px; animation: fade-in .16s ease; }
 .r-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff;
