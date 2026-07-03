@@ -575,6 +575,30 @@ fun Application.module() {
             }
             call.respond(CountDto(matched))
         }
+        // Repair: re-download the incomplete/interrupted chapters of a series. Maps their (sanitized)
+        // folder names back to source chapter URLs via the library's known chapters, deletes only the
+        // ones we can re-fetch, then enqueues them. Returns the count queued, or -1 if not in library.
+        post("/api/downloads/manage/repair") {
+            val title = call.queryParam("title") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val n = withContext(Dispatchers.IO) {
+                val incompleteNames = DownloadStore.listChapters(title).filterNot { it.complete }.map { it.name }.toSet()
+                if (incompleteNames.isEmpty()) return@withContext 0
+                val entries = LibraryStore.list().filter { DownloadManager.sanitize(it.title) == title }
+                if (entries.isEmpty()) return@withContext -1
+                val plans = entries.map { entry ->
+                    entry to entry.knownChapters
+                        .filter { DownloadManager.sanitize(it.name) in incompleteNames }
+                        .map { DownloadQueue.Chapter(it.url, it.name) }
+                }.filter { it.second.isNotEmpty() }
+                // Delete only the incomplete chapters we can actually re-download (else they'd be skipped
+                // as "existing"); never delete one we can't re-fetch.
+                val reDownloadable = plans.flatMap { it.second }.map { DownloadManager.sanitize(it.name) }.toSet()
+                incompleteNames.filter { it in reDownloadable }.forEach { DownloadStore.deleteChapter(title, it) }
+                plans.forEach { (entry, chapters) -> DownloadQueue.enqueue(entry.sourceId, entry.mangaUrl, entry.title, chapters) }
+                plans.sumOf { it.second.size }
+            }
+            call.respond(CountDto(n))
+        }
 
         // Downloaded-files management for a series (used by the remove-from-library confirm flow).
         get("/api/downloads/count") {

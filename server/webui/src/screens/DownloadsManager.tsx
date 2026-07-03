@@ -48,6 +48,16 @@ export function DownloadsManager() {
     const r = await api.markSeriesUnread(s.title).catch(() => ({ count: 0 }))
     flash(r.count > 0 ? `Marked ${s.title} unread` : 'Not in your library — can’t mark unread')
   }
+  async function repair(s: ManagedSeries) {
+    flash(`Repairing ${s.title}…`)
+    const r = await api.repairDownloads(s.title).catch(() => ({ count: 0 }))
+    if (r.count > 0) flash(`Re-downloading ${r.count} chapter${r.count === 1 ? '' : 's'} — see Downloads`)
+    else if (r.count < 0) flash('Not in your library — can’t map chapters to re-download')
+    else flash('Nothing to repair')
+    const c = await api.manageChapters(s.title).catch(() => [])
+    setChapters((m) => ({ ...m, [s.title]: c }))
+    load()
+  }
   function delIncomplete(s: ManagedSeries) {
     setConfirm({
       title: 'Delete incomplete chapters?', message: `Delete ${s.incomplete} interrupted/partial chapter${s.incomplete === 1 ? '' : 's'} of ${s.title} so you can re-download them?`,
@@ -88,6 +98,7 @@ export function DownloadsManager() {
                 <div className="dm-body">
                   <div className="dm-actions">
                     <button className="btn sm" onClick={() => markUnread(s)}>Mark unread</button>
+                    {s.incomplete > 0 && <button className="btn sm" onClick={() => repair(s)}>Repair ({s.incomplete})</button>}
                     {s.incomplete > 0 && <button className="btn sm danger" onClick={() => delIncomplete(s)}>Delete incomplete</button>}
                     <button className="btn sm danger" onClick={() => delSeries(s)}>Delete all</button>
                   </div>

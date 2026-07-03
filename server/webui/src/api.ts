@@ -169,6 +169,7 @@ export const api = {
   deleteDownloadChapter: (title: string, chapter: string) => fetch(`/api/downloads/chapter?title=${encodeURIComponent(title)}&chapter=${encodeURIComponent(chapter)}`, { method: 'DELETE' }),
   markSeriesUnread: (title: string) => fetch(`/api/downloads/manage/mark-unread?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
+  repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
 }
 
 export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean }
