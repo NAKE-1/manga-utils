@@ -59,11 +59,36 @@ object SourceImage {
         return try {
             runBlocking {
                 if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
-                src.getImage(page).use { if (it.isSuccessful) it.body?.bytes() else null }
+                val original = page.imageUrl
+                // Fast path: if we've learned this source's CDN, fetch straight from it (skip origin 302).
+                if (original != null) {
+                    val direct = SourceManager.cdnRewrite(sourceId, original)
+                    if (direct != original) {
+                        fetchDirect(src, direct)?.let {
+                            log.debug("page {} via CDN ({} bytes)", page.index, it.size)
+                            return@runBlocking it
+                        }
+                        log.debug("direct CDN fetch failed for page {}, falling back to getImage", page.index)
+                    }
+                }
+                // Proven path: the source's own getImage — and learn its CDN redirect for next time.
+                src.getImage(page).use { resp ->
+                    if (!resp.isSuccessful) return@runBlocking null
+                    if (original != null) SourceManager.learnCdn(sourceId, original, resp.request.url.toString())
+                    resp.body?.bytes()
+                }
             }
         } catch (e: Exception) {
             log.debug("page fetch failed (index {}): {}", page.index, e.message)
             null
         }
+    }
+
+    /** Directly fetch an (already CDN-rewritten) image URL with the source's client + headers. */
+    private fun fetchDirect(src: HttpSource, url: String): ByteArray? = try {
+        val request = Request.Builder().url(url).headers(src.headers).build()
+        src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
+    } catch (e: Exception) {
+        null
     }
 }
