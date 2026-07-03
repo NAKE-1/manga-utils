@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.Request
 import org.slf4j.LoggerFactory
 
@@ -58,8 +59,12 @@ object SourceImage {
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
         return try {
             runBlocking {
-                if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
-                src.getImage(page).use { if (it.isSuccessful) it.body?.bytes() else null }
+                // Fail fast if the source stalls (e.g. CDN 5xx/hang) so the reader shows a retry
+                // instead of spinning on the client's full ~30s socket timeout.
+                withTimeout(12_000) {
+                    if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
+                    src.getImage(page).use { if (it.isSuccessful) it.body?.bytes() else null }
+                }
             }
         } catch (e: Exception) {
             log.debug("page fetch failed (index {}): {}", page.index, e.message)

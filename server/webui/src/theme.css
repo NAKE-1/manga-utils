@@ -304,6 +304,23 @@ img { display: block; }
   transition: opacity .32s ease;
 }
 
+/* A page that failed to load — replaces the endless spinner with a tappable retry. */
+.page-fail {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  width: 100%; min-height: 200px; padding: 24px; cursor: pointer;
+  background: #17171a; color: #f5c451; border: 1px dashed #4a4a52; border-radius: 12px;
+  font-size: 14px; font-weight: 600; text-align: center;
+}
+.page-fail-sub { color: #9a9aa2; font-size: 12px; font-weight: 500; }
+.page-fail:active { background: #202026; }
+
+/* Trouble banner: pinned above the bottom so failures are never silent. */
+.reader-warn {
+  position: fixed; left: 12px; right: 12px; bottom: calc(16px + var(--safe-b)); z-index: 50;
+  background: #2a1f0a; color: #f5c451; border: 1px solid #5a4a1a; border-radius: 12px;
+  padding: 10px 14px; font-size: 13px; font-weight: 600; text-align: center; backdrop-filter: blur(4px);
+}
+
 /* Chrome group fades in/out together instead of popping. */
 .reader-chrome { transition: opacity .32s ease; }
 .r-fade-out { opacity: 0; pointer-events: none; }

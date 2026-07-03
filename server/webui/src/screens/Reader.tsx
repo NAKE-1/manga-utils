@@ -19,21 +19,36 @@ const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
  * dedupChapters so prev/next move one real chapter at a time. Keeps source order (newest-first).
  */
 /** One page in the strip — reserves height with a spinner until the image loads, then fades it in. */
-function ReaderPage({ src, sizing, loading, priority }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy'; priority?: 'high' | 'low' }) {
-  const [loaded, setLoaded] = useState(false)
+function ReaderPage({ src, sizing, loading, priority, index, onStatus }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy'; priority?: 'high' | 'low'; index: number; onStatus?: (i: number, failed: boolean) => void }) {
+  const [status, setStatus] = useState<'load' | 'ok' | 'err'>('load')
+  const [bust, setBust] = useState(0)
+  const autoTried = useRef(false)
+  const url = bust ? src + '&retry=' + bust : src
+  function fail() {
+    if (!autoTried.current) { autoTried.current = true; setBust((b) => b + 1) } // one silent auto-retry
+    else { setStatus('err'); onStatus?.(index, true) }
+  }
+  function retry(e: React.MouseEvent) { e.stopPropagation(); autoTried.current = false; setStatus('load'); onStatus?.(index, false); setBust((b) => b + 1) }
   return (
-    <div className={'page-slot' + (loaded ? ' loaded' : '')}>
-      {!loaded && <div className="spinner sm" />}
-      <img
-        className={'page ' + sizing + (loaded ? ' loaded' : '')}
-        src={src}
-        alt=""
-        loading={loading}
-        fetchPriority={priority}
-        draggable={false}
-        onLoad={() => setLoaded(true)}
-        onError={(e) => { const img = e.currentTarget; if (!img.dataset.retried) { img.dataset.retried = '1'; img.src = src + '&r=1' } }}
-      />
+    <div className={'page-slot' + (status === 'ok' ? ' loaded' : '')}>
+      {status === 'load' && <div className="spinner sm" />}
+      {status === 'err' ? (
+        <button type="button" className="page-fail" onClick={retry}>
+          <span>⚠ Page {index + 1} didn't load</span>
+          <span className="page-fail-sub">Tap to retry</span>
+        </button>
+      ) : (
+        <img
+          className={'page ' + sizing + (status === 'ok' ? ' loaded' : '')}
+          src={url}
+          alt=""
+          loading={loading}
+          fetchPriority={priority}
+          draggable={false}
+          onLoad={() => { setStatus('ok'); onStatus?.(index, false) }}
+          onError={fail}
+        />
+      )}
     </div>
   )
 }
@@ -65,6 +80,7 @@ export function Reader() {
   const nav = useNavigate()
 
   const [count, setCount] = useState<number | null>(null)
+  const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [page, setPage] = useState(1)
   const [progress, setProgress] = useState(0)
@@ -96,8 +112,18 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
 
+  // Track which pages are currently in a failed state (idempotent via the Set), for the trouble banner.
+  function reportStatus(i: number, failed: boolean) {
+    setFailedPages((prev) => {
+      if (failed === prev.has(i)) return prev
+      const next = new Set(prev)
+      if (failed) next.add(i); else next.delete(i)
+      return next
+    })
+  }
+
   useEffect(() => {
-    setCount(null); setPage(1); setProgress(0)
+    setCount(null); setPage(1); setProgress(0); setFailedPages(new Set())
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -176,11 +202,16 @@ export function Reader() {
               // eager: all eager, equal. balanced: first `preload` eager then lazy. lazy: all lazy.
               const eager = loadMode === 'hybrid' || loadMode === 'eager' || (loadMode === 'balanced' && i < preload)
               const priority = loadMode === 'hybrid' ? (i < preload ? 'high' : 'low') : undefined
-              return <ReaderPage key={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={eager ? 'eager' : 'lazy'} priority={priority} />
+              return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={eager ? 'eager' : 'lazy'} priority={priority} onStatus={reportStatus} />
             })}
           </div>
         )}
       </div>
+
+      {/* Source-trouble banner: shown when pages are failing, so it's never a silent infinite spinner. */}
+      {failedPages.size > 0 && (
+        <div className="reader-warn">⚠ {failedPages.size} page{failedPages.size > 1 ? 's' : ''} failed to load — the source may be having trouble. Tap a failed page to retry.</div>
+      )}
 
       {/* Minimal progress pill when chrome hidden — fades opposite the chrome. */}
       {count && showPill ? (
