@@ -313,6 +313,14 @@ img { display: block; }
 }
 .page-fail-icon { font-size: 26px; line-height: 1; margin-bottom: 2px; }
 
+/* Library search + sort/filter toolbar. */
+.lib-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; }
+.lib-search { flex: 1; min-width: 0; background: #17171a; border: 1px solid #2a2a30; border-radius: 10px;
+  color: var(--text); padding: 9px 12px; font-size: 14px; font-family: inherit; }
+.lib-search::placeholder { color: #6a6a72; }
+.lib-sel { flex: none; background: #17171a; border: 1px solid #2a2a30; border-radius: 10px; color: var(--text);
+  padding: 9px 8px; font-size: 13px; font-family: inherit; max-width: 40vw; }
+
 /* Global toasts — bottom-left, stacked, tap to dismiss. */
 .toasts { position: fixed; left: 12px; bottom: calc(14px + var(--safe-b)); z-index: 200;
   display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }

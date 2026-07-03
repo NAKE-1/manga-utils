@@ -34,6 +34,9 @@ export function ListPage() {
   const [updatePct, setUpdatePct] = useState(0)
   const [updateMsg, setUpdateMsg] = useState('')
   const [updatedTitles, setUpdatedTitles] = useState<{ title: string; count: number }[]>([])
+  const [q, setQ] = useState('')
+  const [sort, setSort] = useState<'title' | 'updated' | 'new' | 'number'>('title')
+  const [filter, setFilter] = useState<'all' | 'new' | 'downloaded' | 'notdl'>('all')
 
   useEffect(() => {
     Promise.all([
@@ -75,7 +78,21 @@ export function ListPage() {
         <CoverCard key={h.sourceId + h.chapterUrl} grid sourceId={h.sourceId} url={h.mangaUrl} title={h.mangaTitle} cover={coverUrl(h.sourceId, h.thumbnailUrl || coverByKey.get(h.sourceId + '|' + h.mangaUrl), h.mangaTitle)} subtitle={h.chapterName} badge={newByKey.get(h.sourceId + '|' + h.mangaUrl)} />
       ))
   } else {
-    const entries = (kind === 'updates' ? library.filter((e) => e.newChapters > 0) : [...library]).sort((a, b) => a.title.localeCompare(b.title))
+    let entries = kind === 'updates' ? library.filter((e) => e.newChapters > 0) : [...library]
+    if (kind === 'library') {
+      const needle = q.trim().toLowerCase()
+      if (needle) entries = entries.filter((e) => e.title.toLowerCase().includes(needle))
+      if (filter === 'new') entries = entries.filter((e) => e.newChapters > 0)
+      else if (filter === 'downloaded') entries = entries.filter((e) => !!dlState(e))
+      else if (filter === 'notdl') entries = entries.filter((e) => !dlState(e))
+      entries.sort((a, b) =>
+        sort === 'updated' ? b.lastDate - a.lastDate
+          : sort === 'new' ? (b.newChapters - a.newChapters) || a.title.localeCompare(b.title)
+            : sort === 'number' ? b.lastNumber - a.lastNumber
+              : a.title.localeCompare(b.title))
+    } else {
+      entries.sort((a, b) => a.title.localeCompare(b.title))
+    }
     cards = entries.map((e) => (
       <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} subtitle={lastLine(e)} badge={e.newChapters} dl={dlState(e)} />
     ))
@@ -92,6 +109,23 @@ export function ListPage() {
           </div>
         )}
       </div>
+      {kind === 'library' && (
+        <div className="lib-toolbar">
+          <input className="lib-search" placeholder="Search library…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <select className="lib-sel" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+            <option value="title">A–Z</option>
+            <option value="updated">Recently updated</option>
+            <option value="new">Unread first</option>
+            <option value="number">Latest chapter</option>
+          </select>
+          <select className="lib-sel" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
+            <option value="all">All</option>
+            <option value="new">Has new</option>
+            <option value="downloaded">Downloaded</option>
+            <option value="notdl">Not downloaded</option>
+          </select>
+        </div>
+      )}
       {updateMsg && <div className="update-msg">{updateMsg}</div>}
       {updatedTitles.length > 0 && (
         <div className="update-list">
