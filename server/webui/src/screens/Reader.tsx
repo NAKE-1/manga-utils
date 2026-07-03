@@ -122,7 +122,6 @@ export function Reader() {
 
   useEffect(() => {
     setCount(null); setPage(1); setProgress(0)
-    prefetchedNext.current = '' // re-arm prefetch for the new chapter's next
     scrollRef.current?.scrollTo({ top: 0 })
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -143,19 +142,16 @@ export function Reader() {
   const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
   const totalCh = (() => { const m = Math.max(0, ...navList.map((c) => c.number).filter((n) => n > 0)); return m > 0 ? m : navList.length })()
 
-  // Warm a chapter's page list + first images so opening it is instant. Fired early on scroll AND
-  // the moment you press the next-chapter button (so tap-navigation doesn't wait ~350ms).
+  // Prefetch the next chapter's page list + first images once you pass ~50% of this chapter.
   const prefetchedNext = useRef('')
-  function prefetchChapter(ch?: Chapter) {
-    if (!ch || prefetchedNext.current === ch.url) return
-    prefetchedNext.current = ch.url
-    console.log('[reader] prefetch next chapter', ch.name || ch.url)
-    api.pages(sourceId, ch.url, title, ch.name)
-      .then((r) => { for (let i = 0; i < Math.min(5, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, ch.url, i, title, ch.name) } })
-      .catch(() => { prefetchedNext.current = '' })
-  }
-  // Prefetch the next chapter once you're ~25% through (scrollers).
-  useEffect(() => { if (progress > 0.25) prefetchChapter(nextCh) }, [progress, nextCh]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (progress > 0.5 && nextCh && prefetchedNext.current !== nextCh.url) {
+      prefetchedNext.current = nextCh.url
+      api.pages(sourceId, nextCh.url, title, nextCh.name)
+        .then((r) => { for (let i = 0; i < Math.min(5, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) } })
+        .catch(() => {})
+    }
+  }, [progress, nextCh, sourceId, title])
 
   function openChapter(c?: Chapter) {
     if (!c) return
@@ -218,7 +214,7 @@ export function Reader() {
           <div className="reader-navrow">
             <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
             <div className="reader-chip">{name || `Chapter ${curNum}`}</div>
-            <button className="r-icon" disabled={!nextCh} onPointerDown={() => prefetchChapter(nextCh)} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
+            <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
           </div>
         </div>
 

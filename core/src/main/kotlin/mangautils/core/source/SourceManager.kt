@@ -15,39 +15,11 @@ import mangautils.core.extension.InstalledSource
 import mangautils.core.extension.InstalledStore
 import mangautils.core.extension.internal.ExtensionLoader
 import mangautils.core.runtime.ExtensionRuntime
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.slf4j.LoggerFactory
-import java.util.concurrent.ConcurrentHashMap
 
 /** Registry/loader for the sources provided by installed extensions. */
 object SourceManager {
     private val log = LoggerFactory.getLogger(javaClass)
-
-    /**
-     * Learned origin->CDN host per source. Some sources (e.g. Atsumaru) serve every page image from
-     * a slow origin that 302-redirects to a fast CDN. Once we've seen that redirect for a source, we
-     * can fetch later page images STRAIGHT from the CDN and skip the ~135ms origin bounce. Falls back
-     * to the source's own getImage on any miss/failure, so it can only speed things up, not break them.
-     */
-    private val cdnHosts = ConcurrentHashMap<Long, Pair<String, String>>() // sourceId -> (originHost, cdnHost)
-
-    /** Record the origin->CDN mapping from a followed redirect (requested host != final host). */
-    fun learnCdn(sourceId: Long, requestedUrl: String, finalUrl: String) {
-        if (cdnHosts.containsKey(sourceId)) return
-        val reqHost = requestedUrl.toHttpUrlOrNull()?.host ?: return
-        val finHost = finalUrl.toHttpUrlOrNull()?.host ?: return
-        if (finHost != reqHost) {
-            cdnHosts[sourceId] = reqHost to finHost
-            log.info("learned CDN for source {}: {} -> {} (reader images now fetch direct)", sourceId, reqHost, finHost)
-        }
-    }
-
-    /** Rewrite an image URL to the learned CDN host (skips the origin 302). Unchanged if none learned. */
-    fun cdnRewrite(sourceId: Long, url: String): String {
-        val (origin, cdn) = cdnHosts[sourceId] ?: return url
-        val u = url.toHttpUrlOrNull() ?: return url
-        return if (u.host == origin) u.newBuilder().host(cdn).build().toString() else url
-    }
 
     /** All sources across installed extensions (cheap; reads metadata only). */
     fun listInstalledSources(): List<InstalledSource> =
