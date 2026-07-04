@@ -12,6 +12,7 @@ import android.net.Uri
 import android.net.http.SslCertificate
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.print.PrintDocumentAdapter
 import android.util.Log
@@ -111,7 +112,9 @@ class KcefWebViewProvider(
     private var kcefClient: CefClient? = null
     private var browser: CefBrowser? = null
 
-    private val handler = Handler(view.webViewLooper)
+    // Post callbacks to the WebView's looper — but if the extension created the WebView on a thread
+    // with no looper (webViewLooper == null), Handler(null) would NPE; fall back to the main looper.
+    private val handler = Handler(view.webViewLooper ?: Looper.getMainLooper())
 
     companion object {
         const val TAG = "KcefWebViewProvider"

@@ -16,6 +16,8 @@
     <logger name="io.ktor" level="INFO" />
     <logger name="io.netty" level="WARN" />
     <logger name="eu.kanade" level="INFO" />
+    <!-- TEMP: show the in-app WebView (CEF) flow — Navigate/Load start/Load end — while debugging comix. -->
+    <logger name="android.util.Log" level="DEBUG" />
 
     <root level="INFO">
         <appender-ref ref="CONSOLE" />
