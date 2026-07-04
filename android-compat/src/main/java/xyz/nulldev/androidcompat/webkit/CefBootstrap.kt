@@ -38,6 +38,12 @@ object CefBootstrap {
                     }
                     settings {
                         windowlessRenderingEnabled = true
+                        // KCEF downloads the native bundle here but doesn't point CEF at it — without
+                        // these, CEF looks for jcef_helper.exe + resources inside the JDK (which lacks
+                        // them) and every helper subprocess fails to launch.
+                        browserSubProcessPath = File(dir, "jcef_helper.exe").absolutePath
+                        resourcesDirPath = dir.absolutePath
+                        localesDirPath = File(dir, "locales").absolutePath
                     }
                     // Headless server: disable the GPU entirely, or CEF launches a GPU process,
                     // fails ("GPU process isn't usable"), and its FATAL handler kills the JVM.
