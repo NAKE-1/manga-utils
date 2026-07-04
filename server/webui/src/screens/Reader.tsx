@@ -122,6 +122,21 @@ export function Reader() {
   // Center the current chapter when the chapter list opens.
   useEffect(() => { if (showChapters) requestAnimationFrame(() => currentChapRef.current?.scrollIntoView({ block: 'center' })) }, [showChapters])
 
+  // Fullscreen toggle — the no-big-changes way to hide the browser's address/nav bars while reading.
+  // Works on Android (Opera GX / Chrome via the Fullscreen API); unsupported on iOS Safari, so the
+  // button is hidden there (iOS users can Add to Home Screen for the same effect).
+  const [isFs, setIsFs] = useState(false)
+  const fsSupported = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen
+  useEffect(() => {
+    const onFs = () => setIsFs(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.()
+    else document.documentElement.requestFullscreen?.().catch(() => {})
+  }
+
   // Track which pages are currently in a failed state (idempotent via the Set), for the trouble banner.
   // useCallback keeps its identity stable so the per-page load timeout isn't reset every render.
   const reportStatus = useCallback((i: number, failed: boolean) => {
@@ -294,6 +309,15 @@ export function Reader() {
         </div>
 
         <div className="reader-tools" onClick={(e) => e.stopPropagation()}>
+          {fsSupported && (
+            <button className="r-icon" onClick={toggleFullscreen} aria-label={isFs ? 'Exit fullscreen' : 'Fullscreen'}>
+              {isFs ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8h3a2 2 0 0 0 2-2V3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M21 16h-3a2 2 0 0 0-2 2v3" /></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
+              )}
+            </button>
+          )}
           <button className="r-icon" onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
           <button className="r-icon" onClick={() => setShowSettings(true)} aria-label="Settings"><IconSettings /></button>
         </div>
