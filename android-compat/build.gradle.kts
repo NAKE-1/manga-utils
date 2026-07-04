@@ -5,6 +5,9 @@
 // The AndroidCompat/Config sources are folded into this module (package xyz.nulldev.ts.config).
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // The webkit JS bridge (JsHandler/FunctionCall) uses @Serializable; without the compiler
+    // plugin the serializer isn't generated and every WebView JS callback fails at runtime.
+    alias(libs.plugins.kotlin.serialization)
 }
 
 dependencies {
