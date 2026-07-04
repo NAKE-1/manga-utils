@@ -73,6 +73,19 @@ class NetworkHelper(
                     .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
                     .addNetworkInterceptor(IgnoreGzipInterceptor())
                     .addNetworkInterceptor(BrotliInterceptor)
+                    // Force the FlareSolverr-solved User-Agent on cleared hosts LAST (after any
+                    // extension interceptor + the cookie bridge), so cf_clearance stays valid.
+                    .addNetworkInterceptor { chain ->
+                        val req = chain.request()
+                        val ua = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.solvedUserAgents[req.url.host]
+                        chain.proceed(
+                            if (ua != null && req.header("User-Agent") != ua) {
+                                req.newBuilder().header("User-Agent", ua).build()
+                            } else {
+                                req
+                            },
+                        )
+                    }
 
             // if (preferences.verboseLogging().get()) {
             val httpLoggingInterceptor =

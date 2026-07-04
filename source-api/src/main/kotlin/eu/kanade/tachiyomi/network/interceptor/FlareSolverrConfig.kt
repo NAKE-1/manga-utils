@@ -16,4 +16,11 @@ object FlareSolverrConfig {
     @Volatile var session: String = "mangautils"
     @Volatile var sessionTtlMinutes: Int = 15
     @Volatile var timeoutMs: Long = 60_000
+
+    /**
+     * Hosts we've cleared → the User-Agent the cf_clearance is bound to. Read by a *network*
+     * interceptor (so it runs after the extension's own interceptors and wins) to force that UA on
+     * every request to the host — otherwise an extension that sets its own UA invalidates the cookie.
+     */
+    val solvedUserAgents = java.util.concurrent.ConcurrentHashMap<String, String>()
 }

@@ -38,9 +38,7 @@ class FlareSolverrInterceptor(
     private val log = KotlinLogging.logger {}
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    // Hosts we've cleared → the User-Agent the clearance is bound to. Every request to such a host
-    // must carry that exact UA, even if the extension sets its own, or Cloudflare rejects the cookie.
-    private val solvedUa = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val solvedUa = FlareSolverrConfig.solvedUserAgents // shared with the UA network interceptor
 
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
