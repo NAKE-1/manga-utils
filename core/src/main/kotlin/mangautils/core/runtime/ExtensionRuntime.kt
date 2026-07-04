@@ -81,5 +81,11 @@ object ExtensionRuntime {
             }
         }.apply { isDaemon = true; name = "android-main-looper" }.start()
         ready.await()
+        // Diagnostic: confirm the main looper actually DISPATCHES posted work (not merely exists).
+        // WebView-based extensions post a runnable here to create/load the browser; if this never
+        // logs, that's why they fail with "Failed to start WebView".
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            log.info("main-looper self-test: posted runnable executed OK")
+        }
     }
 }
