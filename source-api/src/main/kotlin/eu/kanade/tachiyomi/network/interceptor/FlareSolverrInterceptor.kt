@@ -100,14 +100,18 @@ class FlareSolverrInterceptor(
                 null
             }
 
+        // FlareSolverr requires postData for request.post; if we couldn't extract a form body (JSON
+        // body, empty, etc.) fall back to request.get — we only need the cf_clearance cookie, not the
+        // POST's actual response.
+        val usePost = isPost && !postData.isNullOrEmpty()
         val payload =
             FsReq(
-                cmd = if (isPost) "request.post" else "request.get",
+                cmd = if (usePost) "request.post" else "request.get",
                 url = request.url.toString(),
                 maxTimeout = cfg.timeoutMs,
                 session = cfg.session.ifBlank { null },
                 sessionTtlMinutes = cfg.sessionTtlMinutes.takeIf { it > 0 },
-                postData = postData,
+                postData = if (usePost) postData else null,
             )
 
         val client =

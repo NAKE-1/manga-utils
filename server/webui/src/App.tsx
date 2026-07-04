@@ -16,39 +16,39 @@ import { PullToRefresh } from './components/PullToRefresh'
 
 export function App() {
   const loc = useLocation()
-  // The reader is full-screen — no top bar / tab bar.
-  if (loc.pathname.startsWith('/reader/')) {
-    return (
-      <>
-        <DownloadWatcher />
-        <Toasts />
+  const isReader = loc.pathname.startsWith('/reader/')
+  // DownloadWatcher + Toasts are mounted ONCE here (not inside each branch) so switching in/out of the
+  // full-screen reader doesn't remount them — otherwise the FlareSolverr/download watchers reset and
+  // swallow the very events (a Cloudflare solve on chapter open) we want to toast.
+  return (
+    <>
+      <DownloadWatcher />
+      <Toasts />
+      {isReader ? (
         <Routes>
           <Route path="/reader/:sourceId" element={<Reader />} />
         </Routes>
-      </>
-    )
-  }
-  return (
-    <div className="app">
-      <DownloadWatcher />
-      <Toasts />
-      <PullToRefresh />
-      <TopBar />
-      <main>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/list/:kind" element={<ListPage />} />
-          <Route path="/library" element={<ListPage />} />
-          <Route path="/search" element={<Search />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/extensions" element={<Extensions />} />
-          <Route path="/downloads" element={<Downloads />} />
-          <Route path="/downloads/manage" element={<DownloadsManager />} />
-          <Route path="/manga/:sourceId" element={<Detail />} />
-          <Route path="*" element={<Stub name="Not found" />} />
-        </Routes>
-      </main>
-      <TabBar />
-    </div>
+      ) : (
+        <div className="app">
+          <PullToRefresh />
+          <TopBar />
+          <main>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/list/:kind" element={<ListPage />} />
+              <Route path="/library" element={<ListPage />} />
+              <Route path="/search" element={<Search />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/extensions" element={<Extensions />} />
+              <Route path="/downloads" element={<Downloads />} />
+              <Route path="/downloads/manage" element={<DownloadsManager />} />
+              <Route path="/manga/:sourceId" element={<Detail />} />
+              <Route path="*" element={<Stub name="Not found" />} />
+            </Routes>
+          </main>
+          <TabBar />
+        </div>
+      )}
+    </>
   )
 }

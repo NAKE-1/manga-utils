@@ -62,7 +62,9 @@ class NetworkHelper(
                     .cookieJar(PersistentCookieJar(cookieStore))
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
-                    .callTimeout(2, TimeUnit.MINUTES)
+                    // Was 2 min. Some extensions (comix) spin up an in-app WebView that can hang; a
+                    // shorter ceiling makes them fail fast instead of stalling browse/search for 2 min.
+                    .callTimeout(45, TimeUnit.SECONDS)
                     .cache(
                         Cache(
                             directory = Files.createTempDirectory("tachidesk_network_cache").toFile(),

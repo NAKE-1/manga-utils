@@ -38,23 +38,26 @@ export function Toasts() {
  * Watches the download queue app-wide and raises toasts on completion/failure, so you get notified
  * even when you're not on the Downloads screen. Mounted once at the app root.
  */
+// Module-level so the poll cursor survives a DownloadWatcher remount (otherwise re-syncing swallows
+// the events we want to toast).
+let flareCursor: number | null = null
+
 export function DownloadWatcher() {
   const prev = useRef<Record<string, string>>({})
   const doneInBatch = useRef(0)
   const wasBusy = useRef(false)
-  const flareId = useRef<number | null>(null)
   useEffect(() => {
     let alive = true
     // FlareSolverr solve activity → toasts, so a Cloudflare-solve pause is explained.
     const flareTick = async () => {
       try {
-        const r = await api.flaresolverrEvents(flareId.current ?? undefined)
-        if (flareId.current == null) { flareId.current = r.lastId; return } // first poll: just sync, no backlog
+        const r = await api.flaresolverrEvents(flareCursor ?? undefined)
+        if (flareCursor == null) { flareCursor = r.lastId; return } // first poll ever: just sync, no backlog
         for (const e of r.events) {
           if (e.phase === 'solving') toast(`Solving Cloudflare · ${e.host}…`, 'info')
           else if (e.phase === 'solved') toast(`Cloudflare cleared · ${e.host} (${e.cookies} cookie${e.cookies === 1 ? '' : 's'})`, 'success')
         }
-        flareId.current = r.lastId
+        flareCursor = r.lastId
       } catch { /* ignore */ }
     }
     const tick = async () => {
