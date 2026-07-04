@@ -21,7 +21,7 @@ object CefHelper {
     suspend fun createClient(): CefClient {
         // Kick off the (lazy, one-time) native CEF download/init. Until it's ready, fail fast with a
         // clear reason instead of blocking until the network call times out.
-        CefBootstrap.ensureStarted()
+        CefManager.ensureStarted()
         val current = cefApp.value
         if (current.isFailure) throw CefException("$WEBVIEW_UNAVAILABLE (${current.exceptionOrNull()?.message})")
         val cef = current.getOrNull() ?: throw CefException(WEBVIEW_INITIALIZING)

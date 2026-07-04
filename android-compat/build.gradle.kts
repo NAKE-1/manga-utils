@@ -50,7 +50,9 @@ dependencies {
     implementation(libs.dex2jar.translator)
     implementation(libs.dex2jar.tools)
 
-    // KCEF installs + launches the native JCEF (Chromium) runtime so WebView-based sources work.
-    // It bundles its own dev.datlag:jcef, so we compile the webkit provider against that (not JB's).
-    implementation(libs.kcef)
+    // JetBrains JCEF (the same build Suwayomi uses) — a self-consistent Java jar + native so the
+    // WebView resource handler (open/read + CefResourceReadCallback) actually works. The native is
+    // downloaded from JetBrains Runtime GitHub releases by CefManager; commons-compress extracts it.
+    implementation(libs.jcef)
+    implementation(libs.commonscompress)
 }
