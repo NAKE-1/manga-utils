@@ -39,6 +39,15 @@ object CefBootstrap {
                     settings {
                         windowlessRenderingEnabled = true
                     }
+                    // Headless server: disable the GPU entirely, or CEF launches a GPU process,
+                    // fails ("GPU process isn't usable"), and its FATAL handler kills the JVM.
+                    addArgs(
+                        "--disable-gpu",
+                        "--disable-gpu-compositing",
+                        "--disable-software-rasterizer",
+                        "--disable-gpu-process-crash-limit",
+                        "--no-sandbox",
+                    )
                 },
                 onError = {
                     logger.error(it) { "CEF init error" }
