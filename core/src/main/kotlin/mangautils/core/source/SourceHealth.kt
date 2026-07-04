@@ -18,4 +18,11 @@ object SourceHealth {
     fun isDown(sourceId: Long): Boolean = down.contains(sourceId)
     fun markDown(sourceId: Long) { down.add(sourceId) }
     fun markUp(sourceId: Long) { down.remove(sourceId) }
+
+    // Image-serving health, tracked separately from browse/API health: a source's API can be fine
+    // while its image CDN 5xx's (the atsu outage). Fed by actual page fetches in the reader.
+    private val imagesDown = ConcurrentHashMap.newKeySet<Long>()
+    fun areImagesDown(sourceId: Long): Boolean = imagesDown.contains(sourceId)
+    fun markImagesDown(sourceId: Long) { imagesDown.add(sourceId) }
+    fun markImagesUp(sourceId: Long) { imagesDown.remove(sourceId) }
 }

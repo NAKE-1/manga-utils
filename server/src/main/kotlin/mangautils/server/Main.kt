@@ -69,7 +69,7 @@ const val CLOUDFLARE_BYPASS = false
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
-private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String, val down: Boolean)
+private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String, val down: Boolean, val imagesDown: Boolean)
 
 @Serializable private data class TechDto(val role: String, val tech: String)
 @Serializable private data class ChangeDto(val sha: String, val date: String, val subject: String)
@@ -453,7 +453,7 @@ fun Application.module() {
             val sources = withContext(Dispatchers.IO) {
                 // nsfw lives on the parent extension; flatten so each source carries its 18+ flag.
                 InstalledStore.list()
-                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id), SourceHealth.isDown(it.id)) } }
+                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id), SourceHealth.isDown(it.id), SourceHealth.areImagesDown(it.id)) } }
                     .filter { langVisible(it.lang, visible) }
                     .sortedBy { it.name.lowercase() }
             }
@@ -971,14 +971,19 @@ fun Application.module() {
             // cached/downloaded pages (normal /img/page logging stays filtered to keep the console clean).
             // One line per preloaded chapter (on its first page) instead of one per page.
             if (call.request.headers["X-Preload"] != null && index == 0) log.info("PRELOAD  next chapter {}", chapter)
+            var fromSource = false
             val bytes = withContext(Dispatchers.IO) {
                 val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name) }.getOrNull() else null
                 if (local != null) {
                     local.bytes(index)
                 } else {
+                    fromSource = true
                     pagesFor(id, chapter).getOrNull(index)?.let { SourceImage.pageBytes(id, it) }
                 }
             }
+            // Track image-serving health from real fetches (not local reads) so a source can show
+            // "images down" even when its API is fine (the atsu case).
+            if (fromSource) { if (bytes == null) SourceHealth.markImagesDown(id) else SourceHealth.markImagesUp(id) }
             if (bytes == null) call.respond(HttpStatusCode.NotFound) else {
                 call.response.headers.append(HttpHeaders.CacheControl, "public, max-age=604800, immutable")
                 call.respondBytes(bytes, sniffImageType(bytes))

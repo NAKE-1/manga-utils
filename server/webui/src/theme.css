@@ -313,6 +313,20 @@ img { display: block; }
 }
 .page-fail-icon { font-size: 26px; line-height: 1; margin-bottom: 2px; }
 
+/* Source health panel (Settings → Developer). */
+.srchealth { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.srch-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid #1c1c22; }
+.srch-row:last-child { border-bottom: none; }
+.srch-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.srch-name { flex: 1; min-width: 0; font-size: 14px; color: #e6e6ee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srch-state { flex: none; font-size: 12px; font-weight: 700; }
+.srch-dot.srch-green { background: #22c55e; }
+.srch-dot.srch-orange { background: #f5a623; }
+.srch-dot.srch-red { background: #ef4444; }
+.srch-state.srch-green { color: #22c55e; }
+.srch-state.srch-orange { color: #f5a623; }
+.srch-state.srch-red { color: #ef4444; }
+
 /* Downloads storage overview. */
 .dm-overview { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 12px 12px; }
 .dm-stat { flex: 1; min-width: 88px; background: #17171a; border: 1px solid #24242a; border-radius: 12px; padding: 11px 13px;
@@ -375,9 +389,10 @@ img { display: block; }
 .reader-warn-x:active { background: rgba(245,196,81,0.28); }
 
 /* Chapter-sheet header row: title + close button. */
-.sheet-headrow { display: flex; align-items: center; justify-content: space-between; }
+.sheet-headrow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.sheet-headrow .sheet-title { margin-bottom: 0; }
 .sheet-close { flex: none; background: #232329; color: #cfcfd7; border: none; border-radius: 999px;
-  width: 30px; height: 30px; font-size: 15px; cursor: pointer; margin-bottom: 12px; }
+  width: 32px; height: 32px; font-size: 15px; line-height: 1; cursor: pointer; }
 .sheet-close:active { background: #34343c; }
 
 /* Chrome group fades in/out together instead of popping. */
@@ -404,7 +419,7 @@ img { display: block; }
 
 /* In-reader chapter list (opened by tapping the chapter chip). Capped so a scrim gap always shows
    above it (tap there or drag the handle down to close). */
-.chapters-sheet { max-height: 72vh; display: flex; flex-direction: column; }
+.chapters-sheet { max-height: 72vh; display: flex; flex-direction: column; overflow: hidden; } /* only the list scrolls */
 .chap-list { overflow-y: auto; display: flex; flex-direction: column; }
 .chap-item { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   width: 100%; text-align: left; background: transparent; color: var(--text);

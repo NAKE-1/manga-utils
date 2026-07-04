@@ -78,7 +78,10 @@ export function Settings() {
   // Live server stats — poll while the Settings page is open.
   useEffect(() => {
     let alive = true
-    const tick = () => api.devStats().then((s) => { if (alive) setStats(s) }).catch(() => {})
+    const tick = () => {
+      api.devStats().then((s) => { if (alive) setStats(s) }).catch(() => {})
+      api.sources().then((s) => { if (alive) setSources(s) }).catch(() => {}) // keep source health fresh
+    }
     tick()
     const t = setInterval(tick, 2000)
     return () => { alive = false; clearInterval(t) }
@@ -293,6 +296,28 @@ export function Settings() {
             <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
             {simMsg && <span className="set-msg">{simMsg}</span>}
           </div>
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Source health</div>
+          <div className="set-hint">Live from your reading — a source can serve its catalog fine while its images are down (an outage). Green = ok · orange = images failing · red = source unreachable / Cloudflare.</div>
+          {sources.length === 0 ? <div className="set-hint">No sources installed.</div> : (
+            <div className="srchealth">
+              {[...sources]
+                .sort((a, b) => (Number(b.imagesDown || b.down || b.cfState === 'red') - Number(a.imagesDown || a.down || a.cfState === 'red')) || a.name.localeCompare(b.name))
+                .map((s) => {
+                  const state = s.down || s.cfState === 'red' ? 'red' : s.imagesDown ? 'orange' : 'green'
+                  const label = state === 'red' ? (s.cfState === 'red' ? 'Cloudflare' : 'Unreachable') : state === 'orange' ? 'Images down' : 'OK'
+                  return (
+                    <div key={s.id} className="srch-row">
+                      <span className={'srch-dot srch-' + state} />
+                      <span className="srch-name">{s.name}</span>
+                      <span className={'srch-state srch-' + state}>{label}</span>
+                    </div>
+                  )
+                })}
+            </div>
+          )}
         </div>
 
         <div className="set-card">
