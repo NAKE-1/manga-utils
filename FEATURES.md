@@ -50,7 +50,7 @@ Effort: **S** ≈ <1h · **M** ≈ 1–3h · **L** ≈ half-day+ · ⛰️ big/o
 29. 🔸 **Downscaling / "Data Saver"** — optional server-side resize of pages to screen width (~1290px, high quality), originals kept for downloads. The real fix for slow remote reads over the capped Tailscale relay. **M** · needs atsu
 30. 🔸 **Library-polling throttle** — Home hits `/api/library` ~30×/10s; debounce / refetch-on-focus only. **S** (low priority — you're not hitting it)
 31. 💡 **Adaptive image concurrency** — cap simultaneous fetches so the visible page isn't starved on weak links (tune per measured speed). **M** · needs atsu
-32. 🔸 **Source health check** — badge showing if the source's images are up (would've flagged the atsu outage). *(later)* **S**
+32. ✅ **Source health check** — Settings → Developer live panel: green ok / orange images-down / red unreachable; tracks image health separately from API (catches the atsu case).
 
 ## G. Trackers & Sync
 33. 💡 **AniList / MyAnimeList tracking** — link an account, auto-update progress as you read. (Original roadmap priority.) **L**
