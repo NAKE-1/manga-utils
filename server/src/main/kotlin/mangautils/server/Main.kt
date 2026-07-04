@@ -437,12 +437,15 @@ fun Application.module() {
     // Never cache index.html / SPA routes, so a browser reload always picks up the latest built
     // bundle (the hashed /assets/* files stay immutable-cached). Without this, phones keep running an
     // old JS bundle after a rebuild until the tab is fully closed.
+    // Never let the browser reuse a stale index.html — otherwise a new build's hashed JS/CSS are
+    // never picked up (the classic "I can't see the change on my phone"). The HTML doc is tiny and
+    // points at content-hashed /assets/ which stay cached forever, so no-store here is free.
     sendPipeline.intercept(io.ktor.server.response.ApplicationSendPipeline.Before) {
         val p = context.request.path()
         val isApiOrAsset = p.startsWith("/api") || p.startsWith("/img") || p.startsWith("/assets")
-        val looksLikeFile = p.substringAfterLast('/').contains('.')
-        if (!isApiOrAsset && !looksLikeFile) {
-            context.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-cache, must-revalidate")
+        val isHtmlDoc = p == "/" || p.endsWith(".html") || !p.substringAfterLast('/').contains('.') // SPA routes → index.html
+        if (!isApiOrAsset && isHtmlDoc) {
+            context.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store, must-revalidate")
         }
     }
 
