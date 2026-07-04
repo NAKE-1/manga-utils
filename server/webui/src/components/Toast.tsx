@@ -42,9 +42,23 @@ export function DownloadWatcher() {
   const prev = useRef<Record<string, string>>({})
   const doneInBatch = useRef(0)
   const wasBusy = useRef(false)
+  const flareId = useRef<number | null>(null)
   useEffect(() => {
     let alive = true
+    // FlareSolverr solve activity → toasts, so a Cloudflare-solve pause is explained.
+    const flareTick = async () => {
+      try {
+        const r = await api.flaresolverrEvents(flareId.current ?? undefined)
+        if (flareId.current == null) { flareId.current = r.lastId; return } // first poll: just sync, no backlog
+        for (const e of r.events) {
+          if (e.phase === 'solving') toast(`Solving Cloudflare · ${e.host}…`, 'info')
+          else if (e.phase === 'solved') toast(`Cloudflare cleared · ${e.host} (${e.cookies} cookie${e.cookies === 1 ? '' : 's'})`, 'success')
+        }
+        flareId.current = r.lastId
+      } catch { /* ignore */ }
+    }
     const tick = async () => {
+      flareTick()
       try {
         const d = await api.downloads()
         for (const t of d.tasks) {

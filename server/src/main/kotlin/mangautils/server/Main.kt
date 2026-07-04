@@ -232,6 +232,12 @@ private data class SettingsPatch(
 @Serializable
 private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null)
 
+@Serializable
+private data class FlareEventDto(val id: Long, val host: String, val phase: String, val cookies: Int)
+
+@Serializable
+private data class FlareEventsDto(val lastId: Long, val events: List<FlareEventDto>)
+
 private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
@@ -451,7 +457,7 @@ fun Application.module() {
         filter { call ->
             val p = call.request.path()
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
-            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read")
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -840,6 +846,13 @@ fun Application.module() {
                 },
                 onFailure = { call.respond(FlareTestDto(false, null, it.message ?: "Couldn't reach FlareSolverr")) },
             )
+        }
+        // Recent FlareSolverr solve events, so the web UI can toast "solving / solved".
+        get("/api/flaresolverr/events") {
+            val cfg = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig
+            val since = call.queryParam("since")?.toLongOrNull() ?: cfg.lastEventId()
+            val evs = cfg.eventsSince(since).map { FlareEventDto(it.id, it.host, it.phase, it.cookies) }
+            call.respond(FlareEventsDto(cfg.lastEventId(), evs))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)

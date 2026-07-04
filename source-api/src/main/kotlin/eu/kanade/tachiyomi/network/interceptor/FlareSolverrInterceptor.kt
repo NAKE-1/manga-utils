@@ -58,6 +58,7 @@ class FlareSolverrInterceptor(
         }
         response.close()
 
+        FlareSolverrConfig.recordSolveStart(request.url.host) // so the UI can toast "solving…" during the pause
         val solution =
             try {
                 solve(request)
@@ -66,6 +67,7 @@ class FlareSolverrInterceptor(
             } ?: throw IOException("Cloudflare bypass (FlareSolverr) returned no solution for ${request.url.host}.")
 
         val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
+        FlareSolverrConfig.recordSolveDone(request.url.host, cookies.size)
         if (cookies.isNotEmpty()) cookieStore.addAll(request.url, cookies)
         val ua = solution.userAgent?.takeIf { it.isNotBlank() } // clearance is UA-bound
         if (ua != null) {

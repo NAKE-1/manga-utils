@@ -23,4 +23,21 @@ object FlareSolverrConfig {
      * every request to the host — otherwise an extension that sets its own UA invalidates the cookie.
      */
     val solvedUserAgents = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    // A small ring of recent solve events so the web UI can toast "solving / solved" — the frontend
+    // can't see server logs, and a solve blocks for a few seconds, so this explains the pause.
+    data class SolveEvent(val id: Long, val host: String, val phase: String, val cookies: Int, val at: Long)
+
+    private val seq = java.util.concurrent.atomic.AtomicLong()
+    private val events = java.util.concurrent.ConcurrentLinkedDeque<SolveEvent>()
+
+    fun recordSolveStart(host: String) = push(host, "solving", 0)
+    fun recordSolveDone(host: String, cookies: Int) = push(host, "solved", cookies)
+    private fun push(host: String, phase: String, cookies: Int) {
+        events.addLast(SolveEvent(seq.incrementAndGet(), host, phase, cookies, System.currentTimeMillis()))
+        while (events.size > 30) events.pollFirst()
+    }
+
+    fun lastEventId(): Long = seq.get()
+    fun eventsSince(sinceId: Long): List<SolveEvent> = events.filter { it.id > sinceId }
 }
