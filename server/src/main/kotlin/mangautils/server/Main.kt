@@ -24,6 +24,7 @@ import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
 import io.ktor.server.request.path
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveStream
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.delete
@@ -249,6 +250,9 @@ private data class FlareEventDto(val id: Long, val host: String, val phase: Stri
 
 @Serializable
 private data class FlareEventsDto(val lastId: Long, val events: List<FlareEventDto>)
+
+@Serializable
+private data class BackupResultDto(val imported: Int, val skipped: Int, val total: Int)
 
 private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
@@ -881,6 +885,15 @@ fun Application.module() {
                     call.respond(FlareTestDto(ok, version, if (ok) null else "Unexpected response from FlareSolverr"))
                 },
                 onFailure = { call.respond(FlareTestDto(false, null, it.message ?: "Couldn't reach FlareSolverr")) },
+            )
+        }
+        // Import a Mihon / Tachiyomi / Suwayomi backup (.tachibk / .proto.gz) — raw gzipped bytes in the body.
+        post("/api/backup/import") {
+            val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
+            val r = withContext(Dispatchers.IO) { runCatching { mangautils.core.backup.BackupImport.import(bytes) } }
+            r.fold(
+                onSuccess = { call.respond(BackupResultDto(it.imported, it.skipped, it.total)) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup — is it a Mihon/Tachiyomi .tachibk? (${it.message})")) },
             )
         }
         // Recent FlareSolverr solve events, so the web UI can toast "solving / solved".

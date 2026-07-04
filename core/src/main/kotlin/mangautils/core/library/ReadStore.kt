@@ -65,6 +65,19 @@ object ReadStore {
         save(map)
     }
 
+    /** Bulk-mark chapters read (one load+save) — used by backup import. */
+    @Synchronized
+    fun markRead(
+        sourceId: Long,
+        mangaUrl: String,
+        chapterUrls: Collection<String>,
+    ) {
+        if (chapterUrls.isEmpty()) return
+        val map = load()
+        map.getOrPut(key(sourceId, mangaUrl)) { mutableSetOf() }.addAll(chapterUrls)
+        save(map)
+    }
+
     /** Mark every chapter of a manga unread (drop its read set). */
     @Synchronized
     fun clear(

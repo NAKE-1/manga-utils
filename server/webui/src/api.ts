@@ -136,6 +136,11 @@ export const api = {
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
   flaresolverrTest: (url?: string) => getJson<{ ok: boolean; version?: string; error?: string }>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
+  importBackup: async (data: ArrayBuffer) => {
+    const r = await fetch('/api/backup/import', { method: 'POST', body: data })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Import failed')
+    return r.json() as Promise<{ imported: number; skipped: number; total: number }>
+  },
   saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoDownloadNew: boolean; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed')

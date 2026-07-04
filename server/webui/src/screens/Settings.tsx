@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
@@ -35,6 +35,9 @@ export function Settings() {
   const [about, setAbout] = useState<VersionInfo | null>(null)
   const [showChangelog, setShowChangelog] = useState(false)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState<{ text: string; err: boolean } | null>(null)
+  const backupInput = useRef<HTMLInputElement>(null)
   const [fsUrl, setFsUrl] = useState('')
   const [fsTest, setFsTest] = useState<{ ok: boolean; version?: string; error?: string } | null>(null)
   const [fsTesting, setFsTesting] = useState(false)
@@ -61,6 +64,18 @@ export function Settings() {
   async function setAutoHours(n: number) {
     const s = await api.saveSettings({ autoUpdateHours: Math.max(1, Math.min(168, n)) }).catch(() => null)
     if (s) setInfo(s)
+  }
+  async function onBackupFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setImporting(true); setImportMsg(null)
+    try {
+      const r = await api.importBackup(await file.arrayBuffer())
+      setImportMsg({ text: `Imported ${r.imported} manga${r.skipped ? ` · ${r.skipped} skipped` : ''}. Open Home to see them (install matching extensions to read).`, err: false })
+    } catch (err) {
+      setImportMsg({ text: err instanceof Error ? err.message : 'Import failed', err: true })
+    } finally { setImporting(false) }
   }
   async function toggleFlareSolverr() {
     if (!info) return
@@ -298,6 +313,19 @@ export function Settings() {
             </div>
             <span className={'switch' + (info?.autoDownloadNew ? ' on' : '')}><span className="knob" /></span>
           </button>
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-h">Backup</div>
+        <div className="set-card">
+          <div className="set-row-label">Restore from Mihon / Tachiyomi</div>
+          <div className="set-hint">Import a .tachibk / .proto.gz backup — brings in your library, chapters, and read/bookmark state. Install the matching source extensions to actually read them.</div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={importing} onClick={() => backupInput.current?.click()}>{importing ? 'Importing…' : 'Choose backup file'}</button>
+            {importMsg && <span className={'set-msg' + (importMsg.err ? ' err' : '')}>{importMsg.text}</span>}
+          </div>
+          <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />
         </div>
       </section>
 
