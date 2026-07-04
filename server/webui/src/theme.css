@@ -419,9 +419,10 @@ img { display: block; }
 
 /* In-reader chapter list (opened by tapping the chapter chip). Capped so a scrim gap always shows
    above it (tap there or drag the handle down to close). */
-/* Near-full-screen like the settings sheet: drag the header down (or ✕) to dismiss. Only the list scrolls. */
-.chapters-sheet { height: 94dvh; max-height: 94dvh; display: flex; flex-direction: column; overflow: hidden; }
-.chap-list { overflow-y: auto; display: flex; flex-direction: column; }
+/* Same as the reader settings sheet — inherits the base .sheet size (max 88vh, content-sized),
+   drag the header down or tap ✕ / the scrim to close. Only the list scrolls inside. */
+.chapters-sheet { display: flex; flex-direction: column; overflow: hidden; }
+.chap-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 .chap-item { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   width: 100%; text-align: left; background: transparent; color: var(--text);
   border: none; border-bottom: 1px solid #1e1e24; padding: 13px 6px; cursor: pointer; font-family: inherit; }
