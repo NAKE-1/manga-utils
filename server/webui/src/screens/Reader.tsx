@@ -13,6 +13,23 @@ const LOAD_MODES: { id: LoadMode; label: string; desc: string }[] = [
 ]
 const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
 
+// Resume mid-chapter: remember how far through each chapter you were (as a 0-1 fraction), keyed by
+// source|chapter, in one capped localStorage map. Near-start/near-end positions aren't kept so a
+// fresh open (or a finished chapter) starts at the top.
+const POS_KEY = 'reader.positions'
+function loadPositions(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') } catch { return {} }
+}
+function savePosition(key: string, frac: number) {
+  if (!key) return
+  const m = loadPositions()
+  if (frac <= 0.02 || frac >= 0.98) delete m[key]
+  else m[key] = Math.round(frac * 1000) / 1000
+  const keys = Object.keys(m)
+  if (keys.length > 300) delete m[keys[0]] // cap growth
+  try { localStorage.setItem(POS_KEY, JSON.stringify(m)) } catch { /* quota */ }
+}
+
 /**
  * Collapse duplicate chapters (same number from different scanlators) to one entry per number,
  * preferring the chapter being read, then the same scanlator, then the latest. Mirrors the desktop
@@ -108,6 +125,14 @@ export function Reader() {
   const chromeRef = useRef(chrome)
   countRef.current = count
   chromeRef.current = chrome
+  // Resume mid-chapter state: fraction to restore to (null once you take over), the current chapter's
+  // storage key, the latest progress (for save-on-leave), and a save throttle.
+  const pendingRestore = useRef<number | null>(null)
+  const posKeyRef = useRef('')
+  const progressRef = useRef(0)
+  const lastSave = useRef(0)
+  posKeyRef.current = sourceId + '|' + chapter
+  progressRef.current = progress
 
   function closeSheet() { setShowSettings(false); setShowChapters(false); setSheetDrag(0); setDragging(false) }
   function sheetDown(e: React.PointerEvent) { dragStartY.current = e.clientY; setDragging(true); e.currentTarget.setPointerCapture(e.pointerId) }
@@ -151,6 +176,7 @@ export function Reader() {
       if (failed) next.add(i); else next.delete(i)
       return next
     })
+    if (pendingRestore.current != null) applyRestore() // page loaded → doc taller → re-pin resume point
   }, [])
 
   // Take over the window scroll while the reader is mounted: save the app-shell scroll position and
@@ -168,6 +194,8 @@ export function Reader() {
   }, [])
 
   useEffect(() => {
+    const key = sourceId + '|' + chapter
+    pendingRestore.current = loadPositions()[key] ?? null // resume point for this chapter, if any
     setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false)
     window.scrollTo(0, 0)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
@@ -177,6 +205,7 @@ export function Reader() {
     api.detail(sourceId, manga)
       .then((d) => { setChapters(d.chapters); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
       .catch(() => api.recordHistory(sourceId, manga, chapter, title, name))
+    return () => savePosition(key, progressRef.current) // persist the resume point when leaving this chapter
   }, [sourceId, chapter])
 
   // Navigate the de-duplicated list (scanlator-aware) so prev/next skip duplicate chapters.
@@ -271,11 +300,36 @@ export function Reader() {
     // finish); in between, scrolling away from the top hides it.
     const nearBottom = max > 0 && max - y < 120
     if (nearBottom) { if (!chromeRef.current) setChrome(true) } else if (chromeRef.current && y > 40) setChrome(false)
+    // Remember the resume position while the user is in control (skip during a programmatic restore).
+    if (pendingRestore.current == null) {
+      const now = Date.now()
+      if (now - lastSave.current > 400) { lastSave.current = now; savePosition(posKeyRef.current, p) }
+    }
   }, [])
   useEffect(() => {
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [onScroll])
+
+  // Resume mid-chapter: scroll to the saved fraction of the document. Re-applied as pages load (doc
+  // grows) until you take over with a real gesture.
+  const applyRestore = useCallback(() => {
+    const frac = pendingRestore.current
+    if (frac == null) return
+    const doc = document.scrollingElement || document.documentElement
+    const max = doc.scrollHeight - window.innerHeight
+    if (max > 0) window.scrollTo(0, frac * max)
+  }, [])
+  useEffect(() => {
+    if (count && count > 0 && pendingRestore.current != null) requestAnimationFrame(applyRestore)
+  }, [count, applyRestore])
+  useEffect(() => {
+    const stop = () => { pendingRestore.current = null } // a real scroll/keypress means you've taken over
+    window.addEventListener('touchmove', stop, { passive: true })
+    window.addEventListener('wheel', stop, { passive: true })
+    window.addEventListener('keydown', stop)
+    return () => { window.removeEventListener('touchmove', stop); window.removeEventListener('wheel', stop); window.removeEventListener('keydown', stop) }
+  }, [])
 
   // Tap does nothing (so reading isn't interrupted); a double-tap toggles the chrome.
   const lastTap = useRef(0)
