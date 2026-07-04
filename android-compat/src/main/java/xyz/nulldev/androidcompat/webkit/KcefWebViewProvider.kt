@@ -121,7 +121,13 @@ class KcefWebViewProvider(
         const val QUERY_FN = "__\$_suwayomiQuery"
         const val QUERY_CANCEL_FN = "__\$_suwayomiQueryCancel"
 
-        private val initHandler: InitBrowserHandler by KoinPlatformTools.defaultContext().get().inject()
+        // Optional: Suwayomi's server binds an InitBrowserHandler to pre-create a browser for its
+        // interactive WebView. Extensions create browsers on demand via loadUrl/loadDataWithBaseURL,
+        // so when it isn't bound in Koin we skip it — injecting it unconditionally threw
+        // NoDefinitionFoundException on every WebView, surfacing as "Failed to start WebView".
+        private val initHandler: InitBrowserHandler? by lazy {
+            KoinPlatformTools.defaultContext().get().getOrNull<InitBrowserHandler>()
+        }
     }
 
     interface InitBrowserHandler {
@@ -566,7 +572,7 @@ class KcefWebViewProvider(
                     addMessageRouter(CefMessageRouter.create(config, MessageRouterHandler()))
                 }
             }
-        initHandler.init(this)
+        initHandler?.init(this)
         Log.i(TAG, "provider.init() done (kcefClient set = ${kcefClient != null})")
         } catch (e: Throwable) {
             Log.e(TAG, "provider.init() FAILED", e)
