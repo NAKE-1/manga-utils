@@ -7,6 +7,18 @@ import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
 
+// Chapters oldest-first, for finding the "next to read". Sorting by chapter number only works when
+// the source actually parses numbers; some (e.g. aquamanga) leave them at -1, which turns the sort
+// into a no-op and makes "first unread" the NEWEST chapter. So fall back to reversing the source
+// order (Tachiyomi sources list newest-first) when numbers aren't usable.
+function readingOrder(chapters: DetailT['chapters']): DetailT['chapters'] {
+  const positives = chapters.filter((c) => c.number > 0)
+  const usable = positives.length >= chapters.length * 0.6 && new Set(positives.map((c) => c.number)).size > 1
+  return usable
+    ? [...chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
+    : [...chapters].slice().reverse()
+}
+
 function relative(ms: number): string {
   if (!ms) return ''
   const d = Math.floor((Date.now() - ms) / 86400000)
@@ -82,7 +94,7 @@ export function Detail() {
     const key = sourceId + '|' + url
     if (prefetchedCont.current === key) return
     prefetchedCont.current = key
-    const ordered = [...data.chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
+    const ordered = readingOrder(data.chapters)
     const cont = ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1] || data.chapters[0]
     if (cont) {
       api.pages(sourceId, cont.url, data.manga.title, cont.name)
@@ -144,7 +156,7 @@ export function Detail() {
 
   function openContinue() {
     if (!data) return
-    const ordered = [...data.chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
+    const ordered = readingOrder(data.chapters)
     const c = ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1] || data.chapters[0]
     if (c) openChapter(c.url, c.name)
   }
@@ -184,7 +196,7 @@ export function Detail() {
   const newSet = new Set(data.newChapters)
   // The chapter you'd resume on (first unread ascending, else the latest) — gets a "Resume" marker.
   const resumeUrl = (() => {
-    const ordered = [...data.chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
+    const ordered = readingOrder(data.chapters)
     return (ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1])?.url
   })()
 
