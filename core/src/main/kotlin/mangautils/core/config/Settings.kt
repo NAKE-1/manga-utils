@@ -78,4 +78,15 @@ data class Settings(
     val autoUpdateHours: Int = 12,
     /** When an update finds new chapters (scheduled OR manual), auto-enqueue them for download. */
     val autoDownloadNew: Boolean = false,
+    // ---- Cloudflare bypass (FlareSolverr) ----
+    /** Solve Cloudflare challenges via a running FlareSolverr instance. */
+    val flareSolverrEnabled: Boolean = false,
+    /** FlareSolverr base URL (its /v1 endpoint is appended). */
+    val flareSolverrUrl: String = "http://localhost:8191",
+    /** FlareSolverr session name to reuse across solves (faster; empty = none). */
+    val flareSolverrSession: String = "mangautils",
+    /** How long FlareSolverr keeps the session alive, in minutes. */
+    val flareSolverrSessionTtlMinutes: Int = 15,
+    /** Max time to allow FlareSolverr for a single solve, in milliseconds. */
+    val flareSolverrTimeoutMs: Int = 60000,
 )

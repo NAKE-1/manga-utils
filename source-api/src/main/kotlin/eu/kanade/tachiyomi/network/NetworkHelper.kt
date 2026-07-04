@@ -9,7 +9,7 @@ package eu.kanade.tachiyomi.network
 
 import android.content.Context
 import eu.kanade.tachiyomi.network.interceptor.CloudflareClientMarker
-import eu.kanade.tachiyomi.network.interceptor.CloudflareDetectInterceptor
+import eu.kanade.tachiyomi.network.interceptor.FlareSolverrInterceptor
 import eu.kanade.tachiyomi.network.interceptor.IgnoreGzipInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
@@ -69,7 +69,7 @@ class NetworkHelper(
                             maxSize = 5L * 1024 * 1024, // 5 MiB
                         ),
                     ).addInterceptor(UncaughtExceptionInterceptor())
-                    .addInterceptor(CloudflareDetectInterceptor())
+                    .addInterceptor(FlareSolverrInterceptor(cookieStore) { ua -> userAgent.value = ua })
                     .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
                     .addNetworkInterceptor(IgnoreGzipInterceptor())
                     .addNetworkInterceptor(BrotliInterceptor)

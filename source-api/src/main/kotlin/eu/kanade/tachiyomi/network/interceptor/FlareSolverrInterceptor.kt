@@ -1,0 +1,190 @@
+package eu.kanade.tachiyomi.network.interceptor
+
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+import eu.kanade.tachiyomi.network.PersistentCookieStore
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.Cookie
+import okhttp3.FormBody
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+/**
+ * Cloudflare handling. Detects a challenge (Suwayomi's rule: 403/503 + `Server: cloudflare`, plus
+ * a body-marker peek for 200 interstitials) and, when [FlareSolverrConfig.enabled], asks a running
+ * FlareSolverr instance to solve it — storing the returned `cf_clearance` cookie and pinning the
+ * solved User-Agent (the clearance cookie is bound to it) — then retries the request once. When the
+ * bypass is off (or a solve fails) it surfaces the same clear error as before instead of letting the
+ * source parse a challenge page as "no results".
+ *
+ * Modeled on Suwayomi's CloudflareInterceptor / CFClearance.
+ */
+class FlareSolverrInterceptor(
+    private val cookieStore: PersistentCookieStore,
+    private val setUserAgent: (String) -> Unit,
+) : Interceptor {
+    private val log = KotlinLogging.logger {}
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val response = chain.proceed(request)
+        if (!isCloudflareChallenge(response)) return response
+
+        if (!FlareSolverrConfig.enabled) {
+            response.close()
+            throw IOException(
+                "Cloudflare protection is blocking this source (HTTP ${response.code}). " +
+                    "A Cloudflare bypass isn't supported yet.",
+            )
+        }
+        response.close()
+
+        val solution =
+            try {
+                solve(request)
+            } catch (e: Exception) {
+                throw IOException("Cloudflare bypass (FlareSolverr) failed for ${request.url.host}: ${e.message}")
+            } ?: throw IOException("Cloudflare bypass (FlareSolverr) returned no solution for ${request.url.host}.")
+
+        val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
+        if (cookies.isNotEmpty()) cookieStore.addAll(request.url, cookies)
+        solution.userAgent?.takeIf { it.isNotBlank() }?.let(setUserAgent) // clearance is UA-bound
+        log.info { "FlareSolverr solved ${request.url.host}: stored ${cookies.size} cookie(s)" }
+
+        // Retry: the cookie jar (backed by cookieStore) adds cf_clearance and the UA interceptor
+        // downstream applies the solved User-Agent.
+        return chain.proceed(request.newBuilder().build())
+    }
+
+    private fun solve(request: Request): FsSolution? {
+        val cfg = FlareSolverrConfig
+        val isPost = request.method.equals("POST", ignoreCase = true)
+        val postData =
+            if (isPost) {
+                (request.body as? FormBody)?.let { fb ->
+                    buildString {
+                        for (i in 0 until fb.size) {
+                            if (i > 0) append('&')
+                            append(fb.encodedName(i)); append('='); append(fb.encodedValue(i))
+                        }
+                    }
+                }
+            } else {
+                null
+            }
+
+        val payload =
+            FsReq(
+                cmd = if (isPost) "request.post" else "request.get",
+                url = request.url.toString(),
+                maxTimeout = cfg.timeoutMs,
+                session = cfg.session.ifBlank { null },
+                sessionTtlMinutes = cfg.sessionTtlMinutes.takeIf { it > 0 },
+                postData = postData,
+            )
+
+        val client =
+            OkHttpClient.Builder()
+                .callTimeout(cfg.timeoutMs + 15_000, TimeUnit.MILLISECONDS)
+                .readTimeout(cfg.timeoutMs + 10_000, TimeUnit.MILLISECONDS)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .build()
+
+        val req =
+            Request.Builder()
+                .url(cfg.url.trimEnd('/') + "/v1")
+                .post(json.encodeToString(FsReq.serializer(), payload).toRequestBody(JSON_MEDIA))
+                .build()
+
+        client.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (text.isBlank()) throw IOException("empty response from FlareSolverr (HTTP ${resp.code})")
+            val parsed = json.decodeFromString(FsResp.serializer(), text)
+            if (!parsed.status.equals("ok", ignoreCase = true)) {
+                throw IOException(parsed.message.ifBlank { "status=${parsed.status}" })
+            }
+            return parsed.solution
+        }
+    }
+
+    private fun isCloudflareChallenge(response: Response): Boolean {
+        val cfServed = response.header("Server") in SERVER_CHECK
+        if (response.code in ERROR_CODES && cfServed) return true
+        if (!cfServed) return false
+        if (response.header("Content-Type")?.contains("text/html", ignoreCase = true) != true) return false
+        return runCatching {
+            val body = response.peekBody(256 * 1024).string()
+            CHALLENGE_MARKERS.any { body.contains(it, ignoreCase = true) }
+        }.getOrDefault(false)
+    }
+
+    companion object {
+        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+        private val ERROR_CODES = listOf(403, 503)
+        private val SERVER_CHECK = listOf("cloudflare-nginx", "cloudflare")
+        private val CHALLENGE_MARKERS =
+            listOf("challenge-platform", "cf-browser-verification", "_cf_chl", "cf_chl_opt", "Just a moment", "cf-mitigated")
+    }
+}
+
+// ---- FlareSolverr /v1 protocol ----------------------------------------------------------------
+
+@Serializable
+private data class FsReq(
+    val cmd: String,
+    val url: String,
+    val maxTimeout: Long,
+    val session: String? = null,
+    @SerialName("session_ttl_minutes") val sessionTtlMinutes: Int? = null,
+    val returnOnlyCookies: Boolean = true,
+    val postData: String? = null,
+)
+
+@Serializable
+private data class FsResp(
+    val status: String = "",
+    val message: String = "",
+    val solution: FsSolution? = null,
+)
+
+@Serializable
+data class FsSolution(
+    val url: String = "",
+    val status: Int = 0,
+    val userAgent: String? = null,
+    val cookies: List<FsCookie> = emptyList(),
+)
+
+@Serializable
+data class FsCookie(
+    val name: String,
+    val value: String,
+    val domain: String = "",
+    val path: String = "/",
+    val expires: Double = -1.0,
+    val httpOnly: Boolean = false,
+    val secure: Boolean = false,
+) {
+    fun toOkHttp(): Cookie? =
+        runCatching {
+            val host = domain.removePrefix(".").ifBlank { return null }
+            val b = Cookie.Builder().name(name).value(value).domain(host).path(path.ifBlank { "/" })
+            if (expires > 0) b.expiresAt((expires * 1000).toLong())
+            if (secure) b.secure()
+            if (httpOnly) b.httpOnly()
+            b.build()
+        }.getOrNull()
+}

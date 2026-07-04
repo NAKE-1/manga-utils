@@ -10,6 +10,8 @@ import eu.kanade.tachiyomi.source.model.SManga
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -62,9 +64,18 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val log = LoggerFactory.getLogger("mangautils.server")
 
-/** Whether a Cloudflare bypass (e.g. FlareSolverr) is wired up. Not yet — sources behind
- *  Cloudflare currently fail with a 403, so the UI marks them black until this is true. */
-const val CLOUDFLARE_BYPASS = false
+/** Whether a Cloudflare bypass (FlareSolverr) is currently enabled — drives the source-health color. */
+private fun cloudflareBypassOn(): Boolean = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.enabled
+
+/** Push the app's FlareSolverr settings into the network layer's live config holder. */
+private fun applyFlareSolverr(s: mangautils.core.config.Settings) {
+    val c = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig
+    c.enabled = s.flareSolverrEnabled
+    c.url = s.flareSolverrUrl
+    c.session = s.flareSolverrSession
+    c.sessionTtlMinutes = s.flareSolverrSessionTtlMinutes
+    c.timeoutMs = s.flareSolverrTimeoutMs.toLong()
+}
 
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
@@ -193,6 +204,11 @@ private data class SettingsDto(
     val autoUpdate: Boolean,
     val autoUpdateHours: Int,
     val autoDownloadNew: Boolean,
+    val flareSolverrEnabled: Boolean,
+    val flareSolverrUrl: String,
+    val flareSolverrSession: String,
+    val flareSolverrSessionTtlMinutes: Int,
+    val flareSolverrTimeoutMs: Int,
 )
 
 @Serializable
@@ -206,12 +222,21 @@ private data class SettingsPatch(
     val autoUpdate: Boolean? = null,
     val autoUpdateHours: Int? = null,
     val autoDownloadNew: Boolean? = null,
+    val flareSolverrEnabled: Boolean? = null,
+    val flareSolverrUrl: String? = null,
+    val flareSolverrSession: String? = null,
+    val flareSolverrSessionTtlMinutes: Int? = null,
+    val flareSolverrTimeoutMs: Int? = null,
 )
+
+@Serializable
+private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null)
 
 private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
-    s.visibleLanguages, CLOUDFLARE_BYPASS, s.autoUpdate, s.autoUpdateHours, s.autoDownloadNew,
+    s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoDownloadNew,
+    s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
 )
 
 @Serializable
@@ -407,6 +432,7 @@ fun main() {
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     // Honor a custom downloads directory chosen in Settings.
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
+    applyFlareSolverr(SettingsStore.get()) // push the Cloudflare-bypass config into the network layer
     // Detect Cloudflare-protected sources in the background (loads each source once).
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
     // Warm the download-manager series cache in the background so its first open is instant, not a ~3s scan.
@@ -780,10 +806,40 @@ fun Application.module() {
             body.autoUpdate?.let { s = s.copy(autoUpdate = it) }
             body.autoUpdateHours?.let { s = s.copy(autoUpdateHours = it.coerceIn(1, 168)) }
             body.autoDownloadNew?.let { s = s.copy(autoDownloadNew = it) }
+            body.flareSolverrEnabled?.let { s = s.copy(flareSolverrEnabled = it) }
+            body.flareSolverrUrl?.let { s = s.copy(flareSolverrUrl = it.trim()) }
+            body.flareSolverrSession?.let { s = s.copy(flareSolverrSession = it.trim()) }
+            body.flareSolverrSessionTtlMinutes?.let { s = s.copy(flareSolverrSessionTtlMinutes = it.coerceIn(1, 1440)) }
+            body.flareSolverrTimeoutMs?.let { s = s.copy(flareSolverrTimeoutMs = it.coerceIn(10000, 180000)) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
+            applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
             UpdateScheduler.reschedule() // apply any change to the auto-update interval/toggle
             call.respond(settingsDto(s))
+        }
+        // Verify a FlareSolverr instance is reachable (uses the passed url, else the saved one).
+        get("/api/flaresolverr/test") {
+            val base = (call.queryParam("url")?.takeIf { it.isNotBlank() }
+                ?: eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.url).trim().trimEnd('/')
+            val r = withContext(Dispatchers.IO) {
+                runCatching {
+                    val client = okhttp3.OkHttpClient.Builder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build()
+                    val body = """{"cmd":"sessions.list"}""".toRequestBody("application/json".toMediaType())
+                    client.newCall(okhttp3.Request.Builder().url("$base/v1").post(body).build()).execute().use { resp ->
+                        val txt = resp.body?.string().orEmpty()
+                        if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                        txt
+                    }
+                }
+            }
+            r.fold(
+                onSuccess = { txt ->
+                    val ok = txt.contains("\"status\"") && txt.contains("ok")
+                    val version = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.get(1)
+                    call.respond(FlareTestDto(ok, version, if (ok) null else "Unexpected response from FlareSolverr"))
+                },
+                onFailure = { call.respond(FlareTestDto(false, null, it.message ?: "Couldn't reach FlareSolverr")) },
+            )
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
@@ -1046,7 +1102,7 @@ private fun markFailure(sourceId: Long, e: Throwable) {
 
 /** green = no Cloudflare seen; red = behind Cloudflare, no bypass; orange = behind CF + bypass. */
 private fun cfState(sourceId: Long): String =
-    if (!CloudflareState.isBlocked(sourceId)) "green" else if (CLOUDFLARE_BYPASS) "orange" else "red"
+    if (!CloudflareState.isBlocked(sourceId)) "green" else if (cloudflareBypassOn()) "orange" else "red"
 
 /** A source's language is visible if no filter is set, it's language-agnostic, or it's selected. */
 private fun langVisible(lang: String, visible: List<String>): Boolean =

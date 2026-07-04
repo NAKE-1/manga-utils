@@ -35,6 +35,9 @@ export function Settings() {
   const [about, setAbout] = useState<VersionInfo | null>(null)
   const [showChangelog, setShowChangelog] = useState(false)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
+  const [fsUrl, setFsUrl] = useState('')
+  const [fsTest, setFsTest] = useState<{ ok: boolean; version?: string; error?: string } | null>(null)
+  const [fsTesting, setFsTesting] = useState(false)
 
   function toggleDevContinueRemove() {
     const v = !devContinueRemove
@@ -43,7 +46,7 @@ export function Settings() {
   }
 
   useEffect(() => {
-    api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || '') }).catch(() => {})
+    api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || ''); setFsUrl(s.flareSolverrUrl || '') }).catch(() => {})
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
     api.version().then(setAbout).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
@@ -57,6 +60,24 @@ export function Settings() {
   }
   async function setAutoHours(n: number) {
     const s = await api.saveSettings({ autoUpdateHours: Math.max(1, Math.min(168, n)) }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function toggleFlareSolverr() {
+    if (!info) return
+    const s = await api.saveSettings({ flareSolverrEnabled: !info.flareSolverrEnabled }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function saveFsUrl() {
+    const s = await api.saveSettings({ flareSolverrUrl: fsUrl.trim() }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function testFs() {
+    setFsTesting(true); setFsTest(null)
+    const r = await api.flaresolverrTest(fsUrl.trim() || undefined).catch(() => ({ ok: false, error: 'Request failed' }))
+    setFsTest(r); setFsTesting(false)
+  }
+  async function setFsTtl(n: number) {
+    const s = await api.saveSettings({ flareSolverrSessionTtlMinutes: Math.max(1, Math.min(1440, n)) }).catch(() => null)
     if (s) setInfo(s)
   }
   async function toggleAutoDownload() {
@@ -277,6 +298,37 @@ export function Settings() {
             </div>
             <span className={'switch' + (info?.autoDownloadNew ? ' on' : '')}><span className="knob" /></span>
           </button>
+        </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-h">Cloudflare bypass</div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleFlareSolverr}>
+            <div>
+              <div className="set-row-label">Use FlareSolverr</div>
+              <div className="set-hint">Solve Cloudflare challenges via a running FlareSolverr instance so protected sources work. Helps genuine CF challenges only — not a source outage.</div>
+            </div>
+            <span className={'switch' + (info?.flareSolverrEnabled ? ' on' : '')}><span className="knob" /></span>
+          </button>
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">FlareSolverr URL</div>
+          <div className="set-hint">Where FlareSolverr is running (its /v1 endpoint is appended).</div>
+          <input className="set-input" value={fsUrl} onChange={(e) => setFsUrl(e.target.value)} onBlur={saveFsUrl} placeholder="http://localhost:8191" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+          <div className="set-actions">
+            <button className="btn" disabled={fsTesting} onClick={testFs}>{fsTesting ? 'Testing…' : 'Test connection'}</button>
+            {fsTest && <span className={'set-msg' + (fsTest.ok ? '' : ' err')}>{fsTest.ok ? `Connected${fsTest.version ? ` · v${fsTest.version}` : ''}` : (fsTest.error || 'Failed')}</span>}
+          </div>
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">Session TTL (minutes)</div>
+          <div className="set-hint">How long FlareSolverr keeps a solved browser session for reuse (faster repeat solves).</div>
+          <div className="stepper">
+            <button className="step-btn" disabled={(info?.flareSolverrSessionTtlMinutes ?? 15) <= 1} onClick={() => setFsTtl((info?.flareSolverrSessionTtlMinutes ?? 15) - 5)}>−</button>
+            <span className="step-val">{info?.flareSolverrSessionTtlMinutes ?? 15}</span>
+            <button className="step-btn" onClick={() => setFsTtl((info?.flareSolverrSessionTtlMinutes ?? 15) + 5)}>+</button>
+          </div>
         </div>
       </section>
 
