@@ -9,13 +9,18 @@ import eu.kanade.tachiyomi.source.model.SChapterImpl
 import eu.kanade.tachiyomi.source.model.SMangaImpl
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.LibraryService
+import mangautils.core.library.LibraryStore
 import mangautils.core.library.ReadStore
 import org.slf4j.LoggerFactory
+import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 /**
  * Imports a Mihon / Tachiyomi / Suwayomi backup (.tachibk / .proto.gz — a gzipped protobuf). Only the
@@ -26,11 +31,63 @@ object BackupImport {
     private val log = LoggerFactory.getLogger(javaClass)
 
     data class Result(val imported: Int, val skipped: Int, val total: Int)
+    data class PreviewItem(val title: String, val source: Long, val chapters: Int, val read: Int, val inLibrary: Boolean)
+    data class Preview(val total: Int, val manga: List<PreviewItem>)
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun decode(gzBytes: ByteArray): Backup {
+        val raw = GZIPInputStream(gzBytes.inputStream()).use { it.readBytes() }
+        return ProtoBuf.decodeFromByteArray<Backup>(raw)
+    }
+
+    /** Dry run: what a backup would import, without touching the library. */
+    fun preview(gzBytes: ByteArray): Preview {
+        val favorites = decode(gzBytes).backupManga.filter { it.favorite }
+        return Preview(
+            favorites.size,
+            favorites.map {
+                PreviewItem(
+                    title = it.title.ifBlank { it.url },
+                    source = it.source,
+                    chapters = it.chapters.size,
+                    read = it.chapters.count { c -> c.read },
+                    inLibrary = LibraryStore.find(it.source, it.url) != null,
+                )
+            },
+        )
+    }
+
+    /** Export the current library as a Mihon/Tachiyomi-compatible backup (gzipped protobuf). */
+    @OptIn(ExperimentalSerializationApi::class)
+    fun export(): ByteArray {
+        val manga =
+            LibraryStore.list().map { e ->
+                val read = ReadStore.readUrls(e.sourceId, e.mangaUrl)
+                val marks = BookmarkStore.bookmarks(e.sourceId, e.mangaUrl)
+                BackupManga(
+                    source = e.sourceId,
+                    url = e.mangaUrl,
+                    title = e.title,
+                    author = e.author,
+                    description = e.description,
+                    genre = e.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
+                    status = e.status,
+                    thumbnailUrl = e.thumbnailUrl,
+                    chapters = e.knownChapters.map { c ->
+                        BackupChapter(c.url, c.name, c.scanlator, c.url in read, c.url in marks, c.dateUpload, c.number)
+                    },
+                    favorite = true,
+                )
+            }
+        val raw = ProtoBuf.encodeToByteArray(Backup(manga))
+        val out = ByteArrayOutputStream()
+        GZIPOutputStream(out).use { it.write(raw) }
+        return out.toByteArray()
+    }
 
     @OptIn(ExperimentalSerializationApi::class)
     fun import(gzBytes: ByteArray): Result {
-        val raw = GZIPInputStream(gzBytes.inputStream()).use { it.readBytes() }
-        val backup = ProtoBuf.decodeFromByteArray(Backup.serializer(), raw)
+        val backup = decode(gzBytes)
         val favorites = backup.backupManga.filter { it.favorite }
         var imported = 0
         var skipped = 0

@@ -136,6 +136,11 @@ export const api = {
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
   flaresolverrTest: (url?: string) => getJson<{ ok: boolean; version?: string; error?: string }>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
+  backupPreview: async (data: ArrayBuffer) => {
+    const r = await fetch('/api/backup/preview', { method: 'POST', body: data })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Preview failed')
+    return r.json() as Promise<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[] }>
+  },
   importBackup: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/import', { method: 'POST', body: data })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Import failed')

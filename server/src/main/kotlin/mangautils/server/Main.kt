@@ -254,6 +254,12 @@ private data class FlareEventsDto(val lastId: Long, val events: List<FlareEventD
 @Serializable
 private data class BackupResultDto(val imported: Int, val skipped: Int, val total: Int)
 
+@Serializable
+private data class BackupPreviewItemDto(val title: String, val source: String, val chapters: Int, val read: Int, val inLibrary: Boolean)
+
+@Serializable
+private data class BackupPreviewDto(val total: Int, val manga: List<BackupPreviewItemDto>)
+
 private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
@@ -895,6 +901,21 @@ fun Application.module() {
                 onSuccess = { call.respond(BackupResultDto(it.imported, it.skipped, it.total)) },
                 onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup — is it a Mihon/Tachiyomi .tachibk? (${it.message})")) },
             )
+        }
+        // Dry run: what a backup would import, without changing the library.
+        post("/api/backup/preview") {
+            val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
+            val r = withContext(Dispatchers.IO) { runCatching { mangautils.core.backup.BackupImport.preview(bytes) } }
+            r.fold(
+                onSuccess = { p -> call.respond(BackupPreviewDto(p.total, p.manga.map { BackupPreviewItemDto(it.title, it.source.toString(), it.chapters, it.read, it.inLibrary) })) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup — is it a Mihon/Tachiyomi .tachibk? (${it.message})")) },
+            )
+        }
+        // Export the current library as a Mihon-compatible backup.
+        get("/api/backup/export") {
+            val bytes = withContext(Dispatchers.IO) { mangautils.core.backup.BackupImport.export() }
+            call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils.tachibk\"")
+            call.respondBytes(bytes, ContentType.parse("application/gzip"))
         }
         // Recent FlareSolverr solve events, so the web UI can toast "solving / solved".
         get("/api/flaresolverr/events") {

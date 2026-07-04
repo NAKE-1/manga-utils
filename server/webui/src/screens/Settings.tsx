@@ -37,7 +37,9 @@ export function Settings() {
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState<{ text: string; err: boolean } | null>(null)
+  const [preview, setPreview] = useState<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[] } | null>(null)
   const backupInput = useRef<HTMLInputElement>(null)
+  const pendingBackup = useRef<ArrayBuffer | null>(null)
   const [fsUrl, setFsUrl] = useState('')
   const [fsTest, setFsTest] = useState<{ ok: boolean; version?: string; error?: string } | null>(null)
   const [fsTesting, setFsTesting] = useState(false)
@@ -65,18 +67,32 @@ export function Settings() {
     const s = await api.saveSettings({ autoUpdateHours: Math.max(1, Math.min(168, n)) }).catch(() => null)
     if (s) setInfo(s)
   }
+  // Choosing a file only PREVIEWS it — nothing changes until you confirm.
   async function onBackupFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    setImporting(true); setImportMsg(null); setPreview(null)
+    try {
+      const buf = await file.arrayBuffer()
+      pendingBackup.current = buf
+      setPreview(await api.backupPreview(buf))
+    } catch (err) {
+      setImportMsg({ text: err instanceof Error ? err.message : 'Couldn’t read that backup', err: true })
+    } finally { setImporting(false) }
+  }
+  async function doImport() {
+    if (!pendingBackup.current) return
     setImporting(true); setImportMsg(null)
     try {
-      const r = await api.importBackup(await file.arrayBuffer())
+      const r = await api.importBackup(pendingBackup.current)
       setImportMsg({ text: `Imported ${r.imported} manga${r.skipped ? ` · ${r.skipped} skipped` : ''}. Open Home to see them (install matching extensions to read).`, err: false })
+      setPreview(null); pendingBackup.current = null
     } catch (err) {
       setImportMsg({ text: err instanceof Error ? err.message : 'Import failed', err: true })
     } finally { setImporting(false) }
   }
+  function cancelImport() { setPreview(null); pendingBackup.current = null }
   async function toggleFlareSolverr() {
     if (!info) return
     const s = await api.saveSettings({ flareSolverrEnabled: !info.flareSolverrEnabled }).catch(() => null)
@@ -319,12 +335,33 @@ export function Settings() {
       <section className="set-section">
         <div className="set-section-h">Backup</div>
         <div className="set-card">
-          <div className="set-row-label">Restore from Mihon / Tachiyomi</div>
-          <div className="set-hint">Import a .tachibk / .proto.gz backup — brings in your library, chapters, and read/bookmark state. Install the matching source extensions to actually read them.</div>
+          <div className="set-row-label">Backup &amp; restore</div>
+          <div className="set-hint">Import a Mihon / Tachiyomi .tachibk / .proto.gz — you’ll see a preview first and nothing changes until you confirm. Export writes your current library to a .tachibk you can re-import (great for testing round-trips). Install the matching source extensions to actually read imported manga.</div>
           <div className="set-actions">
-            <button className="btn primary" disabled={importing} onClick={() => backupInput.current?.click()}>{importing ? 'Importing…' : 'Choose backup file'}</button>
+            <button className="btn primary" disabled={importing} onClick={() => backupInput.current?.click()}>{importing && !preview ? 'Reading…' : 'Choose backup to restore'}</button>
+            <button className="btn" onClick={() => { window.location.href = '/api/backup/export' }}>Export my library</button>
             {importMsg && <span className={'set-msg' + (importMsg.err ? ' err' : '')}>{importMsg.text}</span>}
           </div>
+          {preview && (
+            <div className="backup-preview">
+              <div className="set-row-label">Preview · {preview.total} manga {preview.total === 0 && '(nothing to import)'}</div>
+              {preview.total > 0 && (
+                <div className="backup-list">
+                  {preview.manga.slice(0, 60).map((m, i) => (
+                    <div key={i} className="backup-item">
+                      <span className="backup-title">{m.title}</span>
+                      <span className="backup-meta">{m.chapters} ch · {m.read} read{m.inLibrary ? ' · already in library' : ''}</span>
+                    </div>
+                  ))}
+                  {preview.total > 60 && <div className="set-hint">…and {preview.total - 60} more</div>}
+                </div>
+              )}
+              <div className="set-actions">
+                <button className="btn primary" disabled={importing || preview.total === 0} onClick={doImport}>{importing ? 'Importing…' : `Import ${preview.total} manga`}</button>
+                <button className="btn" onClick={cancelImport}>Cancel</button>
+              </div>
+            </div>
+          )}
           <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />
         </div>
       </section>
