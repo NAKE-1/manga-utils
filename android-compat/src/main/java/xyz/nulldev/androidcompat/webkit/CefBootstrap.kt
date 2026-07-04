@@ -31,8 +31,10 @@ object CefBootstrap {
                     progress {
                         onDownloading { logger.info { "CEF download: ${it.toInt()}%" } }
                         onInitialized {
-                            runCatching { CefHelper.cefApp.value = Result.success(CefApp.getInstance()) }
-                                .onFailure { CefHelper.cefApp.value = Result.failure(it) }
+                            runCatching {
+                                CefHelper.cefApp.value = Result.success(CefApp.getInstance())
+                                CefHelper.isInitialized = true
+                            }.onFailure { CefHelper.cefApp.value = Result.failure(it) }
                             logger.info { "CEF runtime ready — WebView-based sources are now usable" }
                         }
                     }

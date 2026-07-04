@@ -13,14 +13,22 @@ private val logger = KotlinLogging.logger {}
 object CefHelper {
     val cefApp = MutableStateFlow<Result<CefApp?>>(Result.success(null))
 
+    // Set true once CEF reaches INITIALIZED (by CefBootstrap). onInitialization() only fires on state
+    // *changes*, so once initialized we must NOT call waitForInit() (it would block forever).
+    @Volatile
+    var isInitialized = false
+
     suspend fun createClient(): CefClient {
         // Kick off the (lazy, one-time) native CEF download/init. Until it's ready, fail fast with a
         // clear reason instead of blocking until the network call times out.
         CefBootstrap.ensureStarted()
         val current = cefApp.value
         if (current.isFailure) throw CefException("$WEBVIEW_UNAVAILABLE (${current.exceptionOrNull()?.message})")
-        if (current.getOrNull() == null) throw CefException(WEBVIEW_INITIALIZING)
-        val app = waitForInit().first()
+        val cef = current.getOrNull() ?: throw CefException(WEBVIEW_INITIALIZING)
+        // If CEF is already initialized (the common case — bootstrap set cefApp on INITIALIZED), use it
+        // directly. onInitialization() only fires on state *changes*, so waitForInit() would block
+        // forever on an already-initialized app — deadlocking the main looper the WebView runs on.
+        val app = if (isInitialized) cef else waitForInit().first()
         val client = app.createClient()
         JsHandler(client) // This adds itself to a global map
         return client
