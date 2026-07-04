@@ -4,7 +4,8 @@ import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
 import { SourcePicker } from '../components/SourcePicker'
-import { IconSearch } from '../components/icons'
+import { SourcePrefsSheet } from '../components/SourcePrefsSheet'
+import { IconSearch, IconSettings } from '../components/icons'
 
 type Mode = 'popular' | 'latest' | 'search'
 const GLOBAL = '__global__'
@@ -28,6 +29,7 @@ let searchCache: SearchCache | null = null
 
 export function Search() {
   const [sources, setSources] = useState<Source[]>([])
+  const [configuring, setConfiguring] = useState(false)
   const [sourceId, setSourceId] = useState<string>(searchCache?.sourceId || localStorage.getItem('browse.source') || '')
   const [mode, setMode] = useState<Mode>(searchCache?.mode ?? 'popular')
   const [input, setInput] = useState(searchCache?.input ?? '')
@@ -140,7 +142,13 @@ export function Search() {
 
       <div className="src-picker-wrap">
         <SourcePicker sources={pickerSources} value={sourceId} onChange={pickSource} />
+        {!isGlobal && sourceId && (
+          <button className="src-config" onClick={() => setConfiguring(true)} aria-label="Source settings" title="Source settings"><IconSettings /></button>
+        )}
       </div>
+      {configuring && !isGlobal && (
+        <SourcePrefsSheet sourceId={sourceId} sourceName={pickerSources.find((s) => s.id === sourceId)?.name || 'Source'} onClose={() => setConfiguring(false)} />
+      )}
 
       {!isGlobal && mode !== 'search' && (
         <div className="seg" style={{ margin: '8px 16px 0' }}>

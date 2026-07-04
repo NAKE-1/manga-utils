@@ -230,6 +230,18 @@ private data class SettingsPatch(
 )
 
 @Serializable
+private data class SourcePrefDto(
+    val index: Int, val key: String?, val title: String, val summary: String?, val type: String,
+    val value: String, val entries: List<String>?, val entryValues: List<String>?, val enabled: Boolean,
+)
+
+@Serializable
+private data class SetPrefReq(val index: Int, val value: String)
+
+private fun mangautils.core.source.SourcePref.toDto() =
+    SourcePrefDto(index, key, title, summary, type, value, entries, entryValues, enabled)
+
+@Serializable
 private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null)
 
 @Serializable
@@ -554,6 +566,25 @@ fun Application.module() {
                 onSuccess = { SourceHealth.markUp(id); call.respond(it) },
                 onFailure = { markFailure(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
             )
+        }
+
+        // ---- Source's own preferences (login / mirror / quality / language, per ConfigurableSource) ----
+        get("/api/sources/{id}/preferences") {
+            val id = call.sourceId() ?: return@get call.respond(HttpStatusCode.BadRequest, "bad source id")
+            val r = withContext(Dispatchers.IO) { runCatching { mangautils.core.source.SourcePreferences.list(id) } }
+            r.fold(
+                onSuccess = { prefs ->
+                    if (prefs == null) call.respond(HttpStatusCode.NotFound, ErrorDto("source not installed"))
+                    else call.respond(prefs.map { it.toDto() })
+                },
+                onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(it.message ?: "couldn't load the source's settings")) },
+            )
+        }
+        post("/api/sources/{id}/preferences") {
+            val id = call.sourceId() ?: return@post call.respond(HttpStatusCode.BadRequest, "bad source id")
+            val body = call.receive<SetPrefReq>()
+            val err = withContext(Dispatchers.IO) { mangautils.core.source.SourcePreferences.set(id, body.index, body.value) }
+            if (err == null) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.BadRequest, ErrorDto(err))
         }
 
         // ---- Library ----

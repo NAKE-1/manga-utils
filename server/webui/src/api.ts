@@ -1,6 +1,7 @@
 // Typed client for the Ktor backend. IDs are strings (the server serializes Longs as strings).
 
 export interface Source { id: string; name: string; lang: string; nsfw: boolean; cfState: 'green' | 'red' | 'orange'; down: boolean; imagesDown: boolean }
+export interface SourcePref { index: number; key: string | null; title: string; summary: string | null; type: string; value: string; entries: string[] | null; entryValues: string[] | null; enabled: boolean }
 
 export interface Manga {
   sourceId: string
@@ -93,6 +94,11 @@ async function getJson<T>(url: string, retries = 2, timeoutMs = 15000): Promise<
 
 export const api = {
   sources: () => getJson<Source[]>('/api/sources'),
+  sourcePrefs: (id: string) => getJson<SourcePref[]>(`/api/sources/${id}/preferences`),
+  setSourcePref: async (id: string, index: number, value: string) => {
+    const r = await fetch(`/api/sources/${id}/preferences`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index, value }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Failed to save')
+  },
   languages: () => getJson<string[]>('/api/languages'),
   library: () => getJson<LibraryEntry[]>('/api/library'),
   updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }>),

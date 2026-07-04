@@ -315,6 +315,26 @@ img { display: block; }
 }
 .page-fail-icon { font-size: 26px; line-height: 1; margin-bottom: 2px; }
 
+/* Source config gear next to the picker + the source-preferences sheet. */
+.src-picker-wrap { display: flex; align-items: center; gap: 8px; }
+.src-config { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px;
+  background: #17171a; border: 1px solid #2a2a30; color: #cfcfd7; cursor: pointer; }
+.src-config:active { background: #232329; }
+.prefs-sheet { max-height: 82vh; display: flex; flex-direction: column; overflow: hidden; }
+.prefs-list { overflow-y: auto; display: flex; flex-direction: column; }
+.prefs-error { background: #2a1414; border: 1px solid #5a2626; color: #f5a3a3; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 8px; }
+.pref-row { display: flex; flex-direction: column; gap: 8px; padding: 14px 2px; border-bottom: 1px solid #1e1e24; }
+.pref-row.disabled { opacity: 0.5; }
+.pref-head { display: flex; flex-direction: column; gap: 2px; }
+.pref-title { font-size: 15px; font-weight: 600; color: #edecf3; }
+.pref-summary { font-size: 12px; color: #9ea4b0; }
+.pref-toggle { align-self: flex-start; background: none; border: none; padding: 0; cursor: pointer; }
+.pref-text { display: flex; gap: 8px; align-items: center; }
+.pref-text .set-input { flex: 1; min-width: 0; }
+.pref-checks { display: flex; flex-direction: column; gap: 8px; }
+.pref-check { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #e6e6ee; }
+.pref-check input { width: 18px; height: 18px; accent-color: var(--accent, #7c6cf0); }
+
 /* Source health panel (Settings → Developer). */
 .srchealth { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
 .srch-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid #1c1c22; }
