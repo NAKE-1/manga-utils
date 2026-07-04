@@ -6,13 +6,15 @@
 package mangautils.core.util
 
 import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
 
-/** The chapter's number, parsed from the name when the source leaves `chapter_number` unset. */
+/**
+ * The chapter's number, parsed from the name when the source leaves `chapter_number` unset (many
+ * scanlator sources — aquamanga, asura, arean, kagane, allmanga — do). Delegates to Tachiyomi's
+ * [ChapterRecognition] (what Suwayomi uses): it strips the manga title + volume/version tags and
+ * handles "Vol.1 Ch.4", "Bleach 567", "Chapter 12.5", etc.
+ */
 object ChapterNumber {
-    fun of(ch: SChapter): Float {
-        if (ch.chapter_number >= 0f) return ch.chapter_number
-        val byKeyword = Regex("(?i)chapter\\s*([0-9]+(?:\\.[0-9]+)?)").find(ch.name)
-        val any = byKeyword ?: Regex("([0-9]+(?:\\.[0-9]+)?)").find(ch.name)
-        return any?.groupValues?.getOrNull(1)?.toFloatOrNull() ?: -1f
-    }
+    fun of(ch: SChapter, mangaTitle: String = ""): Float =
+        ChapterRecognition.parseChapterNumber(mangaTitle, ch.name, ch.chapter_number.toDouble()).toFloat()
 }

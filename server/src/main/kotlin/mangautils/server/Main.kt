@@ -376,6 +376,11 @@ private val pageCache = ConcurrentHashMap<String, List<Page>>()
 // Cache fetched details so navigating back to a manga is instant (the source does ~3 slow calls).
 private val detailCache = ConcurrentHashMap<String, DetailDto>()
 
+// Short-TTL cache for browse pages (popular/latest/search) so re-opening a source or hitting Back
+// doesn't re-pay the source's latency (Madara/WordPress sources are ~1s per page).
+private const val BROWSE_TTL_MS = 300_000L
+private val browseCache = ConcurrentHashMap<String, Pair<Long, PageResultDto>>()
+
 // Cache thumbnailed cover bytes (per cover url) so the grid isn't re-fetching + re-resizing.
 private val coverCache = ConcurrentHashMap<String, ByteArray>()
 
@@ -503,11 +508,11 @@ fun Application.module() {
             call.respond(langs)
         }
 
-        get("/api/sources/{id}/popular") { browse(call) { id, page -> SourceBrowser.popular(id, page) } }
-        get("/api/sources/{id}/latest") { browse(call) { id, page -> SourceBrowser.latest(id, page) } }
+        get("/api/sources/{id}/popular") { browse(call, "popular") { id, page -> SourceBrowser.popular(id, page) } }
+        get("/api/sources/{id}/latest") { browse(call, "latest") { id, page -> SourceBrowser.latest(id, page) } }
         get("/api/sources/{id}/search") {
             val q = call.queryParam("q") ?: ""
-            browse(call) { id, page -> SourceBrowser.search(id, q, page) }
+            browse(call, "search|$q") { id, page -> SourceBrowser.search(id, q, page) }
         }
 
         get("/api/sources/{id}/manga") {
@@ -537,7 +542,7 @@ fun Application.module() {
                                 name = chName,
                                 scanlator = runCatching { ch.scanlator }.getOrNull(),
                                 dateUpload = runCatching { ch.date_upload }.getOrDefault(0),
-                                number = runCatching { ch.chapter_number }.getOrDefault(-1f),
+                                number = runCatching { mangautils.core.util.ChapterNumber.of(ch, mangaTitle) }.getOrDefault(-1f),
                                 downloaded = runCatching { DownloadManager.isDownloaded(mangaTitle, chName) }.getOrDefault(false),
                             )
                         },
@@ -1081,10 +1086,14 @@ private fun io.ktor.server.application.ApplicationCall.querySourceId(): Long? = 
 
 private suspend fun browse(
     call: io.ktor.server.application.ApplicationCall,
+    kind: String,
     op: (Long, Int) -> eu.kanade.tachiyomi.source.model.MangasPage,
 ) {
     val id = call.sourceId() ?: return call.respond(HttpStatusCode.BadRequest, "bad source id")
     val page = call.queryParam("page")?.toIntOrNull() ?: 1
+    val key = "$id|$kind|$page"
+    val now = System.currentTimeMillis()
+    browseCache[key]?.let { (t, v) -> if (now - t < BROWSE_TTL_MS) return call.respond(v) }
     val result = withContext(Dispatchers.IO) {
         runCatching {
             val mp = op(id, page)
@@ -1092,7 +1101,12 @@ private suspend fun browse(
         }
     }
     result.fold(
-        onSuccess = { SourceHealth.markUp(id); call.respond(it) },
+        onSuccess = {
+            SourceHealth.markUp(id)
+            browseCache[key] = now to it
+            if (browseCache.size > 256) browseCache.entries.removeIf { (System.currentTimeMillis() - it.value.first) > BROWSE_TTL_MS }
+            call.respond(it)
+        },
         onFailure = { markFailure(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
     )
 }
