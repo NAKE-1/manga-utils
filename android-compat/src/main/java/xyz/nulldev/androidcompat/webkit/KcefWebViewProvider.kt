@@ -550,6 +550,7 @@ class KcefWebViewProvider(
         privateBrowsing: Boolean,
     ) {
         Log.i(TAG, "provider.init() start")
+        try {
         destroy()
         kcefClient =
             runBlocking {
@@ -567,6 +568,10 @@ class KcefWebViewProvider(
             }
         initHandler.init(this)
         Log.i(TAG, "provider.init() done (kcefClient set = ${kcefClient != null})")
+        } catch (e: Throwable) {
+            Log.e(TAG, "provider.init() FAILED", e)
+            throw e
+        }
     }
 
     // Deprecated - should never be called
