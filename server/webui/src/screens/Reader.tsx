@@ -102,7 +102,12 @@ export function Reader() {
   const [sheetDrag, setSheetDrag] = useState(0)
   const [dragging, setDragging] = useState(false)
   const dragStartY = useRef(0)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  // The reader scrolls the document (window) so mobile browsers auto-hide their address/nav bars.
+  // The window scroll listener reads these live refs to avoid re-attaching on every render.
+  const countRef = useRef(count)
+  const chromeRef = useRef(chrome)
+  countRef.current = count
+  chromeRef.current = chrome
 
   function closeSheet() { setShowSettings(false); setShowChapters(false); setSheetDrag(0); setDragging(false) }
   function sheetDown(e: React.PointerEvent) { dragStartY.current = e.clientY; setDragging(true); e.currentTarget.setPointerCapture(e.pointerId) }
@@ -148,9 +153,23 @@ export function Reader() {
     })
   }, [])
 
+  // Take over the window scroll while the reader is mounted: save the app-shell scroll position and
+  // reset to top, restore it on exit, and disable the browser's own restoration so our per-chapter
+  // reset wins. Runs before the chapter effect below so it captures the position before that resets it.
+  useEffect(() => {
+    const prevRestore = history.scrollRestoration
+    try { history.scrollRestoration = 'manual' } catch { /* older browsers */ }
+    const savedAppScroll = window.scrollY
+    window.scrollTo(0, 0)
+    return () => {
+      try { history.scrollRestoration = prevRestore } catch { /* */ }
+      window.scrollTo(0, savedAppScroll)
+    }
+  }, [])
+
   useEffect(() => {
     setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false)
-    scrollRef.current?.scrollTo({ top: 0 })
+    window.scrollTo(0, 0)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -238,18 +257,25 @@ export function Reader() {
     )
   }
 
-  function onScroll() {
-    const el = scrollRef.current
-    if (!el || !count) return
-    const max = el.scrollHeight - el.clientHeight
-    const p = max > 0 ? el.scrollTop / max : 0
+  // Document-scroll handler: reads window scroll so the browser's chrome auto-hides as you scroll.
+  const onScroll = useCallback(() => {
+    const c = countRef.current
+    if (!c) return
+    const doc = document.scrollingElement || document.documentElement
+    const max = doc.scrollHeight - window.innerHeight
+    const y = window.scrollY
+    const p = max > 0 ? y / max : 0
     setProgress(p)
-    setPage(Math.min(count, Math.max(1, Math.round(p * (count - 1)) + 1)))
+    setPage(Math.min(c, Math.max(1, Math.round(p * (c - 1)) + 1)))
     // Chrome shows at the start and again at the END of the chapter (so prev/next are there when you
     // finish); in between, scrolling away from the top hides it.
-    const nearBottom = max > 0 && max - el.scrollTop < 120
-    if (nearBottom) { if (!chrome) setChrome(true) } else if (chrome && el.scrollTop > 40) setChrome(false)
-  }
+    const nearBottom = max > 0 && max - y < 120
+    if (nearBottom) { if (!chromeRef.current) setChrome(true) } else if (chromeRef.current && y > 40) setChrome(false)
+  }, [])
+  useEffect(() => {
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [onScroll])
 
   // Tap does nothing (so reading isn't interrupted); a double-tap toggles the chrome.
   const lastTap = useRef(0)
@@ -260,7 +286,7 @@ export function Reader() {
 
   return (
     <div className="reader">
-      <div className="reader-scroll" ref={scrollRef} onScroll={onScroll} onClick={onTap}>
+      <div className="reader-scroll" onClick={onTap}>
         {count === null && <div className="spinner" />}
         {count === 0 && <div className="center-msg" style={{ color: '#ccc' }}>Couldn't load this chapter's pages.</div>}
         {count !== null && count > 0 && (
@@ -318,7 +344,7 @@ export function Reader() {
               )}
             </button>
           )}
-          <button className="r-icon" onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
+          <button className="r-icon" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
           <button className="r-icon" onClick={() => setShowSettings(true)} aria-label="Settings"><IconSettings /></button>
         </div>
       </div>

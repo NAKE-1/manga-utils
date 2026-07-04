@@ -286,9 +286,11 @@ img { display: block; }
 .bb-book:active { background: var(--accent-press); }
 
 /* ---- Reader -------------------------------------------------------------- */
-.reader { position: fixed; inset: 0; background: #000; }
-.reader-scroll { position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-.strip { display: flex; flex-direction: column; align-items: center; min-height: 100%; }
+/* The reader flows in the document (window scrolls) so mobile browsers auto-hide their chrome.
+   The floating reader controls are all position:fixed, so they stay pinned regardless. */
+.reader { position: relative; min-height: 100dvh; background: #000; }
+.reader-scroll { width: 100%; }
+.strip { display: flex; flex-direction: column; align-items: center; min-height: 100dvh; }
 .page-slot { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 60vh; }
 .page-slot.loaded { min-height: 0; }
 .spinner.sm { width: 24px; height: 24px; margin: 0; position: absolute; }
