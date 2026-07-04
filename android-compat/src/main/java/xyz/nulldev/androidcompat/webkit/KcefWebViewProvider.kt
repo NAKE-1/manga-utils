@@ -60,6 +60,8 @@ import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.browser.CefMessageRouter
 import org.cef.browser.CefRendering
+import org.cef.network.CefCookie
+import org.cef.network.CefCookieManager
 import org.cef.callback.CefCallback
 import org.cef.callback.CefMediaAccessCallback
 import org.cef.callback.CefQueryCallback
@@ -623,6 +625,27 @@ class KcefWebViewProvider(
 
     override fun restoreState(inState: Bundle): WebBackForwardList = throw RuntimeException("Stub!")
 
+    // Copy the app's shared cookies (the OkHttp/java.net store — which holds FlareSolverr's
+    // cf_clearance) into the CEF browser's cookie manager, so the WebView loads already past
+    // Cloudflare instead of hitting a fresh challenge. Mirrors Suwayomi's KcefWebView.
+    private fun loadSharedCookiesIntoCef() {
+        val store = (java.net.CookieHandler.getDefault() as? java.net.CookieManager)?.cookieStore ?: return
+        val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return
+        for (c in store.cookies) {
+            runCatching {
+                val rawDomain = c.domain?.takeIf { it.isNotBlank() } ?: return@runCatching
+                val host = rawDomain.trimStart('.')
+                val domain = if (rawDomain.startsWith(".")) rawDomain else ".$host"
+                val hasExpires = c.maxAge in 0..Long.MAX_VALUE && c.maxAge != -1L
+                val expires = if (hasExpires) java.util.Date(System.currentTimeMillis() + c.maxAge * 1000) else java.util.Date()
+                mgr.setCookie(
+                    "https://$host",
+                    CefCookie(c.name, c.value, domain, c.path ?: "/", c.secure, c.isHttpOnly, java.util.Date(), java.util.Date(), hasExpires, expires),
+                )
+            }
+        }
+    }
+
     override fun loadUrl(
         loadUrl: String,
         additionalHttpHeaders: Map<String, String>,
@@ -630,6 +653,7 @@ class KcefWebViewProvider(
         browser?.close(true)
         browser?.dispose()
         chromeClient.onProgressChanged(view, 0)
+        loadSharedCookiesIntoCef()
         initialRequestData = InitialRequestData(additionalHttpHeaders = additionalHttpHeaders)
         browser =
             kcefClient!!
@@ -655,6 +679,7 @@ class KcefWebViewProvider(
         browser?.close(true)
         browser?.dispose()
         chromeClient.onProgressChanged(view, 0)
+        loadSharedCookiesIntoCef()
         initialRequestData = InitialRequestData(myPostData = postData)
         browser =
             kcefClient!!
