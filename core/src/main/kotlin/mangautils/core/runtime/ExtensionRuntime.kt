@@ -40,6 +40,8 @@ object ExtensionRuntime {
 
         log.debug("Starting extension runtime (data dir: {})", AppConfig.dataDir)
 
+        startMainLooper()
+
         val app = App()
 
         // injekt-koin bridges Injekt.get<T>() to this Koin container.
@@ -56,5 +58,28 @@ object ExtensionRuntime {
 
         started = true
         log.debug("Extension runtime started")
+    }
+
+    /**
+     * Prepare an Android "main" looper on a daemon thread. Some extensions build a
+     * `Handler(Looper.getMainLooper())` (e.g. rate-limit / WebView-based Cloudflare interceptors);
+     * without a prepared main looper `getMainLooper()` is null and the Handler constructor NPEs
+     * ("Cannot read field mQueue because looper is null"). The queue is backed by our JVM
+     * MessageQueue impl, so posted work actually runs.
+     */
+    private fun startMainLooper() {
+        if (android.os.Looper.getMainLooper() != null) return
+        val ready = java.util.concurrent.CountDownLatch(1)
+        Thread {
+            try {
+                android.os.Looper.prepareMainLooper()
+                ready.countDown()
+                android.os.Looper.loop()
+            } catch (e: Throwable) {
+                ready.countDown()
+                log.warn("android main looper stopped: {}", e.message)
+            }
+        }.apply { isDaemon = true; name = "android-main-looper" }.start()
+        ready.await()
     }
 }
