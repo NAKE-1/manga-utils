@@ -985,7 +985,12 @@ class KcefWebViewProvider(
     // Provider internal methods
     // -------------------------------------------------------------------------
 
-    override fun getViewDelegate(): ViewDelegate = throw RuntimeException("Stub!")
+    // Extensions call webView.setLayoutParams(...) → getViewDelegate().setLayoutParams(); returning a
+    // real (no-op for offscreen) delegate instead of throwing Stub! is what lets a WebView actually
+    // start (comix threw here → "Failed to start WebView").
+    private val viewDelegate = KcefViewDelegate()
+
+    override fun getViewDelegate(): ViewDelegate = viewDelegate
 
     override fun getScrollDelegate(): ScrollDelegate = throw RuntimeException("Stub!")
 
@@ -1058,7 +1063,7 @@ class KcefWebViewProvider(
 
         override fun onDraw(canvas: Canvas): Unit = throw RuntimeException("Stub!")
 
-        override fun setLayoutParams(layoutParams: LayoutParams): Unit = throw RuntimeException("Stub!")
+        override fun setLayoutParams(layoutParams: LayoutParams) {} // no-op: offscreen browser has no layout
 
         override fun performLongClick(): Boolean = throw RuntimeException("Stub!")
 
