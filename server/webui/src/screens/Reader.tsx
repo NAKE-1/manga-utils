@@ -162,17 +162,18 @@ export function Reader() {
   // Requests carry X-Preload so the server logs them even for cached/downloaded pages.
   const prefetchedNext = useRef('')
   useEffect(() => {
-    if (progress <= 0.5) return
-    if (!nextCh) { console.log('[reader] past 50% — waiting for chapter list to preload next'); return }
+    if (progress <= 0.4) return // fire earlier than mid-chapter for more lead time before you flip
+    if (!nextCh) { console.log('[reader] past preload point — waiting for chapter list to preload next'); return }
     if (prefetchedNext.current === nextCh.url) return
     prefetchedNext.current = nextCh.url
     api.pages(sourceId, nextCh.url, title, nextCh.name).then((r) => {
       const n = Math.min(6, r.count)
       console.log(`[reader] preloading next chapter "${nextCh.name || nextCh.url}" — ${n}/${r.count} pages`)
-      for (let i = 0; i < n; i++) {
-        fetch(pageUrl(sourceId, nextCh.url, i, title, nextCh.name), { headers: { 'X-Preload': '1' }, priority: 'low' } as RequestInit)
-          .then((res) => res.blob()).catch(() => {})
-      }
+      // One header-tagged request so the preload stays visible in the server log.
+      fetch(pageUrl(sourceId, nextCh.url, 0, title, nextCh.name), { headers: { 'X-Preload': '1' } }).catch(() => {})
+      // Warm the browser IMAGE cache via new Image() — the same method the info page uses for its
+      // instant first-chapter open — so the pages are ready to paint on arrival, not just cached bytes.
+      for (let i = 0; i < n; i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) }
     }).catch(() => { prefetchedNext.current = '' })
   }, [progress, nextCh, sourceId, title])
 
