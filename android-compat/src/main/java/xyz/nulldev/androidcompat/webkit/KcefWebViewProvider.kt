@@ -712,22 +712,29 @@ class KcefWebViewProvider(
         encoding: String?,
         historyUrl: String?,
     ) {
+        Log.d(TAG, "loadDataWithBaseURL entry: baseUrl=$baseUrl")
         browser?.close(true)
         browser?.dispose()
         chromeClient.onProgressChanged(view, 0)
+        loadSharedCookiesIntoCef()
         val url = baseUrl ?: "about:blank"
         urlHttpMapping[url.trimEnd('/')] = data
 
         browser =
-            kcefClient!!
-                .createBrowser(
-                    url,
-                    CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
-                    false,
-                ).apply {
-                    // NOTE: Without this, we don't seem to be receiving any events
-                    createImmediately()
-                }
+            try {
+                kcefClient!!
+                    .createBrowser(
+                        url,
+                        CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
+                        false,
+                    ).apply {
+                        // NOTE: Without this, we don't seem to be receiving any events
+                        createImmediately()
+                    }
+            } catch (e: Throwable) {
+                Log.e(TAG, "createBrowser failed for $url", e)
+                throw e
+            }
         Log.d(TAG, "Page loaded from data at base URL $baseUrl")
     }
 
