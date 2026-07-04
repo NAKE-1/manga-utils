@@ -38,8 +38,16 @@ class FlareSolverrInterceptor(
     private val log = KotlinLogging.logger {}
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    // Hosts we've cleared → the User-Agent the clearance is bound to. Every request to such a host
+    // must carry that exact UA, even if the extension sets its own, or Cloudflare rejects the cookie.
+    private val solvedUa = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     override fun intercept(chain: Interceptor.Chain): Response {
-        val request = chain.request()
+        var request = chain.request()
+        solvedUa[request.url.host]?.let { ua ->
+            if (request.header("User-Agent") != ua) request = request.newBuilder().header("User-Agent", ua).build()
+        }
+
         val response = chain.proceed(request)
         if (!isCloudflareChallenge(response)) return response
 
@@ -61,12 +69,18 @@ class FlareSolverrInterceptor(
 
         val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
         if (cookies.isNotEmpty()) cookieStore.addAll(request.url, cookies)
-        solution.userAgent?.takeIf { it.isNotBlank() }?.let(setUserAgent) // clearance is UA-bound
+        val ua = solution.userAgent?.takeIf { it.isNotBlank() } // clearance is UA-bound
+        if (ua != null) {
+            setUserAgent(ua)
+            solvedUa[request.url.host] = ua
+        }
         log.info { "FlareSolverr solved ${request.url.host}: stored ${cookies.size} cookie(s)" }
 
-        // Retry: the cookie jar (backed by cookieStore) adds cf_clearance and the UA interceptor
-        // downstream applies the solved User-Agent.
-        return chain.proceed(request.newBuilder().build())
+        // Retry with the solved UA forced (overriding any UA the extension set) + the stored cookies
+        // (added automatically by the cookie jar backing cookieStore).
+        val retry = request.newBuilder()
+        if (ua != null) retry.header("User-Agent", ua)
+        return chain.proceed(retry.build())
     }
 
     private fun solve(request: Request): FsSolution? {
