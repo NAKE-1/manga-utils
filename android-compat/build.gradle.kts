@@ -47,6 +47,7 @@ dependencies {
     implementation(libs.dex2jar.translator)
     implementation(libs.dex2jar.tools)
 
-    // Webview API the webkit stubs compile against (not invoked in v1)
-    implementation(libs.jcef)
+    // KCEF installs + launches the native JCEF (Chromium) runtime so WebView-based sources work.
+    // It bundles its own dev.datlag:jcef, so we compile the webkit provider against that (not JB's).
+    implementation(libs.kcef)
 }

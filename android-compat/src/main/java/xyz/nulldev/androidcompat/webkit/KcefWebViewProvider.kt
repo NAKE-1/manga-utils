@@ -495,8 +495,6 @@ class KcefWebViewProvider(
         override fun onRenderProcessTerminated(
             browser: CefBrowser,
             status: CefRequestHandler.TerminationStatus,
-            errorCode: Int,
-            errorString: String,
         ) {
             handler.post {
                 viewClient.onRenderProcessGone(

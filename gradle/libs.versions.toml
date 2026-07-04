@@ -17,6 +17,7 @@ exposed = "0.56.1"
 sqlite = "3.47.1.0"
 dex2jar = "2.4.37"
 jcef = "144.0.15-g72717cf-chromium-144.0.7559.172-api-1.21-262-b37"
+kcef = "2025.03.23"
 
 [libraries]
 # CLI
@@ -95,6 +96,8 @@ asm = "org.ow2.asm:asm:9.9.1"
 
 # Webview API (compile-only target for AndroidCompat's webkit stubs; never invoked in v1)
 jcef = { module = "org.jetbrains.intellij.deps.jcef:jcef", version.ref = "jcef" }
+# KCEF: installer/launcher around JetBrains JCEF — auto-downloads the native Chromium runtime.
+kcef = { module = "dev.datlag:kcef", version.ref = "kcef" }
 
 # Persistence (Phase 2+)
 exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "exposed" }

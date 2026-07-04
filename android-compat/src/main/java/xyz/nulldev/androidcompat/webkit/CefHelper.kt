@@ -14,10 +14,12 @@ object CefHelper {
     val cefApp = MutableStateFlow<Result<CefApp?>>(Result.success(null))
 
     suspend fun createClient(): CefClient {
-        // CEF is never bootstrapped in this build (cefApp stays success(null)), so waiting for init
-        // would block until the network call times out. Fail fast with a clear reason instead — and
-        // stay forward-compatible: once something sets cefApp to a real CefApp, this passes through.
-        cefApp.value.let { if (it.isSuccess && it.getOrNull() == null) throw CefException(WEBVIEW_UNAVAILABLE) }
+        // Kick off the (lazy, one-time) native CEF download/init. Until it's ready, fail fast with a
+        // clear reason instead of blocking until the network call times out.
+        CefBootstrap.ensureStarted()
+        val current = cefApp.value
+        if (current.isFailure) throw CefException("$WEBVIEW_UNAVAILABLE (${current.exceptionOrNull()?.message})")
+        if (current.getOrNull() == null) throw CefException(WEBVIEW_INITIALIZING)
         val app = waitForInit().first()
         val client = app.createClient()
         JsHandler(client) // This adds itself to a global map
@@ -25,7 +27,9 @@ object CefHelper {
     }
 
     const val WEBVIEW_UNAVAILABLE =
-        "This source needs an in-app WebView (Chromium), which isn't enabled in this build yet."
+        "This source needs an in-app WebView (Chromium), which couldn't be started."
+    const val WEBVIEW_INITIALIZING =
+        "The in-app WebView is downloading/starting Chromium (first use) — try again in a minute."
 
     fun waitForInit() =
         callbackFlow {
