@@ -12,6 +12,7 @@ import { Downloads } from './screens/Downloads'
 import { DownloadsManager } from './screens/DownloadsManager'
 import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher } from './components/Toast'
+import { PullToRefresh } from './components/PullToRefresh'
 
 export function App() {
   const loc = useLocation()
@@ -31,6 +32,7 @@ export function App() {
     <div className="app">
       <DownloadWatcher />
       <Toasts />
+      <PullToRefresh />
       <TopBar />
       <main>
         <Routes>

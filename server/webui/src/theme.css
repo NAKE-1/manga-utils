@@ -344,6 +344,14 @@ img { display: block; }
 .lib-sel { flex: none; background: #17171a; border: 1px solid #2a2a30; border-radius: 10px; color: var(--text);
   padding: 9px 8px; font-size: 13px; font-family: inherit; max-width: 40vw; }
 
+/* Pull-to-refresh indicator (PWA/standalone only). */
+.ptr { position: fixed; top: calc(var(--safe-t) - 34px); left: 50%; z-index: 60; pointer-events: none; will-change: transform; }
+.ptr-ring { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-size: 19px; font-weight: 700;
+  background: var(--card-2, #17171a); border: 1px solid #2a2a30; color: var(--accent, #a99cf5); box-shadow: 0 4px 16px rgba(0,0,0,0.45); }
+.ptr-ring.ready { background: var(--accent, #7c6cf0); color: #fff; border-color: transparent; }
+.ptr-ring.spin { background: var(--accent, #7c6cf0); color: #fff; border-color: transparent; animation: ptr-spin .7s linear infinite; }
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
+
 /* Global toasts — bottom-left, stacked, tap to dismiss. */
 .toasts { position: fixed; left: 12px; bottom: calc(14px + var(--safe-b)); z-index: 200;
   display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }
