@@ -63,8 +63,12 @@ class FlareSolverrInterceptor(
             try {
                 solve(request)
             } catch (e: Exception) {
+                FlareSolverrConfig.recordSolveFail(request.url.host)
                 throw IOException("Cloudflare bypass (FlareSolverr) failed for ${request.url.host}: ${e.message}")
-            } ?: throw IOException("Cloudflare bypass (FlareSolverr) returned no solution for ${request.url.host}.")
+            } ?: run {
+                FlareSolverrConfig.recordSolveFail(request.url.host)
+                throw IOException("Cloudflare bypass (FlareSolverr) returned no solution for ${request.url.host}.")
+            }
 
         val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
         FlareSolverrConfig.recordSolveDone(request.url.host, cookies.size)

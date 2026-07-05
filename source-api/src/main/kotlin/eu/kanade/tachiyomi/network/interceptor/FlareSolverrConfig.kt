@@ -33,6 +33,7 @@ object FlareSolverrConfig {
 
     fun recordSolveStart(host: String) = push(host, "solving", 0)
     fun recordSolveDone(host: String, cookies: Int) = push(host, "solved", cookies)
+    fun recordSolveFail(host: String) = push(host, "failed", 0)
     private fun push(host: String, phase: String, cookies: Int) {
         events.addLast(SolveEvent(seq.incrementAndGet(), host, phase, cookies, System.currentTimeMillis()))
         while (events.size > 30) events.pollFirst()

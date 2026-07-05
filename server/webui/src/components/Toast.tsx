@@ -54,8 +54,9 @@ export function DownloadWatcher() {
         const r = await api.flaresolverrEvents(flareCursor ?? undefined)
         if (flareCursor == null) { flareCursor = r.lastId; return } // first poll ever: just sync, no backlog
         for (const e of r.events) {
-          if (e.phase === 'solving') toast(`Solving Cloudflare · ${e.host}…`, 'info')
-          else if (e.phase === 'solved') toast(`Cloudflare cleared · ${e.host} (${e.cookies} cookie${e.cookies === 1 ? '' : 's'})`, 'success')
+          if (e.phase === 'solving') toast(`FS · solving ${e.host}…`, 'info')
+          else if (e.phase === 'solved') toast(`FS · ${e.host} cleared`, 'success')
+          else if (e.phase === 'failed') toast(`FS · ${e.host} failed`, 'error')
         }
         flareCursor = r.lastId
       } catch { /* ignore */ }

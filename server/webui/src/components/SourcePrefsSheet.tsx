@@ -20,9 +20,22 @@ export function SourcePrefsSheet({ sourceId, sourceName, onClose }: { sourceId: 
   }, [sourceId])
   useEffect(() => { load() }, [load])
 
+  // Reflect the change locally right away so toggles/selects respond instantly, then persist. A silent
+  // re-read afterwards picks up any server-side dependent-pref changes; on error we revert to truth.
+  function patchLocal(index: number, value: string) {
+    setPrefs((ps) => (ps ? ps.map((p) => (p.index === index ? { ...p, value } : p)) : ps))
+  }
+
   async function save(index: number, value: string) {
-    try { await api.setSourcePref(sourceId, index, value); load() }
-    catch (e) { toast(`Couldn’t save: ${e instanceof Error ? e.message : 'error'}`, 'error') }
+    patchLocal(index, value)
+    try {
+      await api.setSourcePref(sourceId, index, value)
+      const fresh = await api.sourcePrefs(sourceId)
+      setPrefs(fresh)
+    } catch (e) {
+      toast(`Couldn’t save: ${e instanceof Error ? e.message : 'error'}`, 'error')
+      load()
+    }
   }
 
   // The comma-joined value for a Set<String> pref after toggling one entry (kept in entryValues order).
