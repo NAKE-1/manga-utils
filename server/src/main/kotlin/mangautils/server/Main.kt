@@ -81,7 +81,7 @@ private fun applyFlareSolverr(s: mangautils.core.config.Settings) {
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
-private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String, val down: Boolean, val imagesDown: Boolean)
+private data class SourceDto(val id: String, val name: String, val lang: String, val nsfw: Boolean, val cfState: String, val down: Boolean, val imagesDown: Boolean, val usesWebView: Boolean)
 
 @Serializable private data class TechDto(val role: String, val tech: String)
 @Serializable private data class ChangeDto(val sha: String, val date: String, val subject: String)
@@ -515,7 +515,10 @@ fun Application.module() {
             val sources = withContext(Dispatchers.IO) {
                 // nsfw lives on the parent extension; flatten so each source carries its 18+ flag.
                 InstalledStore.list()
-                    .flatMap { ext -> ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id), SourceHealth.isDown(it.id), SourceHealth.areImagesDown(it.id)) } }
+                    .flatMap { ext ->
+                        val webview = WebViewDetect.usesWebView(ext.jarPath)
+                        ext.sources.map { SourceDto(it.id.toString(), it.name, it.lang, ext.nsfw, cfState(it.id), SourceHealth.isDown(it.id), SourceHealth.areImagesDown(it.id), webview) }
+                    }
                     .filter { langVisible(it.lang, visible) }
                     .sortedBy { it.name.lowercase() }
             }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Source } from '../api'
-import { IconChevronDown, IconCloudflare } from './icons'
+import { IconChevronDown, IconCloudflare, IconJetBrains } from './icons'
 
 const GLOBAL = '__global__'
 
@@ -35,6 +35,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
   const cur = sources.find((s) => s.id === value)
   const cf = (s: Source) => s.id !== GLOBAL && <IconCloudflare className={'src-cf ' + s.cfState} aria-label={CF_TITLE[s.cfState]} />
   const down = (s: Source) => s.down && <span className="src-down" title="Source unreachable">DOWN</span>
+  const wv = (s: Source) => s.usesWebView && <IconJetBrains className="src-wv" />/* needs in-app browser */
 
   // Lock background scroll + Esc-to-close while the sheet is open.
   useEffect(() => {
@@ -66,6 +67,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
         <span className="src-name">{cur.name}</span>
         {down(cur)}
         {cf(cur)}
+        {wv(cur)}
         {cur.nsfw && <span className="src-18">18+</span>}
         <IconChevronDown className="src-caret" />
       </button>
@@ -84,6 +86,7 @@ export function SourcePicker({ sources, value, onChange, cfBypass = false }: { s
                   <span className="src-name">{s.name}</span>
                   {down(s)}
                   {cf(s)}
+                  {wv(s)}
                   {s.lang && s.id !== GLOBAL && <span className="src-lang">{s.lang.toUpperCase()}</span>}
                   {s.nsfw && <span className="src-18">18+</span>}
                 </button>

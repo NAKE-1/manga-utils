@@ -29,6 +29,22 @@ export const IconDots = ({ className }: P) => (
 export const IconCloudflare = ({ className }: P) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className}><path d="M16.5 16.5H6.2A3.7 3.7 0 016 9.1a5.2 5.2 0 0110-1.6 3.6 3.6 0 01.5 9z" /></svg>
 )
+// Mini JetBrains mark — badge for sources that need the in-app browser (JetBrains JCEF WebView).
+export const IconJetBrains = ({ className }: P) => (
+  <svg viewBox="0 0 24 24" className={className} role="img" aria-label="Needs the in-app browser (JetBrains JCEF)">
+    <defs>
+      <linearGradient id="jbGrad" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0" stopColor="#FE2857" />
+        <stop offset=".5" stopColor="#FC801D" />
+        <stop offset="1" stopColor="#FDB60D" />
+      </linearGradient>
+    </defs>
+    <rect width="24" height="24" rx="4" fill="#0b0b0d" />
+    <path d="M4 5 L14 4 L10.5 9.2 L4 11 Z" fill="url(#jbGrad)" />
+    <path d="M16.5 4 L20 6.2 L13.5 13 L10.8 11 Z" fill="url(#jbGrad)" opacity=".85" />
+    <text x="4.3" y="20.2" fontFamily="Arial, Helvetica, sans-serif" fontSize="8.5" fontWeight="700" fill="#fff">jb</text>
+  </svg>
+)
 export const IconChevronLeft = S('M15 5l-7 7 7 7')
 export const IconArrowUp = S('M12 20V5 M5 12l7-7 7 7')
 export const IconArrowLeft = S('M15 5l-7 7 7 7 M8 12h12')

@@ -1,6 +1,6 @@
 // Typed client for the Ktor backend. IDs are strings (the server serializes Longs as strings).
 
-export interface Source { id: string; name: string; lang: string; nsfw: boolean; cfState: 'green' | 'red' | 'orange'; down: boolean; imagesDown: boolean }
+export interface Source { id: string; name: string; lang: string; nsfw: boolean; cfState: 'green' | 'red' | 'orange'; down: boolean; imagesDown: boolean; usesWebView: boolean }
 export interface SourcePref { index: number; key: string | null; title: string; summary: string | null; type: string; value: string; entries: string[] | null; entryValues: string[] | null; enabled: boolean }
 
 export interface Manga {
