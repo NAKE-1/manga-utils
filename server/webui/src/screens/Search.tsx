@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, coverUrl, mediaType, isWebViewWarmup, Source, Manga } from '../api'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
@@ -28,12 +29,18 @@ type SearchCache = {
 let searchCache: SearchCache | null = null
 
 export function Search() {
+  // Deep-linkable search: /search?source=<id>&q=<query>&mode=latest. The URL is the shareable/
+  // bookmarkable state; the module cache still handles instant restore-on-Back.
+  const [sp, setSp] = useSearchParams()
+  const urlSource = sp.get('source') || ''
+  const urlQ = sp.get('q') || ''
+  const urlMode = sp.get('mode') as Mode | null
   const [sources, setSources] = useState<Source[]>([])
   const [configuring, setConfiguring] = useState(false)
-  const [sourceId, setSourceId] = useState<string>(searchCache?.sourceId || localStorage.getItem('browse.source') || '')
-  const [mode, setMode] = useState<Mode>(searchCache?.mode ?? 'popular')
-  const [input, setInput] = useState(searchCache?.input ?? '')
-  const [query, setQuery] = useState(searchCache?.query ?? '')
+  const [sourceId, setSourceId] = useState<string>(urlSource || searchCache?.sourceId || localStorage.getItem('browse.source') || '')
+  const [mode, setMode] = useState<Mode>(urlQ ? 'search' : (urlMode || searchCache?.mode || 'popular'))
+  const [input, setInput] = useState(urlQ || searchCache?.input || '')
+  const [query, setQuery] = useState(urlQ || searchCache?.query || '')
   const [items, setItems] = useState<Manga[]>(searchCache?.items ?? [])
   const [page, setPage] = useState(searchCache?.page ?? 1)
   const [hasNext, setHasNext] = useState(searchCache?.hasNext ?? false)
@@ -69,6 +76,16 @@ export function Search() {
     }).catch(() => {})
   }, [])
   useEffect(() => { if (sourceId) localStorage.setItem('browse.source', sourceId) }, [sourceId])
+  // Reflect the current search in the URL (shareable/bookmarkable). replace = no history spam; the
+  // module cache still handles instant restore when you tap into a manga and hit Back.
+  useEffect(() => {
+    const next: Record<string, string> = {}
+    if (sourceId) next.source = sourceId
+    if (query) next.q = query
+    else if (mode === 'latest') next.mode = 'latest'
+    setSp(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceId, mode, query])
   // Remember the last-used source immediately on pick, so reopening Search restores it.
   function pickSource(id: string) { localStorage.setItem('browse.source', id); setSourceId(id) }
 
