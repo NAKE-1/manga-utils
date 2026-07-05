@@ -35,6 +35,7 @@ import android.webkit.DownloadListener
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
+import kotlinx.serialization.json.JsonPrimitive
 import android.webkit.WebBackForwardList
 import android.webkit.WebChromeClient
 import android.webkit.WebMessage
@@ -744,13 +745,22 @@ class KcefWebViewProvider(
         script: String,
         resultCallback: ValueCallback<String>?,
     ) {
-        browser!!.evaluateJavaScript(
-            script.removePrefix("javascript:"),
-        )
-            {
-                Log.v(TAG, "JS returned: $it")
-                it?.let { handler.post { resultCallback?.onReceiveValue(it) } }
+        val b = browser
+        if (b == null) {
+            resultCallback?.let { cb -> handler.post { cb.onReceiveValue("null") } }
+            return
+        }
+        b.evaluateJavaScript(script.removePrefix("javascript:")) { result ->
+            Log.v(TAG, "JS returned: $result")
+            // Android's evaluateJavascript ALWAYS invokes the callback, delivering the JSON-encoded
+            // value ("null" for null/undefined). The old code dropped null results, so a WebView
+            // interceptor that blocks on the callback (e.g. mangafire's vrf-token fetch) hung until
+            // its own 20s timeout. Always deliver, and JSON-encode so the value matches Android.
+            resultCallback?.let { cb ->
+                val encoded = if (result == null) "null" else JsonPrimitive(result).toString()
+                handler.post { cb.onReceiveValue(encoded) }
             }
+        }
     }
 
     override fun saveWebArchive(filename: String): Unit = throw RuntimeException("Stub!")

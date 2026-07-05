@@ -3,9 +3,9 @@
 Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 
 ## Next up (source bugs — hurt daily use)
-- [ ] **aquamanga** (`626267…`) — browse works, **search 404s**. Likely the extension's search URL/params on our path.
-- [ ] **mangadot** (`5900…`) — FlareSolverr solves but origin still **403s** (no WebView badge → header/auth quirk, not a WebView case).
-- [ ] **mangafire** (`6084…`) — repeated **20 s timeouts** (often maintenance; confirm it isn't our timeout/interceptor).
+- [x] **aquamanga** (`626267…`) — was NOT broken search: site 404s on `/page/2` past the last results page; our infinite-scroll looped on it. Fixed by stopping pagination on a next-page error (5eacd6e).
+- [~] **mangadot** (`5900…`) — KNOWN LIMITATION. Cf-Mitigated: challenge on every endpoint; FlareSolverr can't get cf_clearance (managed/Turnstile). Cookie-replay can't clear it; would need to route the source through a real browser (WebView). Now fails with a clear message (9512846). Use an alternate source.
+- [x] **mangafire** (`6084…`) — search timed out at 20s. Root cause: it computes an anti-bot `vrf` token via a WebView `evaluateJavascript`, but our provider DROPPED null/undefined results (and JS errors went down a cancel path), so the callback never fired and the extension's latch hit its own 20s timeout. Fixed: always invoke the callback ("null" on null, JSON-encoded to match Android) + JS errors now deliver null through the normal query path. Pending on-device test.
 
 ## Nice-to-have (UI polish)
 - [ ] First-run WebView UX: replace the raw 502 on the first hit with a friendly "starting in-app browser…" toast/spinner.

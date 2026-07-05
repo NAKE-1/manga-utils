@@ -125,8 +125,11 @@ class JsHandler : CefMessageRouterHandlerAdapter {
               });
             } catch (e) {
               console.error("Failed to eval $id", e)
-              window.${QUERY_CANCEL_FN}({
-                  request: JSON.stringify({ id: "$id", error: ""+e }),
+              // Deliver through the normal query fn (not cancel) with a null result, so the Kotlin
+              // callback ALWAYS fires. Otherwise a caller blocking on the result (e.g. a WebView
+              // interceptor awaiting a latch) hangs until its own timeout.
+              window.${QUERY_FN}({
+                  request: JSON.stringify({ id: "$id", result: null }),
                   onSuccess: function (response) {},
                   onFailure: function (error_code, error_message) {}
               });
