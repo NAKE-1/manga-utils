@@ -78,13 +78,33 @@ class FlareSolverrInterceptor(
             setUserAgent(ua)
             solvedUa[request.url.host] = ua
         }
-        log.info { "FlareSolverr solved ${request.url.host}: stored ${cookies.size} cookie(s)" }
+        log.info { "FlareSolverr solved ${request.url.host}: stored ${cookies.size} cookie(s) [${cookies.joinToString(", ") { it.name }}]" }
+        // The only cookie that actually clears Cloudflare is cf_clearance. If FlareSolverr came back
+        // without it (e.g. a Turnstile / managed 'Cf-Mitigated: challenge' it can't fully pass), the
+        // retry will just 403 again — say so plainly instead of silently looping.
+        if (cookies.none { it.name == "cf_clearance" }) {
+            log.warn {
+                "FlareSolverr returned no cf_clearance for ${request.url.host} — this site uses a " +
+                    "managed/Turnstile challenge that cookie-replay can't clear; the retry will likely 403 again."
+            }
+        }
 
         // Retry with the solved UA forced (overriding any UA the extension set) + the stored cookies
         // (added automatically by the cookie jar backing cookieStore).
         val retry = request.newBuilder()
         if (ua != null) retry.header("User-Agent", ua)
-        return chain.proceed(retry.build())
+        val retried = chain.proceed(retry.build())
+        // If Cloudflare is STILL challenging after a "successful" solve, the clearance didn't stick
+        // (managed/Turnstile challenge, or a TLS-fingerprint-bound cf_clearance we can't replay).
+        // Fail with a clear reason instead of handing the extension a challenge page to mis-parse.
+        if (isCloudflareChallenge(retried)) {
+            retried.close()
+            throw IOException(
+                "Cloudflare is still blocking ${request.url.host} after a FlareSolverr solve — this " +
+                    "site uses a managed/Turnstile challenge that a cookie bypass can't clear.",
+            )
+        }
+        return retried
     }
 
     private fun solve(request: Request): FsSolution? {
