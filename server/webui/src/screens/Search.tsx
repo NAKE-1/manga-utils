@@ -132,19 +132,21 @@ export function Search() {
 
   return (
     <>
-      <div className="search-bar-wrap">
-        <div className="search-bar">
-          <IconSearch className="sb-ic" />
-          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { submit(input); e.currentTarget.blur() } }} placeholder={isGlobal ? 'Search all sources…' : 'Search manga…'} inputMode="search" enterKeyHint="search" />
-          {input && <button className="sb-clear" onClick={() => { setInput(''); submit('') }} aria-label="Clear">✕</button>}
+      <div className="search-head">
+        <div className="search-bar-wrap">
+          <div className="search-bar">
+            <IconSearch className="sb-ic" />
+            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { submit(input); e.currentTarget.blur() } }} placeholder={isGlobal ? 'Search all sources…' : 'Search manga…'} inputMode="search" enterKeyHint="search" />
+            {input && <button className="sb-clear" onClick={() => { setInput(''); submit('') }} aria-label="Clear">✕</button>}
+          </div>
         </div>
-      </div>
 
-      <div className="src-picker-wrap">
-        <SourcePicker sources={pickerSources} value={sourceId} onChange={pickSource} />
-        {!isGlobal && sourceId && (
-          <button className="src-config" onClick={() => setConfiguring(true)} aria-label="Source settings" title="Source settings"><IconSettings /></button>
-        )}
+        <div className="src-picker-wrap">
+          <SourcePicker sources={pickerSources} value={sourceId} onChange={pickSource} />
+          {!isGlobal && sourceId && (
+            <button className="src-config" onClick={() => setConfiguring(true)} aria-label="Source settings" title="Source settings"><IconSettings /></button>
+          )}
+        </div>
       </div>
       {configuring && !isGlobal && (
         <SourcePrefsSheet sourceId={sourceId} sourceName={pickerSources.find((s) => s.id === sourceId)?.name || 'Source'} onClose={() => setConfiguring(false)} />
