@@ -8,7 +8,7 @@ Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 - [x] **mangafire** (`6084…`) — search timed out at 20s. Root cause: it computes an anti-bot `vrf` token via a WebView `evaluateJavascript`, but our provider DROPPED null/undefined results (and JS errors went down a cancel path), so the callback never fired and the extension's latch hit its own 20s timeout. Fixed: always invoke the callback ("null" on null, JSON-encoded to match Android) + JS errors now deliver null through the normal query path. Pending on-device test.
 
 ## Nice-to-have (UI polish)
-- [ ] First-run WebView UX: replace the raw 502 on the first hit with a friendly "starting in-app browser…" toast/spinner. (Partly mitigated already — createClient now waits up to 30s for CEF.)
+- [x] First-run WebView UX: friendly "Starting in-app browser…" panel + auto-retry (createClient also waits up to 30s for CEF). (f7d7f32)
 - [x] Cosmetic rename `Kcef*` → `Jcef*` now on JetBrains JCEF (8471593).
 
 ## Low priority (deferred by decision)
@@ -23,7 +23,7 @@ Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 ## Larger / later
 - [ ] **Global search** screen (deferred spec): cross-source search, per-source rows, toggleable "HAS RESULTS" filter.
 - [ ] **Trackers + richer library** (roadmap's top item, previously skipped).
-- [ ] Reader polish: settings-sheet completeness (strip sizing/gap/preload/UI toggles), resume-mid-chapter edge cases.
+- [~] Reader polish: preload slider for hybrid, "Keep screen on" (Wake Lock), resume re-pin on resize/rotate — done (f7d7f32). Remaining ideas: per-source sizing memory, tap-zone nav, brightness.
 
 ## Explicitly NOT now
 - Desktop (Compose) UI backlog — paused; focus is the web UI.
