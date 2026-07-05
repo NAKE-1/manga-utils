@@ -2,7 +2,7 @@ package xyz.nulldev.androidcompat.webkit
 
 import android.webkit.WebSettings
 
-class KcefWebSettings : WebSettings() {
+class JcefWebSettings : WebSettings() {
     // Boolean settings
     private var navDumps = false
     private var mediaPlaybackRequiresUserGesture = true

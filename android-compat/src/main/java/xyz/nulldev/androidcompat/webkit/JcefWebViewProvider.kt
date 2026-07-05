@@ -99,10 +99,10 @@ import kotlin.reflect.KFunction
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.jvm.javaMethod
 
-class KcefWebViewProvider(
+class JcefWebViewProvider(
     private val view: WebView,
 ) : WebViewProvider {
-    private val settings = KcefWebSettings()
+    private val settings = JcefWebSettings()
     private var viewClient = WebViewClient()
     private var chromeClient = WebChromeClient()
     private val renderHandler = RenderHandler()
@@ -110,7 +110,7 @@ class KcefWebViewProvider(
     private val urlHttpMapping: MutableMap<String, String> = mutableMapOf()
     private var initialRequestData: InitialRequestData? = null
 
-    private var kcefClient: CefClient? = null
+    private var jcefClient: CefClient? = null
     private var browser: CefBrowser? = null
 
     // Post callbacks to the WebView's looper — but if the extension created the WebView on a thread
@@ -118,7 +118,7 @@ class KcefWebViewProvider(
     private val handler = Handler(view.webViewLooper ?: Looper.getMainLooper())
 
     companion object {
-        const val TAG = "KcefWebViewProvider"
+        const val TAG = "JcefWebViewProvider"
         const val QUERY_FN = "__\$_suwayomiQuery"
         const val QUERY_CANCEL_FN = "__\$_suwayomiQueryCancel"
 
@@ -132,7 +132,7 @@ class KcefWebViewProvider(
     }
 
     interface InitBrowserHandler {
-        fun init(provider: KcefWebViewProvider): Unit
+        fun init(provider: JcefWebViewProvider): Unit
     }
 
     private data class InitialRequestData(
@@ -558,9 +558,9 @@ class KcefWebViewProvider(
         javaScriptInterfaces: Map<String, Any>?,
         privateBrowsing: Boolean,
     ) {
-        Log.v(TAG, "KcefWebViewProvider: initialize")
+        Log.v(TAG, "JcefWebViewProvider: initialize")
         destroy()
-        kcefClient =
+        jcefClient =
             runBlocking {
                 CefHelper.createClient().apply {
                     addDisplayHandler(DisplayHandler())
@@ -617,8 +617,8 @@ class KcefWebViewProvider(
         browser?.close(true)
         browser?.dispose()
         browser = null
-        kcefClient?.dispose()
-        kcefClient = null
+        jcefClient?.dispose()
+        jcefClient = null
     }
 
     override fun setNetworkAvailable(networkUp: Boolean): Unit = throw RuntimeException("Stub!")
@@ -668,7 +668,7 @@ class KcefWebViewProvider(
         loadSharedCookiesIntoCef()
         initialRequestData = InitialRequestData(additionalHttpHeaders = additionalHttpHeaders)
         browser =
-            kcefClient!!
+            jcefClient!!
                 .createBrowser(
                     loadUrl,
                     CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
@@ -694,7 +694,7 @@ class KcefWebViewProvider(
         loadSharedCookiesIntoCef()
         initialRequestData = InitialRequestData(myPostData = postData)
         browser =
-            kcefClient!!
+            jcefClient!!
                 .createBrowser(
                     url,
                     CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
@@ -729,7 +729,7 @@ class KcefWebViewProvider(
         urlHttpMapping[url.trimEnd('/')] = data
 
         browser =
-            kcefClient!!
+            jcefClient!!
                 .createBrowser(
                     url,
                     CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
@@ -1007,7 +1007,7 @@ class KcefWebViewProvider(
     // Extensions call webView.setLayoutParams(...) → getViewDelegate().setLayoutParams(); returning a
     // real (no-op for offscreen) delegate instead of throwing Stub! is what lets a WebView actually
     // start (comix threw here → "Failed to start WebView").
-    private val viewDelegate = KcefViewDelegate()
+    private val viewDelegate = JcefViewDelegate()
 
     override fun getViewDelegate(): ViewDelegate = viewDelegate
 
@@ -1019,7 +1019,7 @@ class KcefWebViewProvider(
     // View / ViewGroup delegation methods
     // -------------------------------------------------------------------------
 
-    class KcefViewDelegate : ViewDelegate {
+    class JcefViewDelegate : ViewDelegate {
         override fun shouldDelayChildPressedState(): Boolean = throw RuntimeException("Stub!")
 
         override fun onProvideVirtualStructure(structure: android.view.ViewStructure): Unit = throw RuntimeException("Stub!")
@@ -1216,7 +1216,7 @@ class KcefWebViewProvider(
         ): PointerIcon? = null
     }
 
-    class KcefScrollDelegate : ScrollDelegate {
+    class JcefScrollDelegate : ScrollDelegate {
         override fun computeHorizontalScrollRange(): Int = throw RuntimeException("Stub!")
 
         override fun computeHorizontalScrollOffset(): Int = throw RuntimeException("Stub!")
