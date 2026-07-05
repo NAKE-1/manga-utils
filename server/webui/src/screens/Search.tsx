@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, coverUrl, mediaType, Source, Manga } from '../api'
+import { api, coverUrl, mediaType, isWebViewWarmup, Source, Manga } from '../api'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
@@ -39,6 +39,8 @@ export function Search() {
   const [hasNext, setHasNext] = useState(searchCache?.hasNext ?? false)
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [warming, setWarming] = useState(false) // in-app WebView (Chromium) starting on first use
+  const warmupRetries = useRef(0)
   const [recent, setRecent] = useState<string[]>(recents())
   const [globalRows, setGlobalRows] = useState<GlobalRow[]>(searchCache?.globalRows ?? [])
   const sentinel = useRef<HTMLDivElement>(null)
@@ -84,9 +86,18 @@ export function Search() {
     const req = mode === 'search' ? api.search(sourceId, query, p) : mode === 'latest' ? api.latest(sourceId, p) : api.popular(sourceId, p)
     req.then((r) => {
       setItems((prev) => (p === 1 ? r.mangas : [...prev, ...r.mangas]))
-      setHasNext(r.hasNextPage); setPage(p)
+      setHasNext(r.hasNextPage); setPage(p); setWarming(false); warmupRetries.current = 0
     }).catch((e) => {
-      if (p === 1) setErrorMsg(e instanceof Error ? e.message : "Couldn't load results.")
+      const msg = e instanceof Error ? e.message : "Couldn't load results."
+      // First hit on a WebView source can 502 while Chromium is still starting — show a "starting…"
+      // state and auto-retry a few times rather than surfacing a scary error.
+      if (p === 1 && isWebViewWarmup(msg) && warmupRetries.current < 5) {
+        warmupRetries.current++; setWarming(true); setErrorMsg(null)
+        window.setTimeout(() => fetchPage(1), 2500)
+        return
+      }
+      setWarming(false)
+      if (p === 1) setErrorMsg(msg)
       else setHasNext(false) // next page failed (e.g. Madara sites 404 past the last page) — treat as end-of-list, stop paginating
     }).finally(() => { busy.current = false; setLoading(false); refreshSourcesSoon() })
   }
@@ -94,7 +105,7 @@ export function Search() {
   useEffect(() => {
     if (!sourceId || isGlobal) return
     if (didHydrate.current) { didHydrate.current = false; return } // restored from cache — keep results
-    setItems([]); setHasNext(false); setPage(1); fetchPage(1)
+    setItems([]); setHasNext(false); setPage(1); setWarming(false); warmupRetries.current = 0; fetchPage(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId, mode, query])
 
@@ -179,7 +190,7 @@ export function Search() {
                     {!g.loading && !g.error && <span className="gs-count">{g.items.length}</span>}
                   </div>
                   {g.loading ? <div className="gs-empty">Searching…</div>
-                    : g.error ? <div className="gs-empty">{g.error}</div>
+                    : g.error ? <div className="gs-empty">{isWebViewWarmup(g.error) ? 'Starting in-app browser…' : g.error}</div>
                     : g.items.length === 0 ? <div className="gs-empty">No results</div>
                     : (
                       <div className="row-scroll">
@@ -192,7 +203,14 @@ export function Search() {
               ))}
             </div>
           )
-      ) : errorMsg ? <ErrorPanel onRetry={() => fetchPage(1)} message={errorMsg} />
+      ) : warming ? (
+        <div className="center-msg warming">
+          <div className="spinner" />
+          <div>Starting in-app browser…</div>
+          <div className="set-hint">This source renders in Chromium — first use downloads/starts it. Hang tight.</div>
+        </div>
+      )
+        : errorMsg ? <ErrorPanel onRetry={() => fetchPage(1)} message={errorMsg} />
         : items.length === 0 && loading ? <SkeletonGrid />
         : items.length === 0 ? <div className="center-msg">{mode === 'search' ? 'No results.' : 'Nothing here.'}</div>
         : (

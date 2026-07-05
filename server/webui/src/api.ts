@@ -52,6 +52,13 @@ export function dlState(e: { downloadedChapters?: number; totalChapters?: number
   return total > 0 && dl >= total ? 'all' : 'some'
 }
 
+/** True when a source error is just the in-app WebView (Chromium) still starting on first use —
+ *  transient, so the UI can show a "starting…" state and auto-retry instead of a hard error. */
+export function isWebViewWarmup(msg: string | null | undefined): boolean {
+  if (!msg) return false
+  return /downloading\/starting Chromium|in-app WebView/i.test(msg)
+}
+
 export interface HistoryItem {
   sourceId: string
   mangaUrl: string

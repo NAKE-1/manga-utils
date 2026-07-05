@@ -115,6 +115,7 @@ export function Reader() {
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
   const [showPill, setShowPill] = useState<boolean>(lsGet('reader.pill', '1') === '1')
+  const [keepAwake, setKeepAwake] = useState<boolean>(lsGet('reader.awake', '0') === '1')
   const [loadMode, setLoadMode] = useState<LoadMode>((() => { const m = lsGet('reader.loadmode', 'hybrid'); return (m === 'blob' ? 'hybrid' : m) as LoadMode })())
   const [sheetDrag, setSheetDrag] = useState(0)
   const [dragging, setDragging] = useState(false)
@@ -148,6 +149,21 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.gap', String(gap)) }, [gap])
   useEffect(() => { localStorage.setItem('reader.preload', String(preload)) }, [preload])
   useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
+  useEffect(() => { localStorage.setItem('reader.awake', keepAwake ? '1' : '0') }, [keepAwake])
+  // Keep the screen awake while reading (Wake Lock). The lock drops when the tab is backgrounded, so
+  // re-acquire when it returns to the foreground.
+  useEffect(() => {
+    if (!keepAwake) return
+    let lock: WakeLockSentinel | null = null
+    let released = false
+    const acquire = async () => {
+      try { lock = (await navigator.wakeLock?.request('screen')) ?? null } catch { /* denied / unsupported */ }
+    }
+    acquire()
+    const onVis = () => { if (document.visibilityState === 'visible' && !released) acquire() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { released = true; document.removeEventListener('visibilitychange', onVis); lock?.release().catch(() => {}) }
+  }, [keepAwake])
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
   // Center the current chapter when the chapter list opens.
   useEffect(() => { if (showChapters) requestAnimationFrame(() => currentChapRef.current?.scrollIntoView({ block: 'center' })) }, [showChapters])
@@ -323,6 +339,13 @@ export function Reader() {
   useEffect(() => {
     if (count && count > 0 && pendingRestore.current != null) requestAnimationFrame(applyRestore)
   }, [count, applyRestore])
+  // Orientation / window resize changes the document height — re-pin the resume point if we haven't
+  // handed control back to the reader yet (otherwise a rotate right after opening loses your place).
+  useEffect(() => {
+    const onResize = () => { if (pendingRestore.current != null) applyRestore() }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [applyRestore])
   useEffect(() => {
     const stop = () => { pendingRestore.current = null } // a real scroll/keypress means you've taken over
     window.addEventListener('touchmove', stop, { passive: true })
@@ -466,7 +489,7 @@ export function Reader() {
               ))}
             </div>
 
-            {loadMode === 'balanced' && (
+            {(loadMode === 'balanced' || loadMode === 'hybrid') && (
               <>
                 <div className="sheet-label">Preload · {preload} page{preload === 1 ? '' : 's'}</div>
                 <input className="slider" type="range" min={0} max={10} value={preload} onChange={(e) => setPreload(Number(e.target.value))} />
@@ -476,6 +499,11 @@ export function Reader() {
             <button className="sheet-toggle" onClick={() => setShowPill((v) => !v)}>
               <span>Progress pill</span>
               <span className={'switch' + (showPill ? ' on' : '')}><span className="knob" /></span>
+            </button>
+
+            <button className="sheet-toggle" onClick={() => setKeepAwake((v) => !v)}>
+              <span>Keep screen on</span>
+              <span className={'switch' + (keepAwake ? ' on' : '')}><span className="knob" /></span>
             </button>
           </div>
         </div>

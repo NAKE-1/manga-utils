@@ -704,6 +704,8 @@ img { display: block; }
 /* ---- Misc --------------------------------------------------------------- */
 .muted { color: var(--muted); }
 .center-msg { padding: 48px 24px; text-align: center; color: var(--muted); }
+.center-msg.warming { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.center-msg.warming > div:nth-child(2) { color: var(--text); font-weight: 600; }
 .spinner {
   width: 26px; height: 26px; border-radius: 50%;
   border: 3px solid var(--card-2); border-top-color: var(--accent);
