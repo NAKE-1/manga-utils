@@ -87,6 +87,7 @@ export function Search() {
       setHasNext(r.hasNextPage); setPage(p)
     }).catch((e) => {
       if (p === 1) setErrorMsg(e instanceof Error ? e.message : "Couldn't load results.")
+      else setHasNext(false) // next page failed (e.g. Madara sites 404 past the last page) — treat as end-of-list, stop paginating
     }).finally(() => { busy.current = false; setLoading(false); refreshSourcesSoon() })
   }
 
