@@ -4,19 +4,33 @@ import { api } from '../api'
 // Tiny global toast bus — call toast() from anywhere (even non-React code). Stylized for the web UI,
 // pinned bottom-left, auto-dismiss, tap to dismiss early.
 export type ToastKind = 'info' | 'success' | 'error'
-type Item = { id: number; msg: string; kind: ToastKind }
+type Item = { id: number; key?: string; msg: string; kind: ToastKind }
 
 let seq = 0
 let items: Item[] = []
+const timers = new Map<number, number>()
 const listeners = new Set<(t: Item[]) => void>()
 const emit = () => listeners.forEach((l) => l(items))
-const drop = (id: number) => { items = items.filter((t) => t.id !== id); emit() }
+const drop = (id: number) => {
+  const t = timers.get(id); if (t) { clearTimeout(t); timers.delete(id) }
+  items = items.filter((x) => x.id !== id); emit()
+}
+const arm = (id: number, ms: number) => {
+  const t = timers.get(id); if (t) clearTimeout(t)
+  timers.set(id, window.setTimeout(() => drop(id), ms))
+}
 
-export function toast(msg: string, kind: ToastKind = 'info', ms = 3800) {
+/** Pass a stable `key` to update an existing toast in place (e.g. a FlareSolverr host going
+ *  solving → cleared) instead of stacking a new one. Auto-dismiss timer resets on each update. */
+export function toast(msg: string, kind: ToastKind = 'info', ms = 3800, key?: string) {
+  if (key) {
+    const ex = items.find((t) => t.key === key)
+    if (ex) { ex.msg = msg; ex.kind = kind; items = [...items]; emit(); arm(ex.id, ms); return }
+  }
   const id = ++seq
-  items = [...items, { id, msg, kind }].slice(-4) // cap at 4 stacked
+  items = [...items, { id, key, msg, kind }].slice(-4) // cap at 4 stacked
   emit()
-  window.setTimeout(() => drop(id), ms)
+  arm(id, ms)
 }
 
 export function Toasts() {
@@ -54,9 +68,10 @@ export function DownloadWatcher() {
         const r = await api.flaresolverrEvents(flareCursor ?? undefined)
         if (flareCursor == null) { flareCursor = r.lastId; return } // first poll ever: just sync, no backlog
         for (const e of r.events) {
-          if (e.phase === 'solving') toast(`FS · solving ${e.host}…`, 'info')
-          else if (e.phase === 'solved') toast(`FS · ${e.host} cleared`, 'success')
-          else if (e.phase === 'failed') toast(`FS · ${e.host} failed`, 'error')
+          const key = 'fs:' + e.host // one toast per host, updated in place (no solving+solved spam)
+          if (e.phase === 'solving') toast(`FS · ${e.host} solving…`, 'info', 6000, key)
+          else if (e.phase === 'solved') toast(`FS · ${e.host} cleared`, 'success', 2500, key)
+          else if (e.phase === 'failed') toast(`FS · ${e.host} failed`, 'error', 4500, key)
         }
         flareCursor = r.lastId
       } catch { /* ignore */ }

@@ -35,10 +35,15 @@ export function Extensions() {
   const loadInstalled = () => api.extensions().then(setInstalled).catch(() => {})
   const loadBrowse = () => { setBrowseLoading(true); api.extAvailable(q).then(setAvail).catch(() => setAvail([])).finally(() => setBrowseLoading(false)) }
 
-  async function checkUpdates() {
+  async function checkUpdates(manual = false) {
     setChecking(true)
-    setUpdates(new Set(await api.extCheckUpdates().catch(() => [])))
+    const found = await api.extCheckUpdates().catch(() => [] as string[])
+    setUpdates(new Set(found))
     setChecking(false)
+    if (manual) {
+      toast(found.length ? `${found.length} update${found.length === 1 ? '' : 's'} available` : 'All extensions up to date',
+        found.length ? 'info' : 'success')
+    }
   }
 
   useEffect(() => { loadInstalled(); api.repos().then(setRepos).catch(() => {}); checkUpdates() }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,7 +62,13 @@ export function Extensions() {
     }
     loadInstalled(); if (tab === 'browse') loadBrowse()
   }
-  async function updateAll() { for (const pkg of Array.from(updates)) await install(pkg, 'Updating…') }
+  async function updateAll() {
+    const pkgs = Array.from(updates)
+    if (!pkgs.length) return
+    toast(`Updating ${pkgs.length} extension${pkgs.length === 1 ? '' : 's'}…`, 'info')
+    for (const pkg of pkgs) await install(pkg, 'Updating…')
+    toast('Updates complete', 'success')
+  }
   async function uninstall(pkg: string) {
     setBusy((b) => ({ ...b, [pkg]: 'Removing…' }))
     await api.extUninstall(pkg)
@@ -106,7 +117,7 @@ export function Extensions() {
               <button className="btn primary sm" onClick={updateAll}>Update all</button>
             </div>
           )}
-          <div className="ext-actions"><button className="btn" disabled={checking} onClick={checkUpdates}>{checking ? 'Checking…' : 'Check for updates'}</button></div>
+          <div className="ext-actions"><button className="btn" disabled={checking} onClick={() => checkUpdates(true)}>{checking ? 'Checking…' : 'Check for updates'}</button></div>
           {installed.map((e) => (
             <div className="ext-row" key={e.pkg}>
               <ExtIcon pkg={e.pkg} />
