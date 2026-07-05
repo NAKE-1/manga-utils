@@ -37,9 +37,17 @@ export function Settings() {
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState<{ text: string; err: boolean } | null>(null)
-  const [preview, setPreview] = useState<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[] } | null>(null)
+  const [preview, setPreview] = useState<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number } | null>(null)
   const backupInput = useRef<HTMLInputElement>(null)
   const pendingBackup = useRef<ArrayBuffer | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportSel, setExportSel] = useState<Record<string, boolean>>({ library: true, settings: true, repos: true, extensions: false })
+  function runExport() {
+    const inc = Object.entries(exportSel).filter(([, v]) => v).map(([k]) => k)
+    if (!inc.length) return
+    window.location.href = '/api/backup/export?include=' + inc.join(',')
+    setExportOpen(false)
+  }
   const [fsUrl, setFsUrl] = useState('')
   const [fsTest, setFsTest] = useState<{ ok: boolean; version?: string; error?: string } | null>(null)
   const [fsTesting, setFsTesting] = useState(false)
@@ -86,7 +94,12 @@ export function Settings() {
     setImporting(true); setImportMsg(null)
     try {
       const r = await api.importBackup(pendingBackup.current)
-      setImportMsg({ text: `Imported ${r.imported} manga${r.skipped ? ` · ${r.skipped} skipped` : ''}. Open Home to see them (install matching extensions to read).`, err: false })
+      const extras = [
+        r.settingsRestored ? 'settings' : '',
+        r.reposAdded ? `${r.reposAdded} repo${r.reposAdded === 1 ? '' : 's'}` : '',
+        r.extensionsInstalled ? `${r.extensionsInstalled} extension${r.extensionsInstalled === 1 ? '' : 's'}` : '',
+      ].filter(Boolean).join(' · ')
+      setImportMsg({ text: `Imported ${r.imported} manga${r.skipped ? ` · ${r.skipped} skipped` : ''}${extras ? ` · restored ${extras}` : ''}${r.extensionsFailed ? ` · ${r.extensionsFailed} ext failed` : ''}.`, err: false })
       setPreview(null); pendingBackup.current = null
     } catch (err) {
       setImportMsg({ text: err instanceof Error ? err.message : 'Import failed', err: true })
@@ -339,9 +352,24 @@ export function Settings() {
           <div className="set-hint">Import a Mihon / Tachiyomi .tachibk / .proto.gz — you’ll see a preview first and nothing changes until you confirm. Export writes your current library to a .tachibk you can re-import (great for testing round-trips). Install the matching source extensions to actually read imported manga.</div>
           <div className="set-actions">
             <button className="btn primary" disabled={importing} onClick={() => backupInput.current?.click()}>{importing && !preview ? 'Reading…' : 'Choose backup to restore'}</button>
-            <button className="btn" onClick={() => { window.location.href = '/api/backup/export' }}>Export my library</button>
+            <button className="btn" onClick={() => setExportOpen(true)}>Export…</button>
             {importMsg && <span className={'set-msg' + (importMsg.err ? ' err' : '')}>{importMsg.text}</span>}
           </div>
+          {exportOpen && (
+            <div className="backup-preview">
+              <div className="set-row-label">Export — choose what to include</div>
+              {([['library', 'Library (manga, read & bookmarks)'], ['settings', 'App settings'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
+                <label key={k} className="pref-check">
+                  <input type="checkbox" checked={!!exportSel[k]} onChange={(e) => setExportSel((s) => ({ ...s, [k]: e.target.checked }))} />
+                  <span>{label}</span>
+                </label>
+              ))}
+              <div className="set-actions">
+                <button className="btn primary" disabled={!Object.values(exportSel).some(Boolean)} onClick={runExport}>Export</button>
+                <button className="btn" onClick={() => setExportOpen(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
           {preview && (
             <div className="backup-preview">
               <div className="set-row-label">Preview · {preview.total} manga {preview.total === 0 && '(nothing to import)'}</div>

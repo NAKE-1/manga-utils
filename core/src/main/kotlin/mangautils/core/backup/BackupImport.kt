@@ -10,9 +10,17 @@ import eu.kanade.tachiyomi.source.model.SMangaImpl
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToByteArray
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
+import mangautils.core.config.Settings
+import mangautils.core.config.SettingsStore
+import mangautils.core.extension.ExtensionInstaller
+import mangautils.core.extension.InstalledStore
+import mangautils.core.extension.RepoStore
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
@@ -30,9 +38,41 @@ import java.util.zip.GZIPOutputStream
 object BackupImport {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    data class Result(val imported: Int, val skipped: Int, val total: Int)
+    /** Which parts of a backup to include on export / restore on import. */
+    data class Sections(
+        val library: Boolean = true,
+        val settings: Boolean = false,
+        val repos: Boolean = false,
+        val extensions: Boolean = false,
+    ) {
+        companion object {
+            fun of(names: Set<String>) = Sections(
+                library = "library" in names, settings = "settings" in names,
+                repos = "repos" in names, extensions = "extensions" in names,
+            )
+        }
+    }
+
+    data class Result(
+        val imported: Int,
+        val skipped: Int,
+        val total: Int,
+        val settingsRestored: Boolean = false,
+        val reposAdded: Int = 0,
+        val extensionsInstalled: Int = 0,
+        val extensionsFailed: Int = 0,
+    )
+
     data class PreviewItem(val title: String, val source: Long, val chapters: Int, val read: Int, val inLibrary: Boolean)
-    data class Preview(val total: Int, val manga: List<PreviewItem>)
+    data class Preview(
+        val total: Int,
+        val manga: List<PreviewItem>,
+        val hasSettings: Boolean = false,
+        val repos: Int = 0,
+        val extensions: Int = 0,
+    )
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     @OptIn(ExperimentalSerializationApi::class)
     private fun decode(gzBytes: ByteArray): Backup {
@@ -42,7 +82,8 @@ object BackupImport {
 
     /** Dry run: what a backup would import, without touching the library. */
     fun preview(gzBytes: ByteArray): Preview {
-        val favorites = decode(gzBytes).backupManga.filter { it.favorite }
+        val backup = decode(gzBytes)
+        val favorites = backup.backupManga.filter { it.favorite }
         return Preview(
             favorites.size,
             favorites.map {
@@ -54,13 +95,17 @@ object BackupImport {
                     inLibrary = LibraryStore.find(it.source, it.url) != null,
                 )
             },
+            hasSettings = !backup.settingsJson.isNullOrBlank(),
+            repos = backup.repoUrls.size,
+            extensions = backup.extensionPkgs.size,
         )
     }
 
-    /** Export the current library as a Mihon/Tachiyomi-compatible backup (gzipped protobuf). */
+    /** Export the chosen [sections] as a gzipped protobuf. The library part is Mihon/Tachiyomi
+     *  compatible; settings/repos/extensions live in manga-utils-native fields. */
     @OptIn(ExperimentalSerializationApi::class)
-    fun export(): ByteArray {
-        val manga =
+    fun export(sections: Sections = Sections()): ByteArray {
+        val manga = if (!sections.library) emptyList() else
             LibraryStore.list().map { e ->
                 val read = ReadStore.readUrls(e.sourceId, e.mangaUrl)
                 val marks = BookmarkStore.bookmarks(e.sourceId, e.mangaUrl)
@@ -79,7 +124,13 @@ object BackupImport {
                     favorite = true,
                 )
             }
-        val raw = ProtoBuf.encodeToByteArray(Backup(manga))
+        val backup = Backup(
+            backupManga = manga,
+            settingsJson = if (sections.settings) json.encodeToString(SettingsStore.get()) else null,
+            repoUrls = if (sections.repos) RepoStore.list() else emptyList(),
+            extensionPkgs = if (sections.extensions) InstalledStore.list().map { it.pkg } else emptyList(),
+        )
+        val raw = ProtoBuf.encodeToByteArray(backup)
         val out = ByteArrayOutputStream()
         GZIPOutputStream(out).use { it.write(raw) }
         return out.toByteArray()
@@ -124,8 +175,32 @@ object BackupImport {
                 skipped++
             }
         }
-        log.info("backup import: {} imported, {} skipped of {} favorites", imported, skipped, favorites.size)
-        return Result(imported, skipped, favorites.size)
+        // Restore any manga-utils-native sections present in the file.
+        var settingsRestored = false
+        if (!backup.settingsJson.isNullOrBlank()) {
+            runCatching { SettingsStore.save(json.decodeFromString<Settings>(backup.settingsJson)) }
+                .onSuccess { settingsRestored = true }
+                .onFailure { log.warn("backup: failed to restore settings: {}", it.message) }
+        }
+        val reposAdded = backup.repoUrls.count { runCatching { RepoStore.add(it) }.getOrDefault(false) }
+
+        var extInstalled = 0
+        var extFailed = 0
+        if (backup.extensionPkgs.isNotEmpty()) {
+            val installer = ExtensionInstaller()
+            val already = InstalledStore.list().map { it.pkg }.toSet()
+            for (pkg in backup.extensionPkgs.filter { it !in already }) {
+                runCatching { installer.install(pkg) }
+                    .onSuccess { extInstalled++ }
+                    .onFailure { log.warn("backup: failed to reinstall '{}': {}", pkg, it.message); extFailed++ }
+            }
+        }
+
+        log.info(
+            "backup import: {} manga imported, {} skipped; settings={}, repos+{}, extensions +{}/{}",
+            imported, skipped, settingsRestored, reposAdded, extInstalled, extFailed,
+        )
+        return Result(imported, skipped, favorites.size, settingsRestored, reposAdded, extInstalled, extFailed)
     }
 
     // ---- Minimal protobuf schema (Mihon field numbers) --------------------------------------------
@@ -133,6 +208,10 @@ object BackupImport {
     @Serializable
     private data class Backup(
         @ProtoNumber(1) val backupManga: List<BackupManga> = emptyList(),
+        // manga-utils-native sections (high field numbers → ignored by Mihon and by Mihon files here)
+        @ProtoNumber(900) val settingsJson: String? = null,
+        @ProtoNumber(901) val repoUrls: List<String> = emptyList(),
+        @ProtoNumber(902) val extensionPkgs: List<String> = emptyList(),
     )
 
     @Serializable
