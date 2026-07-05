@@ -5,6 +5,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import org.cef.CefApp
 import org.cef.CefClient
 
@@ -19,10 +20,14 @@ object CefHelper {
     var isInitialized = false
 
     suspend fun createClient(): CefClient {
-        // Kick off the (lazy, one-time) native CEF download/init. Until it's ready, fail fast with a
-        // clear reason instead of blocking until the network call times out.
+        // Kick off the (lazy, one-time) native CEF download/init, then WAIT (bounded) for it to be
+        // ready instead of failing the first hit — so the first WebView request after startup just
+        // works rather than erroring until a manual reload. Cached restarts finish in ~1-2s; a
+        // first-ever download can take longer, so the ceiling is generous but still fails cleanly.
         CefManager.ensureStarted()
-        val current = cefApp.value
+        val current =
+            withTimeoutOrNull(30_000) { cefApp.first { it.isFailure || it.getOrNull() != null } }
+                ?: throw CefException(WEBVIEW_INITIALIZING)
         if (current.isFailure) throw CefException("$WEBVIEW_UNAVAILABLE (${current.exceptionOrNull()?.message})")
         val cef = current.getOrNull() ?: throw CefException(WEBVIEW_INITIALIZING)
         // If CEF is already initialized (the common case — bootstrap set cefApp on INITIALIZED), use it

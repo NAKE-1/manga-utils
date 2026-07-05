@@ -384,8 +384,16 @@ export function Settings() {
                   {preview.total > 60 && <div className="set-hint">…and {preview.total - 60} more</div>}
                 </div>
               )}
+              {(preview.hasSettings || !!preview.repos || !!preview.extensions) && (
+                <div className="set-hint">
+                  Also in this backup (applied on import):
+                  {preview.hasSettings && <> · <b>app settings</b> (overwrites yours)</>}
+                  {!!preview.repos && <> · <b>{preview.repos} repo{preview.repos === 1 ? '' : 's'}</b> (added)</>}
+                  {!!preview.extensions && <> · <b>{preview.extensions} extension{preview.extensions === 1 ? '' : 's'}</b> (reinstalled if missing)</>}
+                </div>
+              )}
               <div className="set-actions">
-                <button className="btn primary" disabled={importing || preview.total === 0} onClick={doImport}>{importing ? 'Importing…' : `Import ${preview.total} manga`}</button>
+                <button className="btn primary" disabled={importing || (preview.total === 0 && !preview.hasSettings && !preview.repos && !preview.extensions)} onClick={doImport}>{importing ? 'Importing…' : preview.total > 0 ? `Import ${preview.total} manga` : 'Restore'}</button>
                 <button className="btn" onClick={cancelImport}>Cancel</button>
               </div>
             </div>
