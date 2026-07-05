@@ -557,8 +557,7 @@ class KcefWebViewProvider(
         javaScriptInterfaces: Map<String, Any>?,
         privateBrowsing: Boolean,
     ) {
-        Log.i(TAG, "provider.init() start")
-        try {
+        Log.v(TAG, "KcefWebViewProvider: initialize")
         destroy()
         kcefClient =
             runBlocking {
@@ -575,11 +574,6 @@ class KcefWebViewProvider(
                 }
             }
         initHandler?.init(this)
-        Log.i(TAG, "provider.init() done (kcefClient set = ${kcefClient != null})")
-        } catch (e: Throwable) {
-            Log.e(TAG, "provider.init() FAILED", e)
-            throw e
-        }
     }
 
     // Deprecated - should never be called
@@ -667,7 +661,6 @@ class KcefWebViewProvider(
         loadUrl: String,
         additionalHttpHeaders: Map<String, String>,
     ) {
-        Log.i(TAG, "loadUrl entry: $loadUrl")
         browser?.close(true)
         browser?.dispose()
         chromeClient.onProgressChanged(view, 0)
@@ -727,7 +720,6 @@ class KcefWebViewProvider(
         encoding: String?,
         historyUrl: String?,
     ) {
-        Log.i(TAG, "loadDataWithBaseURL entry: baseUrl=$baseUrl")
         browser?.close(true)
         browser?.dispose()
         chromeClient.onProgressChanged(view, 0)
@@ -736,20 +728,15 @@ class KcefWebViewProvider(
         urlHttpMapping[url.trimEnd('/')] = data
 
         browser =
-            try {
-                kcefClient!!
-                    .createBrowser(
-                        url,
-                        CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
-                        false,
-                    ).apply {
-                        // NOTE: Without this, we don't seem to be receiving any events
-                        createImmediately()
-                    }
-            } catch (e: Throwable) {
-                Log.e(TAG, "createBrowser failed for $url", e)
-                throw e
-            }
+            kcefClient!!
+                .createBrowser(
+                    url,
+                    CefRendering.CefRenderingWithHandler(renderHandler, JPanel()),
+                    false,
+                ).apply {
+                    // NOTE: Without this, we don't seem to be receiving any events
+                    createImmediately()
+                }
         Log.d(TAG, "Page loaded from data at base URL $baseUrl")
     }
 
