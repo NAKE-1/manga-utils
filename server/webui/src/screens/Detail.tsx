@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
-import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots } from '../components/icons'
+import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots, IconJetBrains } from '../components/icons'
 import { ProgressRing } from '../components/ProgressRing'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
@@ -249,6 +249,7 @@ export function Detail() {
             <div className="meta-tag">
               <span className="meta-tag-k">Source</span>
               <span className="meta-tag-v">{source.name}{source.lang ? ` (${source.lang.toUpperCase()})` : ''}</span>
+              {source.usesWebView && <IconJetBrains className="src-wv" />}
             </div>
           )}
         </div>

@@ -67,8 +67,8 @@ object CefManager {
     private val dataRoot: Path by lazy {
         Path(System.getProperty("suwayomi.tachidesk.config.server.rootDir") ?: System.getProperty("user.home"))
     }
-    private val cefDir: Path by lazy { dataRoot / "bin" / "kcef" }
-    private val cacheDir: Path by lazy { dataRoot / "cache" / "kcef" }
+    private val cefDir: Path by lazy { dataRoot / "bin" / "jcef" }
+    private val cacheDir: Path by lazy { dataRoot / "cache" / "jcef" }
     private val releaseFile: Path by lazy { cefDir / "release" }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -86,6 +86,17 @@ object CefManager {
 
     private fun initBlocking() {
         System.loadLibrary("jawt")
+
+        // One-time migration: the install dir used to be bin/kcef (KCEF era). If a valid JB install is
+        // already there, move it rather than re-download the native.
+        val legacyDir = dataRoot / "bin" / "kcef"
+        if (!cefDir.exists() && legacyDir.exists() && isInstallationValid(legacyDir / "release")) {
+            runCatching {
+                cefDir.parent?.createDirectories()
+                legacyDir.moveTo(cefDir)
+                logger.info { "Migrated CEF install bin/kcef → bin/jcef" }
+            }
+        }
 
         if (!isInstallationValid(releaseFile)) {
             logger.info { "Downloading CEF native from JetBrains Runtime ($JBR_RELEASE) — first run, ~100MB…" }

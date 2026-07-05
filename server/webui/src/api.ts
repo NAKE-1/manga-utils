@@ -206,7 +206,7 @@ export interface DlTask {
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 
-export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string }
+export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoDownloadNew: boolean; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number }

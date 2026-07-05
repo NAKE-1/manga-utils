@@ -162,7 +162,7 @@ private data class LibraryDto(
 @Volatile private var libUpdateTotal = 0
 @Volatile private var libUpdateRunning = false
 
-@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "")
+@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false)
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
 @Serializable private data class RepoReq(val url: String)
@@ -989,7 +989,7 @@ fun Application.module() {
         get("/api/extensions") {
             val list = withContext(Dispatchers.IO) {
                 val repoOf = runCatching { availableEntries().associate { it.first.pkg to repoLabel(it.second) } }.getOrDefault(emptyMap())
-                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "") }
+                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath)) }
             }
             call.respond(list)
         }
