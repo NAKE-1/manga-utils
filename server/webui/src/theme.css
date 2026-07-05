@@ -566,6 +566,8 @@ img { display: block; }
 
 /* Global search — one section per source */
 .gs { padding-top: 6px; }
+.gs-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px 2px; }
+.gs-searching { font-size: 12px; color: var(--muted); }
 .gs-section { margin-bottom: 4px; }
 .gs-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 6px; }
 .gs-name { font-size: 15px; font-weight: 800; color: var(--text); }

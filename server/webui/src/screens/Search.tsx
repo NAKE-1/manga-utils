@@ -41,6 +41,8 @@ export function Search() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [warming, setWarming] = useState(false) // in-app WebView (Chromium) starting on first use
   const warmupRetries = useRef(0)
+  const [onlyResults, setOnlyResults] = useState(() => localStorage.getItem('search.onlyResults') === '1')
+  useEffect(() => { localStorage.setItem('search.onlyResults', onlyResults ? '1' : '0') }, [onlyResults])
   const [recent, setRecent] = useState<string[]>(recents())
   const [globalRows, setGlobalRows] = useState<GlobalRow[]>(searchCache?.globalRows ?? [])
   const sentinel = useRef<HTMLDivElement>(null)
@@ -182,25 +184,46 @@ export function Search() {
         !query.trim() ? <div className="center-msg">Type to search across all sources.</div>
           : (
             <div className="gs">
-              {globalRows.map((g) => (
-                <div className="gs-section" key={g.src.id}>
-                  <div className="gs-head">
-                    <span className="gs-name">{g.src.name}</span>
-                    {g.src.nsfw && <span className="src-18">18+</span>}
-                    {!g.loading && !g.error && <span className="gs-count">{g.items.length}</span>}
-                  </div>
-                  {g.loading ? <div className="gs-empty">Searching…</div>
-                    : g.error ? <div className="gs-empty">{isWebViewWarmup(g.error) ? 'Starting in-app browser…' : g.error}</div>
-                    : g.items.length === 0 ? <div className="gs-empty">No results</div>
-                    : (
-                      <div className="row-scroll">
-                        {g.items.slice(0, 18).map((m, i) => (
-                          <CoverCard key={m.url + i} sourceId={m.sourceId} url={m.url} title={m.title} cover={coverUrl(m.sourceId, m.thumbnailUrl, m.title)} type={mediaType(m.genre)} />
-                        ))}
+              {(() => {
+                // A source that errored (Cloudflare, timeout, WebView warmup, …) counts as "no source"
+                // for the filter — same as no results. Keep still-loading rows visible so you can watch
+                // progress; they drop out on their own if they settle empty.
+                const withResults = globalRows.filter((g) => !g.loading && !g.error && g.items.length > 0).length
+                const searching = globalRows.filter((g) => g.loading).length
+                const shown = onlyResults ? globalRows.filter((g) => g.loading || (!g.error && g.items.length > 0)) : globalRows
+                return (
+                  <>
+                    <div className="gs-bar">
+                      <button className={'chip' + (onlyResults ? ' on' : '')} onClick={() => setOnlyResults((v) => !v)}>
+                        Has results{withResults ? ` · ${withResults}` : ''}
+                      </button>
+                      {searching > 0 && <span className="gs-searching">{searching} searching…</span>}
+                    </div>
+                    {shown.map((g) => (
+                      <div className="gs-section" key={g.src.id}>
+                        <div className="gs-head">
+                          <span className="gs-name">{g.src.name}</span>
+                          {g.src.nsfw && <span className="src-18">18+</span>}
+                          {!g.loading && !g.error && <span className="gs-count">{g.items.length}</span>}
+                        </div>
+                        {g.loading ? <div className="gs-empty">Searching…</div>
+                          : g.error ? <div className="gs-empty">{isWebViewWarmup(g.error) ? 'Starting in-app browser…' : g.error}</div>
+                          : g.items.length === 0 ? <div className="gs-empty">No results</div>
+                          : (
+                            <div className="row-scroll">
+                              {g.items.slice(0, 18).map((m, i) => (
+                                <CoverCard key={m.url + i} sourceId={m.sourceId} url={m.url} title={m.title} cover={coverUrl(m.sourceId, m.thumbnailUrl, m.title)} type={mediaType(m.genre)} />
+                              ))}
+                            </div>
+                          )}
                       </div>
+                    ))}
+                    {onlyResults && searching === 0 && withResults === 0 && (
+                      <div className="center-msg">No source had results.</div>
                     )}
-                </div>
-              ))}
+                  </>
+                )
+              })()}
             </div>
           )
       ) : warming ? (
