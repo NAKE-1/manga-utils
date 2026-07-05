@@ -8,8 +8,8 @@ Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 - [x] **mangafire** (`6084…`) — search timed out at 20s. Root cause: it computes an anti-bot `vrf` token via a WebView `evaluateJavascript`, but our provider DROPPED null/undefined results (and JS errors went down a cancel path), so the callback never fired and the extension's latch hit its own 20s timeout. Fixed: always invoke the callback ("null" on null, JSON-encoded to match Android) + JS errors now deliver null through the normal query path. Pending on-device test.
 
 ## Nice-to-have (UI polish)
-- [ ] First-run WebView UX: replace the raw 502 on the first hit with a friendly "starting in-app browser…" toast/spinner.
-- [ ] Cosmetic rename `KcefWebViewProvider`/`KcefWebSettings`/`bin/jcef` internals → `Jcef…` (we're on JetBrains JCEF now). Touches the WebView factory registration; purely cognitive cleanup.
+- [ ] First-run WebView UX: replace the raw 502 on the first hit with a friendly "starting in-app browser…" toast/spinner. (Partly mitigated already — createClient now waits up to 30s for CEF.)
+- [x] Cosmetic rename `Kcef*` → `Jcef*` now on JetBrains JCEF (8471593).
 
 ## Low priority (deferred by decision)
 - [ ] **FlareSolverr concurrency throttle** (~2 simultaneous solves). "idc" for now; still good hygiene and carries into Proxmox (keeps under the container `mem_limit`). Cheap to add later.
