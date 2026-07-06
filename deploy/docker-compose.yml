@@ -1,30 +1,43 @@
 # manga-utils + FlareSolverr, side by side.
 #
 #   Build & run locally:   docker compose -f deploy/docker-compose.yml up -d --build
-#   Or pull the published image (set `image:` below, comment out `build:`).
+#   Run a published image: set `image:` below, remove the `build:` block, then `up -d` (pull).
 #
 # First run: open http://<host>:8080 → Settings → set the FlareSolverr URL to
 #   http://flaresolverr:8191   (the sibling container; it persists in the /data volume).
-# The web UI is meant to be reached over Tailscale — bind/expose only where you trust the network.
+# The web UI is meant to be reached over Tailscale — expose it only where you trust the network.
 
 services:
   manga-utils:
+    # Local build (Windows dev). To install from a published image instead, delete this build:
+    # block and keep the image: line below (docker compose pull && up -d).
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: ghcr.io/OWNER/manga-utils:latest   # <- replace OWNER; used when you `docker compose pull`
+    image: ghcr.io/OWNER/manga-utils:latest   # <- replace OWNER (lowercase) to pull the published image
     container_name: manga-utils
     hostname: manga-utils                      # stable so Chromium's profile-singleton lock matches across restarts
     ports:
-      - "8080:8080"
+      - "8080:8080"                            # host:container. This is the "preset port" — no dialog needed.
+    # --- Proxmox: put ONLY downloads on a big/second drive, keep config on the boot drive ------
+    #   Config (library.db, extensions, settings, JCEF native) stays in the mu-data named volume,
+    #   which Docker keeps on the boot drive. The app writes downloads to /data/downloads by
+    #   default, so bind-mounting the extra drive there redirects just the big stuff — no app
+    #   setting to change. IMPORTANT: chown the host dir to the container user first:
+    #       sudo chown -R 1000:1000 /mnt/manga-downloads
     volumes:
-      - mu-data:/data                          # library, extensions, settings, downloads, JCEF native
+      - mu-data:/data
+      # - /mnt/manga-downloads:/data/downloads   # <- uncomment on Proxmox; point at the extra drive's mount
     shm_size: "1gb"                            # Chromium (JCEF) needs a roomy /dev/shm
     environment:
       - MANGA_WEB_PORT=8080
     depends_on:
       - flaresolverr
     restart: unless-stopped
+    # --- Proxmox/Linux only: zero port config (binds the host's 8080 directly, no -p needed).
+    #   If you enable this, remove the ports: block above, and set the FlareSolverr URL to
+    #   http://localhost:8191 (host networking flattens the compose network).
+    # network_mode: host
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
