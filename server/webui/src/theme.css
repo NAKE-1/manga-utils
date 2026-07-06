@@ -108,6 +108,7 @@ img { display: block; }
 .cover-frame img.cover-img { opacity: 0; transition: opacity .25s ease; position: relative; z-index: 1; }
 .cover-frame img.cover-img.loaded { opacity: 1; }
 .cover-skel { position: absolute; inset: 0; z-index: 0; }
+.cover-fail { position: absolute; inset: 0; z-index: 0; display: grid; place-items: center; background: var(--card-2); color: var(--border); font-size: 34px; font-weight: 800; }
 .sk-line { height: 12px; border-radius: 6px; }
 .cover-title {
   margin-top: 7px; font-size: 13px; line-height: 1.25; color: var(--text);

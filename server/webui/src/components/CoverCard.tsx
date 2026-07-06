@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { IconDownload } from './icons'
@@ -28,6 +28,14 @@ type Props = {
 export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid, onRemove, dl }: Props) {
   const nav = useNavigate()
   const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Don't shimmer forever when a source's image host is down (e.g. atsu.moe): after ~9s of no load,
+  // show a placeholder instead of an eternal skeleton, so the grid reads as "no cover" not "loading".
+  useEffect(() => {
+    if (loaded || failed || !cover) return
+    const t = window.setTimeout(() => setFailed(true), 9000)
+    return () => window.clearTimeout(t)
+  }, [loaded, failed, cover])
   const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
   return (
     <div
@@ -39,7 +47,8 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
       onPointerDown={(e) => { if (e.pointerType === 'mouse') prefetchDetail(sourceId, url) }}
     >
       <div className="cover-frame">
-        {!loaded && <div className="cover-skel skeleton" />}
+        {!loaded && !failed && <div className="cover-skel skeleton" />}
+        {failed && !loaded && <div className="cover-fail" aria-hidden>{title.slice(0, 1).toUpperCase()}</div>}
         {onRemove && <button className="cover-remove" aria-label="Remove" onClick={(e) => { e.stopPropagation(); onRemove() }}>✕</button>}
         {cover && (
           <img
@@ -47,8 +56,8 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
             alt=""
             loading="lazy"
             className={'cover-img' + (loaded ? ' loaded' : '')}
-            onLoad={() => setLoaded(true)}
-            onError={(e) => { const i = e.currentTarget; if (!i.dataset.r) { i.dataset.r = '1'; i.src = cover + (cover.includes('?') ? '&' : '?') + 'r=1' } }}
+            onLoad={() => { setLoaded(true); setFailed(false) }}
+            onError={(e) => { const i = e.currentTarget; if (!i.dataset.r) { i.dataset.r = '1'; i.src = cover + (cover.includes('?') ? '&' : '?') + 'r=1' } else setFailed(true) }}
           />
         )}
         {type && <span className={'type-badge ' + type}>{type}</span>}
