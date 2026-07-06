@@ -1140,7 +1140,7 @@ fun Application.module() {
                     local.bytes(index)
                 } else {
                     fromSource = true
-                    pagesFor(id, chapter).getOrNull(index)?.let { SourceImage.pageBytes(id, it) }
+                    pagesFor(id, chapter).getOrNull(index)?.let { SourceImage.pageBytesAsync(id, it) }
                 }
             }
             // Track image-serving health from real fetches (not local reads) so a source can show

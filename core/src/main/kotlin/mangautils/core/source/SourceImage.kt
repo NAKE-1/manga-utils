@@ -51,30 +51,39 @@ object SourceImage {
         }
     }
 
-    /** Fetch a single page's image bytes (resolving a lazy image url if needed). */
+    /** Blocking page fetch for the CLI/downloader. The server uses [pageBytesAsync] (cancellable). */
     fun pageBytes(
+        sourceId: Long,
+        page: Page,
+    ): ByteArray? = runBlocking { pageBytesAsync(sourceId, page) }
+
+    /**
+     * Cancellable page fetch for the web reader. Called directly (no runBlocking) on the image pool,
+     * so when you leave a stuck reader the request is cancelled — the OkHttp call and the browser
+     * connection free immediately instead of holding one of the browser's ~6 connections for the
+     * full timeout (which otherwise blocks library/search/covers to the same host).
+     *
+     * Timeout is short: a down CDN (e.g. atsu.moe) should surface a retry fast, not saturate the
+     * connection pool for 12s per page.
+     */
+    suspend fun pageBytesAsync(
         sourceId: Long,
         page: Page,
     ): ByteArray? {
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
         return try {
-            runBlocking {
-                // Fail fast if the source stalls (e.g. CDN 5xx/hang) so the reader shows a retry
-                // instead of spinning on the client's full ~30s socket timeout.
-                withTimeout(12_000) {
-                    if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
-                    src.getImage(page).use { resp ->
-                        if (resp.isSuccessful) {
-                            resp.body?.bytes()
-                        } else {
-                            log.warn("page {} failed: HTTP {} {}", page.index, resp.code, page.imageUrl)
-                            null
-                        }
+            withTimeout(7_000) {
+                if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
+                src.getImage(page).use { resp ->
+                    if (resp.isSuccessful) {
+                        resp.body?.bytes()
+                    } else {
+                        log.warn("page {} failed: HTTP {} {}", page.index, resp.code, page.imageUrl)
+                        null
                     }
                 }
             }
         } catch (e: Exception) {
-            // Visible at INFO+ so image failures can actually be troubleshot (timeout, reset, 5xx, …).
             log.warn("page {} failed: {} ({})", page.index, e.message ?: e::class.simpleName, page.imageUrl)
             null
         }
