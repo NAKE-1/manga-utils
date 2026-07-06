@@ -100,7 +100,8 @@ import kotlin.reflect.KFunction
 import kotlin.reflect.full.declaredMemberFunctions
 import kotlin.reflect.jvm.javaMethod
 
-// Diagnostic logger (visible at INFO) for tracing the WebView flow — e.g. why mangafire's vrf stalls.
+// Diagnostic logger for tracing the WebView flow (page-finished / evaluateJavascript). At DEBUG so
+// it's off by default — it confirmed mangafire's vrf script returns null; enable it if digging again.
 private val wvlog = KotlinLogging.logger("JcefWebView")
 
 class JcefWebViewProvider(
@@ -270,7 +271,7 @@ class JcefWebViewProvider(
                     // TODO: create request and response
                     // viewClient.onReceivedHttpError(_view, ...);
                 }
-                wvlog.info { "page finished ($httpStatusCode): $url" }
+                wvlog.debug { "page finished ($httpStatusCode): $url" }
                 viewClient.onPageFinished(view, url)
                 chromeClient.onProgressChanged(view, 100)
             }
@@ -751,13 +752,13 @@ class JcefWebViewProvider(
         resultCallback: ValueCallback<String>?,
     ) {
         val b = browser
-        wvlog.info { "evaluateJavascript (${script.length} chars, browser=${b != null}): ${script.take(90).replace('\n', ' ')}" }
+        wvlog.debug { "evaluateJavascript (${script.length} chars, browser=${b != null}): ${script.take(90).replace('\n', ' ')}" }
         if (b == null) {
             resultCallback?.let { cb -> handler.post { cb.onReceiveValue("null") } }
             return
         }
         b.evaluateJavaScript(script.removePrefix("javascript:")) { result ->
-            wvlog.info { "evaluateJavascript result: ${result?.take(120)}" }
+            wvlog.debug { "evaluateJavascript result: ${result?.take(120)}" }
             // Android's evaluateJavascript ALWAYS invokes the callback, delivering the JSON-encoded
             // value ("null" for null/undefined). The old code dropped null results, so a WebView
             // interceptor that blocks on the callback (e.g. mangafire's vrf-token fetch) hung until

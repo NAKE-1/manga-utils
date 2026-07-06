@@ -144,11 +144,12 @@ export function Settings() {
   useEffect(() => {
     let alive = true
     const tick = () => {
+      if (document.hidden) return // don't poll a backgrounded tab
       api.devStats().then((s) => { if (alive) setStats(s) }).catch(() => {})
       api.sources().then((s) => { if (alive) setSources(s) }).catch(() => {}) // keep source health fresh
     }
     tick()
-    const t = setInterval(tick, 2000)
+    const t = setInterval(tick, 6000) // was 2s — that buried the server log in /api/sources spam
     return () => { alive = false; clearInterval(t) }
   }, [])
 
