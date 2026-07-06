@@ -44,6 +44,7 @@ object DownloadQueue {
         @Volatile var pagesDone = 0
         @Volatile var pagesTotal = 0
         @Volatile var bytesPerSec = 0.0
+        @Volatile var lastLogAt = 0L // throttle for the live progress log line
         @Volatile var error = ""
         // Chapters that failed (for the Retry button); names of finished chapters (live progress).
         val failed = CopyOnWriteArrayList<Chapter>()
@@ -122,6 +123,15 @@ object DownloadQueue {
                     task.bytesPerSec = p.bytesPerSecond
                     if (p.finished && p.pagesTotal > 0) task.finishedNames.add(p.chapter)
                     task.doneCount = task.finishedNames.size
+                    // Live progress in the server log so you can watch a download happen (matches the
+                    // READ/PRELOAD semantic lines). Throttled to ~0.8s so a fast chapter isn't a line
+                    // per page; always logs the first page and the finished line.
+                    val now = System.currentTimeMillis()
+                    if (p.finished || p.pagesDone <= 1 || now - task.lastLogAt > 800) {
+                        task.lastLogAt = now
+                        val speed = if (p.bytesPerSecond > 0) " · ${(p.bytesPerSecond / 1024).toInt()} KB/s" else ""
+                        log.info("DOWNLOAD {} · {}/{} pages{}", p.chapter, p.pagesDone, p.pagesTotal, speed)
+                    }
                 },
             )
             val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(task.chapters.map { it.url }.toSet()))
