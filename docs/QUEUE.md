@@ -20,8 +20,33 @@ Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 - [ ] `:server` Dockerfile with headless-CEF deps (fontconfig, libX11/libnss, etc.) so JCEF's Chromium subprocesses run in-container.
 - [ ] Note: on native Docker/Proxmox the `vmmemWSL` reservation quirk disappears — memory tracks real working set. `.wslconfig` is Windows-dev only (`autoMemoryReclaim=gradual` if you want it tamed locally).
 
-## Next
-- [ ] **URLs / deep-linking** — shareable/bookmarkable routes (manga, chapter, reader position) + browser back/forward. Constraint: must NOT break existing navigation. Up next.
+## Done recently
+- [x] **URLs / deep-linking** — Search now URL-driven (6f8d887); Detail/Reader/SPA-fallback already were. User: URL length is fine as-is, just keep links robust.
+- [x] **Source-not-installed card** on Detail for links to a missing extension (3cae183).
+- [x] **FlareSolverr cold-start retry** (smooths comix's flaky first solve) + **friendly port-in-use message** (3cae183).
+
+## Feature backlog (fuller list — pick by impact)
+### Reader experience
+- [ ] Tap-zone navigation (tap edges to page / jump), and an end-of-chapter "next chapter" overlay.
+- [ ] Reader background/theme (black / white / sepia) + brightness dim overlay.
+- [ ] Per-source sizing memory (some sources are webtoon, some paged); double-page spread option.
+- [ ] Pinch-zoom / double-tap zoom on a page.
+### Library
+- [ ] Categories / collections + sort & filter (unread, recently updated, title, source).
+- [ ] Unread-count badges; bulk actions (mark read, download, remove).
+- [ ] Library search box.
+### Discovery
+- [ ] Per-source genre/filter UI in browse (sort, tags).
+- [ ] "Updates" feed — new chapters across your whole library in one list.
+### Downloads / offline
+- [ ] Download a range / whole manga; storage-usage view; per-manga "keep downloaded".
+- [ ] Verify offline reading of downloaded chapters end-to-end in the web reader.
+### Links / sharing
+- [ ] External paste-a-source-URL → resolve to source + open (inbound, the "(b)" feature).
+- [ ] Prettier slug-in-path URLs (deferred — user OK with current length).
+### Deploy / infra
+- [ ] **Proxmox**: docker-compose (:server + flaresolverr, mem_limit, shm_size) + :server Dockerfile with headless-CEF deps.
+- [ ] Throttle the every-2s /api/sources poll.
 
 ## Done recently
 - [x] **Global search** — per-source rows + toggleable "Has results" filter; a failed source counts as no-results (6d19bca).
