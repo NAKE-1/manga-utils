@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # manga-utils :server — container image.
 # Multi-stage: build the app (JVM + bundled web UI) with Gradle, then ship a slim JRE runtime
 # that carries the shared libraries JCEF/Chromium needs (so WebView-based sources work headless).
@@ -30,12 +31,31 @@ RUN apt-get update \
       libasound2 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libxkbcommon0 \
       libpango-1.0-0 libcairo2 libx11-6 libxcb1 libxi6 libxtst6 libglib2.0-0 \
       fonts-liberation fontconfig ca-certificates wget \
+      xvfb \
  && rm -rf /var/lib/apt/lists/*
 
 # Run as a non-root user; /data is the single persisted volume (library, extensions, settings,
 # downloads, and the one-time-downloaded JCEF native under /data/bin/jcef).
 RUN useradd -m -u 1000 app
 COPY --from=build /src/server/build/install/server /app
+# Xvfb wrapper entrypoint (inlined so tweaking it doesn't bust the Gradle build cache).
+COPY <<'SH' /entrypoint.sh
+#!/bin/sh
+# JCEF/Chromium (WebView-based sources) needs an X server even for off-screen rendering, and a
+# container has none — so run a headless virtual display (Xvfb) and point Chromium at it.
+set -e
+export DISPLAY=:99
+rm -f /tmp/.X99-lock 2>/dev/null || true
+Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+i=0
+while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 25 ]; do i=$((i + 1)); sleep 0.2; done
+# Clear stale Chromium profile-singleton locks left in /data by a previous run (a crash, or a new
+# container hostname) — otherwise JCEF exits 21 with "profile appears to be in use ... on another
+# computer". maxdepth keeps the scan off the deep downloads tree.
+find /data -maxdepth 4 -name 'Singleton*' -delete 2>/dev/null || true
+exec /app/bin/server "$@"
+SH
+RUN chmod +x /entrypoint.sh
 RUN mkdir -p /data && chown -R app:app /data /app
 
 ENV MU_DATA_DIR=/data \
@@ -49,4 +69,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD wget -qO- "http://localhost:8080/api/version" >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["/app/bin/server"]
+ENTRYPOINT ["/entrypoint.sh"]

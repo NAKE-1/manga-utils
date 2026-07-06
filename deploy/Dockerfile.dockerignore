@@ -1,7 +1,8 @@
-# Keep the build context small + reproducible: send source, gradlew, and gradle config —
-# NOT build outputs, node_modules, caches, or VCS. (BuildKit reads this file automatically when
-# the Dockerfile is deploy/Dockerfile. If your Docker is old, copy this to a root .dockerignore.)
+# Keep the build context small + STABLE so editing deploy/ or docs doesn't bust the Gradle build
+# cache. Send source, gradlew, and gradle config — nothing else. (BuildKit reads this automatically
+# for deploy/Dockerfile; on old Docker, copy it to a root .dockerignore.)
 .git
+.github
 .gradle
 **/.gradle
 build
@@ -12,3 +13,7 @@ server/webui/dist
 *.log
 .idea
 .vscode
+# Not needed by the image build (entrypoint is inlined in the Dockerfile):
+deploy
+docs
+*.md
