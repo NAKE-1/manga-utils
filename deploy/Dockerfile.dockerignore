@@ -1,0 +1,14 @@
+# Keep the build context small + reproducible: send source, gradlew, and gradle config —
+# NOT build outputs, node_modules, caches, or VCS. (BuildKit reads this file automatically when
+# the Dockerfile is deploy/Dockerfile. If your Docker is old, copy this to a root .dockerignore.)
+.git
+.gradle
+**/.gradle
+build
+**/build
+server/webui/node_modules
+server/webui/dist
+**/node_modules
+*.log
+.idea
+.vscode
