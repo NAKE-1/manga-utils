@@ -58,53 +58,59 @@ class FlareSolverrInterceptor(
         }
         response.close()
 
-        FlareSolverrConfig.recordSolveStart(request.url.host) // so the UI can toast "solving…" during the pause
-        val solution =
-            try {
-                solve(request)
-            } catch (e: Exception) {
-                FlareSolverrConfig.recordSolveFail(request.url.host)
-                throw IOException("Cloudflare bypass (FlareSolverr) failed for ${request.url.host}: ${e.message}")
-            } ?: run {
-                FlareSolverrConfig.recordSolveFail(request.url.host)
-                throw IOException("Cloudflare bypass (FlareSolverr) returned no solution for ${request.url.host}.")
+        val host = request.url.host
+        FlareSolverrConfig.recordSolveStart(host) // so the UI can toast "solving…" during the pause
+
+        // Try up to twice: on a cold start FlareSolverr's browser sometimes comes back with only
+        // __cf_bm (no cf_clearance) or a still-challenged retry — a second solve usually clears it,
+        // so smooth over the flaky first attempt instead of hard-failing (comix's cold start).
+        val maxAttempts = 2
+        for (attempt in 1..maxAttempts) {
+            val last = attempt == maxAttempts
+            val solution =
+                try {
+                    solve(request)
+                } catch (e: Exception) {
+                    if (last) { FlareSolverrConfig.recordSolveFail(host); throw IOException("Cloudflare bypass (FlareSolverr) failed for $host: ${e.message}") }
+                    continue
+                }
+            if (solution == null) {
+                if (last) { FlareSolverrConfig.recordSolveFail(host); throw IOException("Cloudflare bypass (FlareSolverr) returned no solution for $host.") }
+                continue
             }
 
-        val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
-        FlareSolverrConfig.recordSolveDone(request.url.host, cookies.size)
-        if (cookies.isNotEmpty()) cookieStore.addAll(request.url, cookies)
-        val ua = solution.userAgent?.takeIf { it.isNotBlank() } // clearance is UA-bound
-        if (ua != null) {
-            setUserAgent(ua)
-            solvedUa[request.url.host] = ua
-        }
-        log.info { "FlareSolverr solved ${request.url.host}: stored ${cookies.size} cookie(s) [${cookies.joinToString(", ") { it.name }}]" }
-        // The only cookie that actually clears Cloudflare is cf_clearance. If FlareSolverr came back
-        // without it (e.g. a Turnstile / managed 'Cf-Mitigated: challenge' it can't fully pass), the
-        // retry will just 403 again — say so plainly instead of silently looping.
-        if (cookies.none { it.name == "cf_clearance" }) {
-            log.warn {
-                "FlareSolverr returned no cf_clearance for ${request.url.host} — this site uses a " +
-                    "managed/Turnstile challenge that cookie-replay can't clear; the retry will likely 403 again."
+            val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
+            if (cookies.isNotEmpty()) cookieStore.addAll(request.url, cookies)
+            val ua = solution.userAgent?.takeIf { it.isNotBlank() } // clearance is UA-bound
+            if (ua != null) {
+                setUserAgent(ua)
+                solvedUa[host] = ua
             }
-        }
+            log.info { "FlareSolverr solved $host (try $attempt): stored ${cookies.size} cookie(s) [${cookies.joinToString(", ") { it.name }}]" }
 
-        // Retry with the solved UA forced (overriding any UA the extension set) + the stored cookies
-        // (added automatically by the cookie jar backing cookieStore).
-        val retry = request.newBuilder()
-        if (ua != null) retry.header("User-Agent", ua)
-        val retried = chain.proceed(retry.build())
-        // If Cloudflare is STILL challenging after a "successful" solve, the clearance didn't stick
-        // (managed/Turnstile challenge, or a TLS-fingerprint-bound cf_clearance we can't replay).
-        // Fail with a clear reason instead of handing the extension a challenge page to mis-parse.
-        if (isCloudflareChallenge(retried)) {
+            // The only cookie that clears Cloudflare is cf_clearance. If it's missing and we still have
+            // an attempt left, re-solve instead of retrying a request that will just 403 again.
+            if (cookies.none { it.name == "cf_clearance" } && !last) continue
+
+            FlareSolverrConfig.recordSolveDone(host, cookies.size)
+            // Retry with the solved UA forced (overriding any UA the extension set) + the stored cookies
+            // (added automatically by the cookie jar backing cookieStore).
+            val retry = request.newBuilder()
+            if (ua != null) retry.header("User-Agent", ua)
+            val retried = chain.proceed(retry.build())
+            if (!isCloudflareChallenge(retried)) return retried // cleared
             retried.close()
-            throw IOException(
-                "Cloudflare is still blocking ${request.url.host} after a FlareSolverr solve — this " +
-                    "site uses a managed/Turnstile challenge that a cookie bypass can't clear.",
-            )
+            if (last) {
+                FlareSolverrConfig.recordSolveFail(host)
+                throw IOException(
+                    "Cloudflare is still blocking $host after $attempt FlareSolverr solve(s) — this " +
+                        "site uses a managed/Turnstile challenge that a cookie bypass can't clear.",
+                )
+            }
+            // not the last attempt → loop and solve once more
         }
-        return retried
+        FlareSolverrConfig.recordSolveFail(host)
+        throw IOException("Cloudflare bypass failed for $host.")
     }
 
     private fun solve(request: Request): FsSolution? {

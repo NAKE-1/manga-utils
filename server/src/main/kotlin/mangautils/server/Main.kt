@@ -473,7 +473,18 @@ fun main() {
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
-    embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
+    try {
+        embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
+    } catch (e: java.net.BindException) {
+        // A stale server (or something else) is already on the port — say so plainly instead of
+        // dumping a BindException stack trace.
+        System.err.println()
+        System.err.println("  ✗ Port $port is already in use — is another manga-utils server still running?")
+        System.err.println("    Close the other window, or stop the process holding port $port, then try again.")
+        System.err.println("    (Or set MANGA_WEB_PORT to a free port.)")
+        System.err.println()
+        kotlin.system.exitProcess(1)
+    }
 }
 
 fun Application.module() {

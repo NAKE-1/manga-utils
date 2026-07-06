@@ -52,6 +52,7 @@ export function Detail() {
   const [tries, setTries] = useState(0)
   const [stateLoaded, setStateLoaded] = useState(false)
   const [source, setSource] = useState<Source | null>(null)
+  const [srcKnown, setSrcKnown] = useState<boolean | null>(null) // is this source installed? null = still loading
   const [dlMsg, setDlMsg] = useState('')
   const [dlProg, setDlProg] = useState<Record<string, { done: number; total: number; state: string }>>({})
   const [selecting, setSelecting] = useState(false)
@@ -60,10 +61,10 @@ export function Detail() {
   const [dlFilter, setDlFilter] = useState<'all' | 'dl' | 'undl'>('all')
 
   useEffect(() => {
-    setData(null); setError(null); setStateLoaded(false)
+    setData(null); setError(null); setStateLoaded(false); setSrcKnown(null)
     api.detail(sourceId, url).then(setData).catch((e) => setError(e instanceof Error ? e.message : "Couldn't load this manga."))
     api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {}).finally(() => setStateLoaded(true))
-    api.sources().then((all) => setSource(all.find((x) => x.id === sourceId) ?? null)).catch(() => {})
+    api.sources().then((all) => { const s = all.find((x) => x.id === sourceId) ?? null; setSource(s); setSrcKnown(!!s) }).catch(() => {})
   }, [sourceId, url, tries])
 
   // Poll the download queue for live per-chapter progress; refetch detail when downloads finish.
@@ -185,6 +186,17 @@ export function Detail() {
   }
   function exitSelect() { setSelecting(false); setSelected(new Set()) }
 
+  // A shared link may point at a source this server doesn't have installed → a clear, actionable
+  // card beats a generic "couldn't load" error.
+  if (error && srcKnown === false) return (
+    <BackWrap nav={nav}>
+      <div className="center-msg">
+        <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>Source not installed</div>
+        <div className="set-hint" style={{ marginBottom: 16 }}>This link is from an extension that isn’t installed on this server, so its pages can’t be loaded here.</div>
+        <button className="btn primary" onClick={() => nav('/extensions')}>Open Extensions</button>
+      </div>
+    </BackWrap>
+  )
   if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
 
