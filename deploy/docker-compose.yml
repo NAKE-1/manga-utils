@@ -48,5 +48,19 @@ services:
     # No published port needed — manga-utils reaches it in-network at http://flaresolverr:8191
     restart: unless-stopped
 
+  # Watchdog: `restart: unless-stopped` already recovers a crash (process exit). autoheal covers the
+  # other case — a container that's *running but hung* — by restarting anything the healthcheck marks
+  # unhealthy (manga-utils pings /api/version; flaresolverr has its own healthcheck).
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: autoheal
+    restart: unless-stopped
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all           # watch every container that has a healthcheck
+      - AUTOHEAL_INTERVAL=15                    # check every 15s
+      - AUTOHEAL_START_PERIOD=60                # give a just-restarted container time to boot
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
 volumes:
   mu-data:
