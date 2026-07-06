@@ -101,6 +101,10 @@ export function Reader() {
   const nav = useNavigate()
 
   const [count, setCount] = useState<number | null>(null)
+  // Windowing: only mount an <img> for pages up to here (0-based). Grows as you scroll, so opening a
+  // chapter fires ~preload requests — not all 68 at once (which would pin every browser connection
+  // and freeze the app, esp. on a down source). Reset per chapter.
+  const [renderMax, setRenderMax] = useState(0)
   const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
   const [warnAck, setWarnAck] = useState(0) // banner dismissed at this failure count; reappears if more fail
   const [chapters, setChapters] = useState<Chapter[]>([])
@@ -212,7 +216,7 @@ export function Reader() {
   useEffect(() => {
     const key = sourceId + '|' + chapter
     pendingRestore.current = loadPositions()[key] ?? null // resume point for this chapter, if any
-    setCount(null); setPage(1); setProgress(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false)
+    setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false)
     window.scrollTo(0, 0)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
@@ -312,6 +316,9 @@ export function Reader() {
     const p = max > 0 ? y / max : 0
     setProgress(p)
     setPage(Math.min(c, Math.max(1, Math.round(p * (c - 1)) + 1)))
+    // Mount page <img>s a few ahead of where you're reading; monotonic so it never unmounts.
+    const cur0 = Math.max(0, Math.round(p * (c - 1)))
+    setRenderMax((m) => Math.max(m, cur0 + 5))
     // Chrome shows at the start and again at the END of the chapter (so prev/next are there when you
     // finish); in between, scrolling away from the top hides it.
     const nearBottom = max > 0 && max - y < 120
@@ -369,13 +376,13 @@ export function Reader() {
         {count !== null && count > 0 && (
           <div className="strip" style={{ gap: gap + 'px' }}>
             {Array.from({ length: count }, (_, i) => {
-              // Only the first `preload` pages load up-front; the rest are lazy — the browser fetches
-              // them as you scroll near. This keeps a chapter from firing dozens of requests at once,
-              // which saturates the browser's ~6 connections-per-host and blocks the whole app (a
-              // down source like atsu.moe would otherwise pin every connection on timeouts).
-              // 'eager' mode is the explicit opt-out that still loads everything; 'lazy' loads nothing up-front.
-              const windowN = Math.max(preload, 2)
-              const eager = loadMode === 'eager' ? true : loadMode === 'lazy' ? false : i < windowN
+              // Windowing: only mount an <img> for pages up to renderMax (which grows as you scroll).
+              // Pages beyond it are empty, height-reserved slots with NO request — so opening a
+              // chapter fires ~preload requests, not all 68 (which would pin every browser connection
+              // and freeze the app, esp. on a down source). This holds regardless of loadMode.
+              const renderCeil = Math.max(renderMax, Math.max(preload, 3))
+              if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
+              const eager = loadMode === 'eager' ? true : loadMode === 'lazy' ? false : i < Math.max(preload, 2)
               const priority = loadMode !== 'lazy' && eager && i < preload ? 'high' : undefined
               return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={eager ? 'eager' : 'lazy'} priority={priority} onStatus={reportStatus} />
             })}
