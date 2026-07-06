@@ -8,6 +8,8 @@ package mangautils.core.source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.Request
@@ -26,11 +28,15 @@ object SourceImage {
         url: String,
     ): ByteArray? {
         if (url.isBlank()) return null
+        if (SourceCircuits.images.isOpen(sourceId)) return null // breaker open (dead CDN) → instant fail
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
         return try {
             val request = Request.Builder().url(url).headers(src.headers).build()
-            src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
+            val bytes = src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
+            if (bytes != null) SourceCircuits.images.recordSuccess(sourceId) else SourceCircuits.images.recordFailure(sourceId)
+            bytes
         } catch (e: Exception) {
+            SourceCircuits.images.recordFailure(sourceId)
             log.debug("cover fetch failed {}: {}", url, e.message)
             null
         }
@@ -70,9 +76,10 @@ object SourceImage {
         sourceId: Long,
         page: Page,
     ): ByteArray? {
+        if (SourceCircuits.images.isOpen(sourceId)) return null // breaker open (dead CDN) → instant fail
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
         return try {
-            withTimeout(7_000) {
+            val bytes = withTimeout(7_000) {
                 if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
                 src.getImage(page).use { resp ->
                     if (resp.isSuccessful) {
@@ -83,7 +90,12 @@ object SourceImage {
                     }
                 }
             }
+            if (bytes != null) SourceCircuits.images.recordSuccess(sourceId) else SourceCircuits.images.recordFailure(sourceId)
+            bytes
         } catch (e: Exception) {
+            // A plain cancellation (you navigated away) isn't the source's fault — don't trip the breaker.
+            if (e is CancellationException && e !is TimeoutCancellationException) throw e
+            SourceCircuits.images.recordFailure(sourceId)
             log.warn("page {} failed: {} ({})", page.index, e.message ?: e::class.simpleName, page.imageUrl)
             null
         }

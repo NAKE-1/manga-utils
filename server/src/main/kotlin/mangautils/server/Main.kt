@@ -1179,6 +1179,11 @@ private suspend fun browse(
     val key = "$id|$kind|$page"
     val now = System.currentTimeMillis()
     browseCache[key]?.let { (t, v) -> if (now - t < BROWSE_TTL_MS) return call.respond(v) }
+    // Circuit breaker: a source that just failed repeatedly fails INSTANTLY for a cooldown instead of
+    // hanging on its 20s timeout again (global search especially — skip known-down sources fast).
+    if (mangautils.core.source.SourceCircuits.api.isOpen(id)) {
+        return call.respond(HttpStatusCode.BadGateway, ErrorDto("This source is temporarily unavailable (recent failures) — retrying shortly."))
+    }
     // Isolated source pool + cancellable op: if the client navigates away, this coroutine is
     // cancelled and the extension's OkHttp call is cancelled with it (no 20s zombie thread).
     val result = withContext(mangautils.core.async.Pools.source) {
@@ -1189,12 +1194,17 @@ private suspend fun browse(
     }
     result.fold(
         onSuccess = {
+            mangautils.core.source.SourceCircuits.api.recordSuccess(id)
             SourceHealth.markUp(id)
             browseCache[key] = now to it
             if (browseCache.size > 256) browseCache.entries.removeIf { (System.currentTimeMillis() - it.value.first) > BROWSE_TTL_MS }
             call.respond(it)
         },
-        onFailure = { markFailure(id, it); call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+        onFailure = {
+            if (it !is kotlinx.coroutines.CancellationException) mangautils.core.source.SourceCircuits.api.recordFailure(id)
+            markFailure(id, it)
+            call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it)))
+        },
     )
 }
 
