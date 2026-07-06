@@ -369,10 +369,14 @@ export function Reader() {
         {count !== null && count > 0 && (
           <div className="strip" style={{ gap: gap + 'px' }}>
             {Array.from({ length: count }, (_, i) => {
-              // hybrid: all eager, first `preload` at HIGH priority + the rest LOW (visible pages win the pipe).
-              // eager: all eager, equal. balanced: first `preload` eager then lazy. lazy: all lazy.
-              const eager = loadMode === 'hybrid' || loadMode === 'eager' || (loadMode === 'balanced' && i < preload)
-              const priority = loadMode === 'hybrid' ? (i < preload ? 'high' : 'low') : undefined
+              // Only the first `preload` pages load up-front; the rest are lazy — the browser fetches
+              // them as you scroll near. This keeps a chapter from firing dozens of requests at once,
+              // which saturates the browser's ~6 connections-per-host and blocks the whole app (a
+              // down source like atsu.moe would otherwise pin every connection on timeouts).
+              // 'eager' mode is the explicit opt-out that still loads everything; 'lazy' loads nothing up-front.
+              const windowN = Math.max(preload, 2)
+              const eager = loadMode === 'eager' ? true : loadMode === 'lazy' ? false : i < windowN
+              const priority = loadMode !== 'lazy' && eager && i < preload ? 'high' : undefined
               return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={eager ? 'eager' : 'lazy'} priority={priority} onStatus={reportStatus} />
             })}
           </div>
