@@ -72,6 +72,10 @@ class DownloadManager(
     private val existingPolicy: ExistingPolicy = ExistingPolicy.SKIP,
     private val existingPrompt: ExistingPrompt? = null,
     private val downloadAsCbz: Boolean = runCatching { SettingsStore.get().downloadAsCbz }.getOrDefault(false),
+    // Cooperative stop: checked between chapters, between candidate mirrors, and before each page.
+    // A chapter only lands on disk once ALL its pages are in memory, so a stop mid-chapter simply
+    // discards it (nothing partial is written) while already-finished chapters are kept.
+    private val cancelled: () -> Boolean = { false },
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -129,6 +133,7 @@ class DownloadManager(
 
             var anySuccess = false
             for (chapter in targets) {
+                if (cancelled()) { log.info("download stopped — {} finished, remaining skipped", job.attempts.count { it.outcome == "ok" }); break }
                 val candidates =
                     buildList {
                         add(Candidate(primary.sourceId, primarySource, chapter))
@@ -170,6 +175,7 @@ class DownloadManager(
             return true
         }
         for (cand in candidates) {
+            if (cancelled()) return false // stopped — don't try mirrors, don't write anything
             val start = System.currentTimeMillis()
             try {
                 val images =
@@ -199,6 +205,7 @@ class DownloadManager(
                 log.debug("Saved '{}' from source {} ({} pages)", chapter.name, cand.sourceId, images.size)
                 return true
             } catch (e: Exception) {
+                if (cancelled()) return false // stopped mid-page: discard this partial chapter, keep the rest
                 job.attempts.add(
                     JobAttempt(
                         sourceId = cand.sourceId,
@@ -234,6 +241,7 @@ class DownloadManager(
                 .map { page ->
                     async(mangautils.core.async.Pools.download) {
                         sem.withPermit {
+                            if (cancelled()) throw kotlinx.coroutines.CancellationException("stopped")
                             val image = downloadPage(source, page)
                             val totalBytes = bytes.addAndGet(image.bytes.size.toLong())
                             val d = done.incrementAndGet()

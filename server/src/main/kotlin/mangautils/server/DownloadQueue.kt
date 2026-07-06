@@ -115,6 +115,7 @@ object DownloadQueue {
                 concurrency = s.downloadConcurrency,
                 retries = s.downloadRetries,
                 existingPolicy = policy,
+                cancelled = { task.state == "stopped" }, // Stop button flips state → download aborts cooperatively
                 listener = { p ->
                     task.currentChapter = p.chapter
                     task.currentChapterUrl = task.nameToUrl(p.chapter)
@@ -139,12 +140,19 @@ object DownloadQueue {
             val byTarget = job.attempts.groupBy { it.target }
             val doneNames = byTarget.filterValues { atts -> atts.any { it.outcome == "ok" || it.outcome == "skipped" } }.keys
             task.doneCount = doneNames.size
-            task.failed.clear()
-            task.failed.addAll(task.chapters.filter { it.name !in doneNames })
-            task.failedCount = task.failed.size
             task.bytesPerSec = 0.0
-            task.state = if (task.failedCount == 0) "done" else "failed"
-            if (task.failedCount > 0) task.error = job.error.ifBlank { "${task.failedCount} chapter(s) failed" }
+            if (task.state == "stopped") {
+                // Stopped by the user: keep the chapters that finished, drop the rest silently
+                // (the in-progress chapter was never written to disk). Don't flag them as "failed".
+                task.failed.clear()
+                task.failedCount = 0
+            } else {
+                task.failed.clear()
+                task.failed.addAll(task.chapters.filter { it.name !in doneNames })
+                task.failedCount = task.failed.size
+                task.state = if (task.failedCount == 0) "done" else "failed"
+                if (task.failedCount > 0) task.error = job.error.ifBlank { "${task.failedCount} chapter(s) failed" }
+            }
         }.onFailure {
             task.bytesPerSec = 0.0
             if (Thread.currentThread().isInterrupted || it is InterruptedException) task.state = "stopped"
@@ -161,13 +169,13 @@ object DownloadQueue {
     fun totalBytesPerSec(): Double = tasks.values.filter { it.state == "running" }.sumOf { it.bytesPerSec }
 
     fun stop(id: String) {
+        tasks[id]?.let { if (it.active) it.state = "stopped" } // set the flag FIRST so the running loop aborts
         futures[id]?.cancel(true)
-        tasks[id]?.let { if (it.active) it.state = "stopped" }
         pump()
     }
     fun stopAll() {
-        futures.values.forEach { it.cancel(true) }
         tasks.values.forEach { if (it.active) it.state = "stopped" }
+        futures.values.forEach { it.cancel(true) }
     }
     fun clearFinished() { tasks.entries.removeIf { !it.value.active } }
 }
