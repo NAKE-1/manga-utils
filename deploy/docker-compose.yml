@@ -9,12 +9,10 @@
 
 services:
   manga-utils:
-    # Local build (Windows dev). To install from a published image instead, delete this build:
-    # block and keep the image: line below (docker compose pull && up -d).
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: nake1/manga-utils:latest           # published on Docker Hub — `docker compose pull` grabs it
+    image: nake1/manga-utils:latest           # pulled from Docker Hub (so `curl … | docker compose -f - up -d` works)
+    # Building locally instead of pulling? Run:
+    #   docker build -f deploy/Dockerfile -t nake1/manga-utils:latest .
+    # then `docker compose up -d` uses your freshly-built image.
     container_name: manga-utils
     hostname: manga-utils                      # stable so Chromium's profile-singleton lock matches across restarts
     ports:
