@@ -47,6 +47,7 @@ Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 ### Deploy / infra
 - [ ] **Proxmox**: docker-compose (:server + flaresolverr, mem_limit, shm_size) + :server Dockerfile with headless-CEF deps.
 - [ ] Throttle the every-2s /api/sources poll.
+- [ ] **USB backup system** (Docker): the container auto-mounts a USB drive holding data/backups, writes to it, then unmounts. Small addition to the deploy/ Docker setup. **Waiting on a spec .md from the user with the exact behavior** (mount point, what/when to back up, mount+unmount lifecycle, safety). Do not build until that arrives.
 
 ## Done recently
 - [x] **Global search** — per-source rows + toggleable "Has results" filter; a failed source counts as no-results (6d19bca).
