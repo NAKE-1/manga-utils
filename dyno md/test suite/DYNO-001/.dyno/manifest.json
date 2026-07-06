@@ -1,0 +1,23 @@
+{
+  "schema": "dyno.manifest/1",
+  "driveUuid": "5fddde2b-f7e0-4ea5-9eaa-a1b2c3d4e5f6",
+  "label": "DYNO-001",
+  "owner": "nakanoduck",
+  "createdAt": 1720051200000,
+  "manifestVersion": 1,
+  "libraryVersion": 1,
+  "explorerVersion": null,
+  "compatibleServer": ">=0.1.0",
+  "capabilities": [
+    "library",
+    "metadata",
+    "covers",
+    "progress",
+    "sync"
+  ],
+  "filesystem": "exFAT",
+  "integrity": {
+    "algo": "sha256"
+  },
+  "namespace": "d1c0d1c0-0000-5000-a000-000000000001"
+}

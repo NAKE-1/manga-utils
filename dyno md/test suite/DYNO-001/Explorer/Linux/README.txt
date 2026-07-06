@@ -1,0 +1,1 @@
+DYNO Explorer (Linux) goes here. Recommended impl: a portable manga-utils :server build + JRE that serves the web UI with MU_DATA_DIR pointed at this drive and downloadDir=Library/. See DYNO-IMPLEMENTATION-SPEC.md section 8.

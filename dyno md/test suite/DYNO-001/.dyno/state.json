@@ -1,0 +1,11 @@
+{
+  "schema": "dyno.state/1",
+  "lastConnected": 1720051200000,
+  "lastSync": 1720051200000,
+  "lastImport": 0,
+  "lastExport": 1720051200000,
+  "currentServer": "test-fixture",
+  "syncGeneration": 42,
+  "verified": true,
+  "lastMounted": 1720051200000
+}

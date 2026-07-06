@@ -1,0 +1,65 @@
+{
+  "schema": "dyno.index/1",
+  "generation": 42,
+  "updatedAt": 1720051200000,
+  "series": [
+    {
+      "seriesUuid": "d0b29da5-33a3-54c2-b6ea-44f21cf1179d",
+      "sourceId": 2327480808438768017,
+      "mangaUrl": "/manga/OGQkW",
+      "title": "Kaiju Girl Caramelise",
+      "path": "Library/Kaiju Girl Caramelise",
+      "coverHash": "sha256:43be52f97ed308911037af5b5cc41f02117f6e22cc86f42c9fcb3387af06de49",
+      "metadataHash": "sha256:7432b5c5e47e9f7a6a8ea08b07f38a8b1281a1cfa052c0004ae2e38c98fa6836",
+      "chapters": [
+        {
+          "chapterUuid": "3351cb70-0a3f-5931-bc32-46691841f4b0",
+          "chapterUrl": "/manga/OGQkW/JwpQfSNN",
+          "name": "Chapter 11",
+          "number": 11.0,
+          "file": "Chapter 11.cbz",
+          "pages": 4,
+          "bytes": 642,
+          "fileHash": "sha256:f0fd8cc327b0fbe4de0c45adc7e28bfe9a4c0d2fc3dbc4d598252ff5392a2f51",
+          "read": true,
+          "bookmarked": false
+        },
+        {
+          "chapterUuid": "ec838c64-9ba7-525f-8c56-91287952f707",
+          "chapterUrl": "/manga/OGQkW/wPdECWgo",
+          "name": "Chapter 12",
+          "number": 12.0,
+          "file": "Chapter 12.cbz",
+          "pages": 3,
+          "bytes": 487,
+          "fileHash": "sha256:ea4ac466ebf4087d443430351232f16d7d02350d524790227e2d07484b6e737e",
+          "read": false,
+          "bookmarked": true
+        }
+      ]
+    },
+    {
+      "seriesUuid": "f96784fb-8bcc-5b96-a214-6f8060bcbbfc",
+      "sourceId": 8861274191478178487,
+      "mangaUrl": "/series/frieren",
+      "title": "Frieren Beyond Journeys End",
+      "path": "Library/Frieren Beyond Journeys End",
+      "coverHash": "sha256:43be52f97ed308911037af5b5cc41f02117f6e22cc86f42c9fcb3387af06de49",
+      "metadataHash": "sha256:16cea52e56d374bcbeb4adcea1bcb15ace5bebe3ba742960b8aa9e34a03b276b",
+      "chapters": [
+        {
+          "chapterUuid": "d31ea90a-6bc9-570e-a31a-52f32365c8e9",
+          "chapterUrl": "/series/frieren/ch-1",
+          "name": "Chapter 1",
+          "number": 1.0,
+          "file": "Chapter 1.cbz",
+          "pages": 2,
+          "bytes": 332,
+          "fileHash": "sha256:ead85d892749503097eb72f14cd0340b6082b30f296976e975d27e20eab39c27",
+          "read": true,
+          "bookmarked": false
+        }
+      ]
+    }
+  ]
+}

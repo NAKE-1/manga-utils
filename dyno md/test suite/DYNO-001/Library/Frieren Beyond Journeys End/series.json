@@ -1,0 +1,35 @@
+{
+  "schema": "dyno.series/1",
+  "seriesUuid": "f96784fb-8bcc-5b96-a214-6f8060bcbbfc",
+  "sourceId": 8861274191478178487,
+  "mangaUrl": "/series/frieren",
+  "title": "Frieren Beyond Journeys End",
+  "altTitles": [],
+  "description": "An elf mage reflects on her journey long after the hero's party disbands.",
+  "author": "Kanehito Yamada",
+  "artist": "Tsukasa Abe",
+  "genres": [
+    "Adventure",
+    "Drama",
+    "Fantasy"
+  ],
+  "tags": [],
+  "status": "ongoing",
+  "language": "en",
+  "readingDirection": "ltr",
+  "addedAt": 1720051200000,
+  "modifiedAt": 1720051200000,
+  "chapters": [
+    {
+      "chapterUuid": "d31ea90a-6bc9-570e-a31a-52f32365c8e9",
+      "url": "/series/frieren/ch-1",
+      "name": "Chapter 1",
+      "number": 1.0,
+      "pages": 2,
+      "bytes": 332,
+      "read": true,
+      "bookmarked": false,
+      "resumePage": 0
+    }
+  ]
+}

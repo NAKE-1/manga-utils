@@ -1,0 +1,15 @@
+{
+  "schema": "dyno.settings/1",
+  "autoImport": false,
+  "autoExport": false,
+  "autoSync": false,
+  "compression": false,
+  "encryption": false,
+  "thumbnailGeneration": true,
+  "safeEject": true,
+  "preferredExportProfile": "OFFLINE_READER",
+  "preferredImportMode": "MERGE",
+  "conflictResolution": "PROMPT",
+  "explorerTheme": "dark",
+  "explorerLanguage": "en"
+}

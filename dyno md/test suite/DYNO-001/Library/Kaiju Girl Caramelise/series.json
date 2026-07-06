@@ -1,0 +1,47 @@
+{
+  "schema": "dyno.series/1",
+  "seriesUuid": "d0b29da5-33a3-54c2-b6ea-44f21cf1179d",
+  "sourceId": 2327480808438768017,
+  "mangaUrl": "/manga/OGQkW",
+  "title": "Kaiju Girl Caramelise",
+  "altTitles": [],
+  "description": "An awkward high-schooler transforms into a kaiju when her heart races.",
+  "author": "Spica Aoki",
+  "artist": "Spica Aoki",
+  "genres": [
+    "Romance",
+    "Comedy",
+    "Supernatural",
+    "Shounen"
+  ],
+  "tags": [],
+  "status": "ongoing",
+  "language": "en",
+  "readingDirection": "ltr",
+  "addedAt": 1720051200000,
+  "modifiedAt": 1720051200000,
+  "chapters": [
+    {
+      "chapterUuid": "3351cb70-0a3f-5931-bc32-46691841f4b0",
+      "url": "/manga/OGQkW/JwpQfSNN",
+      "name": "Chapter 11",
+      "number": 11.0,
+      "pages": 4,
+      "bytes": 642,
+      "read": true,
+      "bookmarked": false,
+      "resumePage": 0
+    },
+    {
+      "chapterUuid": "ec838c64-9ba7-525f-8c56-91287952f707",
+      "url": "/manga/OGQkW/wPdECWgo",
+      "name": "Chapter 12",
+      "number": 12.0,
+      "pages": 3,
+      "bytes": 487,
+      "read": false,
+      "bookmarked": true,
+      "resumePage": 1
+    }
+  ]
+}
