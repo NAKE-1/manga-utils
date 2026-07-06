@@ -47,7 +47,10 @@ Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 ### Deploy / infra
 - [ ] **Proxmox**: docker-compose (:server + flaresolverr, mem_limit, shm_size) + :server Dockerfile with headless-CEF deps.
 - [ ] Throttle the every-2s /api/sources poll.
-- [ ] **USB backup system** (Docker): the container auto-mounts a USB drive holding data/backups, writes to it, then unmounts. Small addition to the deploy/ Docker setup. **Waiting on a spec .md from the user with the exact behavior** (mount point, what/when to back up, mount+unmount lifecycle, safety). Do not build until that arrives.
+- [ ] **DYNO — portable-library USB system** (spec: `dyno md/dyno init.md`). Big multi-phase project (drive format + detection + manifest, export profiles, incremental UUID/checksum sync + import/merge, Settings→Portable Drives page, verification, safe eject, and a standalone Explorer GUI on the drive). The Docker auto-mount/unmount is one small slice. **Needs phasing + user sign-off before building.**
+
+### Known bugs (minor)
+- [ ] After **Delete all** for a manga in Settings, the total doesn't refresh: the main area shows "no chapters" but the size line still says e.g. "57 chapters · 329.1 MB" until a manual refresh. Stale downloaded-total after delete. (Low priority.)
 
 ## Done recently
 - [x] **Global search** — per-source rows + toggleable "Has results" filter; a failed source counts as no-results (6d19bca).
