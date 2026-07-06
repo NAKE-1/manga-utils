@@ -61,10 +61,14 @@ export function Detail() {
   const [dlFilter, setDlFilter] = useState<'all' | 'dl' | 'undl'>('all')
 
   useEffect(() => {
+    // Abort the detail fetch if you navigate away — the backend cancels the (possibly slow/failing)
+    // source call instead of letting it hang ~20s and tie up a thread after you've left.
+    const ac = new AbortController()
     setData(null); setError(null); setStateLoaded(false); setSrcKnown(null)
-    api.detail(sourceId, url).then(setData).catch((e) => setError(e instanceof Error ? e.message : "Couldn't load this manga."))
+    api.detail(sourceId, url, false, ac.signal).then(setData).catch((e) => { if (!ac.signal.aborted) setError(e instanceof Error ? e.message : "Couldn't load this manga.") })
     api.mangaState(sourceId, url).then((s) => { setState(s); setReadSet(new Set(s.read)) }).catch(() => {}).finally(() => setStateLoaded(true))
     api.sources().then((all) => { const s = all.find((x) => x.id === sourceId) ?? null; setSource(s); setSrcKnown(!!s) }).catch(() => {})
+    return () => ac.abort()
   }, [sourceId, url, tries])
 
   // Poll the download queue for live per-chapter progress; refetch detail when downloads finish.

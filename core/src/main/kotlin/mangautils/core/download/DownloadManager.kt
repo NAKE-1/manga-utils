@@ -232,7 +232,7 @@ class DownloadManager(
             listener?.onProgress(PageProgress(chapterName, sourceId, 0, total, 0, 0))
             pages
                 .map { page ->
-                    async(Dispatchers.IO) {
+                    async(mangautils.core.async.Pools.download) {
                         sem.withPermit {
                             val image = downloadPage(source, page)
                             val totalBytes = bytes.addAndGet(image.bytes.size.toLong())

@@ -95,6 +95,40 @@ object SourceBrowser {
         }
     }
 
+    // ---- Cancellable suspend variants -------------------------------------------------------------
+    // The server calls these directly inside its request coroutine (not runBlocking), so when the
+    // client disconnects/navigates away the coroutine is cancelled → the extension's suspend network
+    // call (awaitSuccess) cancels its OkHttp Call → the thread frees immediately instead of hanging
+    // out the 12-20s timeout. The blocking versions above stay for the synchronous CLI.
+
+    suspend fun searchAsync(sourceId: Long, query: String, page: Int = 1): MangasPage {
+        val source = catalogue(sourceId)
+        log.debug("search source={} query='{}' page={}", sourceId, query, page)
+        return source.getSearchManga(page, query, source.getFilterList())
+    }
+
+    suspend fun searchWithFiltersAsync(sourceId: Long, query: String, filters: FilterList, page: Int = 1): MangasPage {
+        val source = catalogue(sourceId)
+        return source.getSearchManga(page, query, filters)
+    }
+
+    suspend fun popularAsync(sourceId: Long, page: Int = 1): MangasPage =
+        catalogue(sourceId).getPopularManga(page)
+
+    suspend fun latestAsync(sourceId: Long, page: Int = 1): MangasPage =
+        catalogue(sourceId).getLatestUpdates(page)
+
+    suspend fun detailsAsync(sourceId: Long, url: String): MangaDetails {
+        val source = SourceManager.loadSource(sourceId) ?: error("Source $sourceId is not installed")
+        val seed = SManga.create().apply { this.url = url; title = url }
+        log.debug("details source={} url={}", sourceId, url)
+        val details = source.getMangaDetails(seed)
+        if (runCatching { details.url }.getOrNull().isNullOrBlank()) details.url = url
+        if (runCatching { details.title }.getOrNull().isNullOrBlank()) details.title = seed.title
+        val chapters = source.getChapterList(seed)
+        return MangaDetails(details, chapters)
+    }
+
     /** Human-readable status label for an [SManga.status] code. */
     fun statusLabel(status: Int): String =
         when (status) {

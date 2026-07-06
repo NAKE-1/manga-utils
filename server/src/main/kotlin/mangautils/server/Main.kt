@@ -544,11 +544,11 @@ fun Application.module() {
             call.respond(langs)
         }
 
-        get("/api/sources/{id}/popular") { browse(call, "popular") { id, page -> SourceBrowser.popular(id, page) } }
-        get("/api/sources/{id}/latest") { browse(call, "latest") { id, page -> SourceBrowser.latest(id, page) } }
+        get("/api/sources/{id}/popular") { browse(call, "popular") { id, page -> SourceBrowser.popularAsync(id, page) } }
+        get("/api/sources/{id}/latest") { browse(call, "latest") { id, page -> SourceBrowser.latestAsync(id, page) } }
         get("/api/sources/{id}/search") {
             val q = call.queryParam("q") ?: ""
-            browse(call, "search|$q") { id, page -> SourceBrowser.search(id, q, page) }
+            browse(call, "search|$q") { id, page -> SourceBrowser.searchAsync(id, q, page) }
         }
 
         get("/api/sources/{id}/manga") {
@@ -556,14 +556,14 @@ fun Application.module() {
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest, "missing url")
             val refresh = call.queryParam("refresh")?.toBoolean() == true
             val key = "$id|$url"
-            val detail = withContext(Dispatchers.IO) {
+            val detail = withContext(mangautils.core.async.Pools.source) {
                 if (!refresh) {
                     // Library entries serve from cache instantly (no network); else reuse a recent fetch.
                     LibraryStore.find(id, url)?.takeIf { it.knownChapters.isNotEmpty() }?.let { return@withContext Result.success(cachedDetail(it)) }
                     detailCache[key]?.let { return@withContext Result.success(it) }
                 }
                 runCatching {
-                    val d = SourceBrowser.details(id, url)
+                    val d = SourceBrowser.detailsAsync(id, url)
                     val mangaTitle = runCatching { d.manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: url
                     // A manual refresh of a followed manga updates its library snapshot (detects new chapters).
                     if (refresh && LibraryService.isFollowed(id, url)) {
@@ -1107,7 +1107,7 @@ fun Application.module() {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest)
             val title = call.queryParam("title")
-            val bytes = coverCache[url] ?: withContext(Dispatchers.IO) {
+            val bytes = coverCache[url] ?: withContext(mangautils.core.async.Pools.image) {
                 // Offline-first: a downloaded series' cover on disk wins over the source.
                 val raw = title?.let { t -> DownloadManager.localCover(t)?.let { p -> runCatching { java.nio.file.Files.readAllBytes(p) }.getOrNull() } }
                     ?: SourceImage.coverBytes(id, url)
@@ -1130,7 +1130,7 @@ fun Application.module() {
             // One line per preloaded chapter (on its first page) instead of one per page.
             if (call.request.headers["X-Preload"] != null && index == 0) log.info("PRELOAD  next chapter {}", chapter)
             var fromSource = false
-            val bytes = withContext(Dispatchers.IO) {
+            val bytes = withContext(mangautils.core.async.Pools.image) {
                 val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name) }.getOrNull() else null
                 if (local != null) {
                     local.bytes(index)
@@ -1168,14 +1168,16 @@ private fun io.ktor.server.application.ApplicationCall.querySourceId(): Long? = 
 private suspend fun browse(
     call: io.ktor.server.application.ApplicationCall,
     kind: String,
-    op: (Long, Int) -> eu.kanade.tachiyomi.source.model.MangasPage,
+    op: suspend (Long, Int) -> eu.kanade.tachiyomi.source.model.MangasPage,
 ) {
     val id = call.sourceId() ?: return call.respond(HttpStatusCode.BadRequest, "bad source id")
     val page = call.queryParam("page")?.toIntOrNull() ?: 1
     val key = "$id|$kind|$page"
     val now = System.currentTimeMillis()
     browseCache[key]?.let { (t, v) -> if (now - t < BROWSE_TTL_MS) return call.respond(v) }
-    val result = withContext(Dispatchers.IO) {
+    // Isolated source pool + cancellable op: if the client navigates away, this coroutine is
+    // cancelled and the extension's OkHttp call is cancelled with it (no 20s zombie thread).
+    val result = withContext(mangautils.core.async.Pools.source) {
         runCatching {
             val mp = op(id, page)
             PageResultDto(mp.mangas.map { it.toDto(id) }, mp.hasNextPage)

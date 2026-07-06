@@ -54,6 +54,7 @@ export function Search() {
   const [globalRows, setGlobalRows] = useState<GlobalRow[]>(searchCache?.globalRows ?? [])
   const sentinel = useRef<HTMLDivElement>(null)
   const busy = useRef(false)
+  const pageAbort = useRef<AbortController | null>(null)
   const cfTimer = useRef<number | undefined>(undefined)
   const didHydrate = useRef(!!searchCache) // skip the initial auto-fetch when restoring cached results
 
@@ -101,12 +102,15 @@ export function Search() {
   // ---- Single-source browse/search ----
   function fetchPage(p: number) {
     if (!sourceId || isGlobal || busy.current) return
+    pageAbort.current?.abort() // cancel any in-flight browse when source/query changes
+    const ac = new AbortController(); pageAbort.current = ac
     busy.current = true; setLoading(true); setErrorMsg(null)
-    const req = mode === 'search' ? api.search(sourceId, query, p) : mode === 'latest' ? api.latest(sourceId, p) : api.popular(sourceId, p)
+    const req = mode === 'search' ? api.search(sourceId, query, p, ac.signal) : mode === 'latest' ? api.latest(sourceId, p, ac.signal) : api.popular(sourceId, p, ac.signal)
     req.then((r) => {
       setItems((prev) => (p === 1 ? r.mangas : [...prev, ...r.mangas]))
       setHasNext(r.hasNextPage); setPage(p); setWarming(false); warmupRetries.current = 0
     }).catch((e) => {
+      if (ac.signal.aborted) return // intentional cancel (navigated / new query)
       const msg = e instanceof Error ? e.message : "Couldn't load results."
       // First hit on a WebView source can 502 while Chromium is still starting — show a "starting…"
       // state and auto-retry a few times rather than surfacing a scary error.
@@ -118,7 +122,7 @@ export function Search() {
       setWarming(false)
       if (p === 1) setErrorMsg(msg)
       else setHasNext(false) // next page failed (e.g. Madara sites 404 past the last page) — treat as end-of-list, stop paginating
-    }).finally(() => { busy.current = false; setLoading(false); refreshSourcesSoon() })
+    }).finally(() => { if (pageAbort.current === ac) { busy.current = false; setLoading(false) } refreshSourcesSoon() })
   }
 
   useEffect(() => {
@@ -142,16 +146,21 @@ export function Search() {
     if (didHydrate.current) { didHydrate.current = false; return } // restored — keep cached global rows
     const q = query.trim()
     if (!q || sources.length === 0) { setGlobalRows([]); return }
+    // Abort the whole fan-out when the query changes or you leave — a new global search shouldn't
+    // leave ~12 old source calls hanging server-side, and each abort cancels its backend source call.
+    const ac = new AbortController()
     setGlobalRows(sources.map((s) => ({ src: s, items: [], error: null, loading: true })))
     sources.forEach((s) => {
-      api.search(s.id, q, 1)
+      api.search(s.id, q, 1, ac.signal)
         .then((r) => setGlobalRows((prev) => prev.map((g) => (g.src.id === s.id ? { ...g, items: r.mangas, loading: false } : g))))
         .catch((e) => {
+          if (ac.signal.aborted) return
           const msg = e instanceof Error ? e.message : 'Unavailable'
           setGlobalRows((prev) => prev.map((g) => (g.src.id === s.id ? { ...g, error: msg, loading: false } : g)))
         })
         .finally(refreshSourcesSoon)
     })
+    return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the source SET, not its array identity
   }, [isGlobal, query, sourceKey])
 

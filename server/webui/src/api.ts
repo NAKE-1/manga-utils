@@ -72,11 +72,14 @@ export interface HistoryItem {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Fetch JSON with a timeout and a couple of retries (transient network / 5xx) for resilience.
-async function getJson<T>(url: string, retries = 2, timeoutMs = 15000): Promise<T> {
+async function getJson<T>(url: string, retries = 2, timeoutMs = 15000, signal?: AbortSignal): Promise<T> {
   let lastErr: Error = new Error('Request failed')
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError') // caller navigated away
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    const onExt = () => ctrl.abort() // external cancel (navigation) → abort this fetch, closing the socket
+    signal?.addEventListener('abort', onExt)
     try {
       const r = await fetch(url, { signal: ctrl.signal })
       if (r.ok) return (await r.json()) as T
@@ -88,12 +91,14 @@ async function getJson<T>(url: string, retries = 2, timeoutMs = 15000): Promise<
       if (r.status >= 500 && r.status !== 502 && attempt < retries) { await sleep(400 * (attempt + 1)); continue }
       throw lastErr
     } catch (e) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError') // intentional cancel — don't retry
       if (e === lastErr) throw e // a definitive HTTP error we already decided not to retry
       lastErr = ctrl.signal.aborted ? new Error('The request timed out.') : (e instanceof Error ? e : new Error('Network error'))
       if (attempt < retries) { await sleep(400 * (attempt + 1)); continue }
       throw lastErr
     } finally {
       clearTimeout(t)
+      signal?.removeEventListener('abort', onExt)
     }
   }
   throw lastErr
@@ -111,12 +116,12 @@ export const api = {
   updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }>),
   updateProgress: () => getJson<{ done: number; total: number; running: boolean }>('/api/library/update/progress'),
   history: () => getJson<HistoryItem[]>('/api/history'),
-  popular: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`),
-  latest: (id: string, page = 1) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`),
-  search: (id: string, q: string, page = 1) =>
-    getJson<PageResult>(`/api/sources/${id}/search?q=${encodeURIComponent(q)}&page=${page}`),
-  detail: (id: string, url: string, refresh = false) =>
-    getJson<Detail>(`/api/sources/${id}/manga?url=${encodeURIComponent(url)}${refresh ? '&refresh=true' : ''}`),
+  popular: (id: string, page = 1, signal?: AbortSignal) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`, 2, 15000, signal),
+  latest: (id: string, page = 1, signal?: AbortSignal) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`, 2, 15000, signal),
+  search: (id: string, q: string, page = 1, signal?: AbortSignal) =>
+    getJson<PageResult>(`/api/sources/${id}/search?q=${encodeURIComponent(q)}&page=${page}`, 2, 15000, signal),
+  detail: (id: string, url: string, refresh = false, signal?: AbortSignal) =>
+    getJson<Detail>(`/api/sources/${id}/manga?url=${encodeURIComponent(url)}${refresh ? '&refresh=true' : ''}`, 2, 15000, signal),
   mangaState: (id: string, url: string) =>
     getJson<MangaState>(`/api/manga/state?source=${id}&url=${encodeURIComponent(url)}`),
   addLibrary: (id: string, url: string) =>
