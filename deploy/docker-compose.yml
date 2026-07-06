@@ -14,7 +14,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: ghcr.io/OWNER/manga-utils:latest   # <- replace OWNER (lowercase) to pull the published image
+    image: nake1/manga-utils:latest           # published on Docker Hub — `docker compose pull` grabs it
     container_name: manga-utils
     hostname: manga-utils                      # stable so Chromium's profile-singleton lock matches across restarts
     ports:
