@@ -76,6 +76,10 @@ private fun applyFlareSolverr(s: mangautils.core.config.Settings) {
     c.session = s.flareSolverrSession
     c.sessionTtlMinutes = s.flareSolverrSessionTtlMinutes
     c.timeoutMs = s.flareSolverrTimeoutMs.toLong()
+    // MU_FLARESOLVERR_URL always wins — set it in compose (http://flaresolverr:8191) and the app is
+    // wired to the sibling container no matter what's in Settings or a restored backup. Also flips
+    // the bypass on when a URL is provided, so Docker "just works" with zero first-run config.
+    System.getenv("MU_FLARESOLVERR_URL")?.trim()?.takeIf { it.isNotBlank() }?.let { c.url = it; c.enabled = true }
 }
 
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
@@ -1107,7 +1111,7 @@ fun Application.module() {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest)
             val title = call.queryParam("title")
-            val bytes = coverCache[url] ?: withContext(mangautils.core.async.Pools.image) {
+            val bytes = coverCache[url] ?: withContext(mangautils.core.async.Pools.cover) {
                 // Offline-first: a downloaded series' cover on disk wins over the source.
                 val raw = title?.let { t -> DownloadManager.localCover(t)?.let { p -> runCatching { java.nio.file.Files.readAllBytes(p) }.getOrNull() } }
                     ?: SourceImage.coverBytes(id, url)

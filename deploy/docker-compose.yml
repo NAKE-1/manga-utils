@@ -3,9 +3,9 @@
 #   Build & run locally:   docker compose -f deploy/docker-compose.yml up -d --build
 #   Run a published image: set `image:` below, remove the `build:` block, then `up -d` (pull).
 #
-# First run: open http://<host>:8080 → Settings → set the FlareSolverr URL to
-#   http://flaresolverr:8191   (the sibling container; it persists in the /data volume).
-# The web UI is meant to be reached over Tailscale — expose it only where you trust the network.
+# FlareSolverr is auto-wired via MU_FLARESOLVERR_URL below — no first-run Settings step, and it
+# survives restoring a backup from another machine. The web UI is meant to be reached over
+# Tailscale — expose it only where you trust the network.
 
 services:
   manga-utils:
@@ -29,6 +29,7 @@ services:
     shm_size: "1gb"                            # Chromium (JCEF) needs a roomy /dev/shm
     environment:
       - MANGA_WEB_PORT=8080
+      - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
     depends_on:
       - flaresolverr
     restart: unless-stopped

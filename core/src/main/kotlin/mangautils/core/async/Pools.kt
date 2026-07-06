@@ -30,8 +30,13 @@ object Pools {
     /** Source browse / search / details. Cancellable calls run here (see SourceBrowser *Async). */
     val source: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(16)
 
-    /** Reader pages + covers — kept responsive even while source calls are hung. */
+    /** Reader page images. Kept separate from covers so a reader grinding through a slow/down source
+     *  (e.g. atsu.moe timing out every page) can't starve the library/Home cover grid. */
     val image: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(16)
+
+    /** Cover thumbnails (Home/library/search grids). Its own slice so covers always load promptly,
+     *  even while the reader pool is saturated on a dead source. */
+    val cover: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(8)
 
     /** Download page-fetches — their own slice so a big download doesn't fight interactive browsing. */
     val download: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(12)

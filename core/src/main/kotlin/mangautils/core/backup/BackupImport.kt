@@ -126,7 +126,11 @@ object BackupImport {
             }
         val backup = Backup(
             backupManga = manga,
-            settingsJson = if (sections.settings) json.encodeToString(SettingsStore.get()) else null,
+            // Export preferences, but blank the machine-specific bits so a backup restored on another
+            // box (or in Docker) doesn't drag over this host's FlareSolverr URL or download path.
+            settingsJson = if (sections.settings)
+                json.encodeToString(SettingsStore.get().copy(flareSolverrUrl = "http://localhost:8191", downloadDir = null))
+            else null,
             repoUrls = if (sections.repos) RepoStore.list() else emptyList(),
             extensionPkgs = if (sections.extensions) InstalledStore.list().map { it.pkg } else emptyList(),
         )
