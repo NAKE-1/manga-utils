@@ -5,6 +5,7 @@
  */
 package mangautils.core.source
 
+import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -14,7 +15,9 @@ import java.util.concurrent.ConcurrentHashMap
  * success closes the breaker, another failure re-opens it. Turns "a down source is annoying for a
  * minute" into "instant fail, then auto-recover when it's back".
  */
-class Circuit(private val threshold: Int, private val cooldownMs: Long) {
+class Circuit(private val name: String, private val threshold: Int, private val cooldownMs: Long) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     private class State {
         var fails = 0
         var openUntil = 0L
@@ -22,6 +25,7 @@ class Circuit(private val threshold: Int, private val cooldownMs: Long) {
     }
 
     private val states = ConcurrentHashMap<Long, State>()
+    private fun state(id: Long) = states.computeIfAbsent(id) { State() } // atomic — no race under concurrent fails
 
     /** True → skip the call and fail fast. Grants exactly one probe once the cooldown elapses. */
     fun isOpen(id: Long): Boolean {
@@ -32,29 +36,39 @@ class Circuit(private val threshold: Int, private val cooldownMs: Long) {
             // cooldown elapsed → half-open: let one probe through, fast-fail everyone else.
             if (s.probing) return true
             s.probing = true
+            log.info("circuit[{}] {} half-open — probing", name, id)
             return false
         }
     }
 
     fun recordSuccess(id: Long) {
-        states[id]?.let { s -> synchronized(s) { s.fails = 0; s.openUntil = 0L; s.probing = false } }
+        val s = states[id] ?: return
+        synchronized(s) {
+            val wasOpen = s.openUntil != 0L
+            s.fails = 0; s.openUntil = 0L; s.probing = false
+            if (wasOpen) log.info("circuit[{}] {} CLOSED — recovered", name, id)
+        }
     }
 
     fun recordFailure(id: Long) {
-        val s = states.getOrPut(id) { State() }
+        val s = state(id)
         synchronized(s) {
             s.fails++
             s.probing = false
-            if (s.fails >= threshold) s.openUntil = System.currentTimeMillis() + cooldownMs
+            if (s.fails >= threshold) {
+                val wasOpen = s.openUntil != 0L && System.currentTimeMillis() < s.openUntil
+                s.openUntil = System.currentTimeMillis() + cooldownMs // (re)arm so stragglers keep it open
+                if (!wasOpen) log.info("circuit[{}] {} OPEN after {} fails — fast-failing for {}s", name, id, s.fails, cooldownMs / 1000)
+            }
         }
     }
 }
 
 object SourceCircuits {
     /** Source API calls (search / browse / details): a down or blocked source (403 / timeout). */
-    val api = Circuit(threshold = 3, cooldownMs = 30_000)
+    val api = Circuit("api", threshold = 3, cooldownMs = 30_000)
 
-    /** Image fetches (pages / covers): a dead CDN like atsu.moe. Higher threshold (chapters have many
-     *  pages) and a shorter cooldown so it recovers quickly once the host is back. */
-    val images = Circuit(threshold = 5, cooldownMs = 20_000)
+    /** Image fetches (pages / covers): a dead CDN like atsu.moe. Trips at 3 so a whole chapter isn't
+     *  ground through; short cooldown so it recovers quickly once the host is back. */
+    val images = Circuit("images", threshold = 3, cooldownMs = 20_000)
 }
