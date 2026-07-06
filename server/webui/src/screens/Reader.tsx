@@ -35,20 +35,47 @@ function savePosition(key: string, frac: number) {
  * preferring the chapter being read, then the same scanlator, then the latest. Mirrors the desktop
  * dedupChapters so prev/next move one real chapter at a time. Keeps source order (newest-first).
  */
-/** One page in the strip — reserves height with a spinner until the image loads, then fades it in. */
-function ReaderPage({ src, sizing, loading, priority, index, onStatus }: { src: string; sizing: Sizing; loading: 'eager' | 'lazy'; priority?: 'high' | 'low'; index: number; onStatus?: (i: number, failed: boolean) => void }) {
+// Bounded concurrency for page-image fetches: the reader never uses more than IMG_MAX of the
+// browser's ~6 connections-per-origin, so API/cover requests to the same origin are never starved
+// while reading a slow/down source. Fetches go through this gate and are abortable.
+const IMG_MAX = 4
+let imgActive = 0
+const imgWaiters: Array<() => void> = []
+function imgAcquire(): Promise<void> {
+  if (imgActive < IMG_MAX) { imgActive++; return Promise.resolve() }
+  return new Promise((res) => imgWaiters.push(() => { imgActive++; res() }))
+}
+function imgRelease() { imgActive = Math.max(0, imgActive - 1); imgWaiters.shift()?.() }
+
+/** One page in the strip — fetches its image through the concurrency gate (abortable), reserving
+ *  height with a spinner until it decodes, then fades it in. */
+function ReaderPage({ src, sizing, index, onStatus }: { src: string; sizing: Sizing; index: number; onStatus?: (i: number, failed: boolean) => void }) {
   const [status, setStatus] = useState<'load' | 'ok' | 'err'>('load')
+  const [objUrl, setObjUrl] = useState<string | null>(null)
   const [bust, setBust] = useState(0)
-  const url = bust ? src + '&retry=' + bust : src
-  // Safety net: if a page never fires load OR error (stalled/truncated connection), don't spin forever —
-  // fail it after 25s so the reload button appears instead of an image that reloads endlessly.
   useEffect(() => {
-    if (status !== 'load') return
-    const t = setTimeout(() => { setStatus('err'); onStatus?.(index, true) }, 25000)
-    return () => clearTimeout(t)
-  }, [status, url, index, onStatus])
-  // No silent auto-retry: a page that fails shows a reload button; only a tap re-fetches it.
-  function retry(e: React.MouseEvent) { e.stopPropagation(); setStatus('load'); onStatus?.(index, false); setBust((b) => b + 1) }
+    const ac = new AbortController()
+    // Client-side ceiling in case a connection stalls with no response (server already caps at ~7s).
+    const kill = window.setTimeout(() => ac.abort(), 15000)
+    let created: string | null = null
+    setStatus('load'); setObjUrl(null)
+    ;(async () => {
+      await imgAcquire()
+      if (ac.signal.aborted) { imgRelease(); return }
+      try {
+        const r = await fetch(bust ? src + '&retry=' + bust : src, { signal: ac.signal })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        created = URL.createObjectURL(await r.blob())
+        setObjUrl(created); setStatus('ok'); onStatus?.(index, false)
+      } catch {
+        if (!ac.signal.aborted) { setStatus('err'); onStatus?.(index, true) }
+      } finally {
+        imgRelease()
+      }
+    })()
+    return () => { window.clearTimeout(kill); ac.abort(); if (created) URL.revokeObjectURL(created) }
+  }, [src, bust, index, onStatus])
+  function retry(e: React.MouseEvent) { e.stopPropagation(); onStatus?.(index, false); setBust((b) => b + 1) }
   return (
     <div className={'page-slot' + (status === 'ok' ? ' loaded' : '')}>
       {status === 'load' && <div className="spinner sm" />}
@@ -58,18 +85,9 @@ function ReaderPage({ src, sizing, loading, priority, index, onStatus }: { src: 
           <span>⚠ Page {index + 1} didn't load</span>
           <span className="page-fail-sub">Tap to reload</span>
         </button>
-      ) : (
-        <img
-          className={'page ' + sizing + (status === 'ok' ? ' loaded' : '')}
-          src={url}
-          alt=""
-          loading={loading}
-          fetchPriority={priority}
-          draggable={false}
-          onLoad={() => { setStatus('ok'); onStatus?.(index, false) }}
-          onError={() => { setStatus('err'); onStatus?.(index, true) }}
-        />
-      )}
+      ) : objUrl ? (
+        <img className={'page ' + sizing + ' loaded'} src={objUrl} alt="" draggable={false} />
+      ) : null}
     </div>
   )
 }
@@ -382,9 +400,7 @@ export function Reader() {
               // and freeze the app, esp. on a down source). This holds regardless of loadMode.
               const renderCeil = Math.max(renderMax, Math.max(preload, 3))
               if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
-              const eager = loadMode === 'eager' ? true : loadMode === 'lazy' ? false : i < Math.max(preload, 2)
-              const priority = loadMode !== 'lazy' && eager && i < preload ? 'high' : undefined
-              return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} loading={eager ? 'eager' : 'lazy'} priority={priority} onStatus={reportStatus} />
+              return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
             })}
           </div>
         )}
