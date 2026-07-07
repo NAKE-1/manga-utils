@@ -9,6 +9,9 @@ const fmtUptime = (ms: number) => {
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`
 }
 
+// DYNO (USB backup) is hidden until the portable-library work is ready. Flip to true to restore it.
+const SHOW_USB_BACKUP = false
+
 export function Settings() {
   const nav = useNavigate()
   const [info, setInfo] = useState<SettingsInfo | null>(null)
@@ -453,6 +456,8 @@ export function Settings() {
           )}
           <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />
         </div>
+        {/* DYNO Phase 0 (USB backup) — hidden for now; flip SHOW_USB_BACKUP to bring it back. */}
+        {SHOW_USB_BACKUP && (
         <div className="set-card">
           <div className="set-row-label">Back up to USB</div>
           <div className="set-hint">Writes a full metadata backup (library + read/bookmarks) plus a copy of every downloaded chapter to a mounted drive. Additive — it never deletes anything on the drive, and skips files already copied. On the server this is a bind-mounted USB path (default <code>/dyno</code>).</div>
@@ -470,6 +475,7 @@ export function Settings() {
             {!usbJob?.running && usbMsg && <span className={'set-msg' + (usbMsg.err ? ' err' : '')}>{usbMsg.text}</span>}
           </div>
         </div>
+        )}
       </section>
 
       <section className="set-section">
