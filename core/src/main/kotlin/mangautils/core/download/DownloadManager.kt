@@ -133,7 +133,7 @@ class DownloadManager(
 
             var anySuccess = false
             for (chapter in targets) {
-                if (cancelled()) { log.info("download stopped — {} finished, remaining skipped", job.attempts.count { it.outcome == "ok" }); break }
+                if (cancelled()) { log.info("download stopped - {} finished, remaining skipped", job.attempts.count { it.outcome == "ok" }); break }
                 val candidates =
                     buildList {
                         add(Candidate(primary.sourceId, primarySource, chapter))

@@ -130,8 +130,8 @@ object DownloadQueue {
                     val now = System.currentTimeMillis()
                     if (p.finished || p.pagesDone <= 1 || now - task.lastLogAt > 800) {
                         task.lastLogAt = now
-                        val speed = if (p.bytesPerSecond > 0) " · ${(p.bytesPerSecond / 1024).toInt()} KB/s" else ""
-                        log.info("DOWNLOAD {} · {}/{} pages{}", p.chapter, p.pagesDone, p.pagesTotal, speed)
+                        val speed = if (p.bytesPerSecond > 0) " - ${(p.bytesPerSecond / 1024).toInt()} KB/s" else ""
+                        log.info("DOWNLOAD {} - {}/{} pages{}", p.chapter, p.pagesDone, p.pagesTotal, speed)
                     }
                 },
             )

@@ -214,6 +214,7 @@ private data class SettingsDto(
     val flareSolverrSession: String,
     val flareSolverrSessionTtlMinutes: Int,
     val flareSolverrTimeoutMs: Int,
+    val usbBackupDir: String,
 )
 
 @Serializable
@@ -232,6 +233,7 @@ private data class SettingsPatch(
     val flareSolverrSession: String? = null,
     val flareSolverrSessionTtlMinutes: Int? = null,
     val flareSolverrTimeoutMs: Int? = null,
+    val usbBackupDir: String? = null,
 )
 
 @Serializable
@@ -264,11 +266,29 @@ private data class BackupPreviewItemDto(val title: String, val source: String, v
 @Serializable
 private data class BackupPreviewDto(val total: Int, val manga: List<BackupPreviewItemDto>, val hasSettings: Boolean = false, val repos: Int = 0, val extensions: Int = 0)
 
+@Serializable
+private data class BackupJobDto(
+    val running: Boolean, val state: String, val phase: String,
+    val filesDone: Int, val filesTotal: Int, val bytesCopied: Long,
+    val blobName: String, val filesSkipped: Int, val error: String, val target: String,
+)
+
+/** Where the "Back up to USB" action writes: Settings.usbBackupDir → MU_DYNO_DIR env → /dyno default. */
+private fun dynoTarget(): java.nio.file.Path {
+    val configured = SettingsStore.get().usbBackupDir.ifBlank { System.getenv("MU_DYNO_DIR").orEmpty() }
+    return java.nio.file.Path.of(configured.ifBlank { "/dyno" })
+}
+
+private fun backupJobDto(t: BackupJob.Task?) =
+    if (t == null) BackupJobDto(false, "idle", "", 0, 0, 0, "", 0, "", dynoTarget().toString())
+    else BackupJobDto(t.active, t.state, t.phase, t.filesDone, t.filesTotal, t.bytesCopied, t.blobName, t.filesSkipped, t.error, t.target)
+
 private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoDownloadNew,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
+    s.usbBackupDir,
 )
 
 @Serializable
@@ -499,7 +519,7 @@ fun Application.module() {
         filter { call ->
             val p = call.request.path()
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
-            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
+            !(p == "/api/downloads" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -881,6 +901,7 @@ fun Application.module() {
             body.flareSolverrSession?.let { s = s.copy(flareSolverrSession = it.trim()) }
             body.flareSolverrSessionTtlMinutes?.let { s = s.copy(flareSolverrSessionTtlMinutes = it.coerceIn(1, 1440)) }
             body.flareSolverrTimeoutMs?.let { s = s.copy(flareSolverrTimeoutMs = it.coerceIn(10000, 180000)) }
+            body.usbBackupDir?.let { s = s.copy(usbBackupDir = it.trim()) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
@@ -937,6 +958,16 @@ fun Application.module() {
             call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils.tachibk\"")
             call.respondBytes(bytes, ContentType.parse("application/gzip"))
         }
+        // ---- DYNO Phase 0: back up (metadata blob + downloaded chapters) to a mounted USB drive ----
+        post("/api/dyno/backup-now") {
+            val target = dynoTarget()
+            if (!java.nio.file.Files.isDirectory(target)) {
+                return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("USB drive not mounted at $target"))
+            }
+            val t = BackupJob.start(target)
+            call.respond(HttpStatusCode.Accepted, backupJobDto(t))
+        }
+        get("/api/dyno/backup/progress") { call.respond(backupJobDto(BackupJob.snapshot())) }
         // Recent FlareSolverr solve events, so the web UI can toast "solving / solved".
         get("/api/flaresolverr/events") {
             val cfg = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig

@@ -36,7 +36,7 @@ class Circuit(private val name: String, private val threshold: Int, private val 
             // cooldown elapsed → half-open: let one probe through, fast-fail everyone else.
             if (s.probing) return true
             s.probing = true
-            log.info("circuit[{}] {} half-open — probing", name, id)
+            log.info("circuit[{}] {} half-open - probing", name, id)
             return false
         }
     }
@@ -46,7 +46,7 @@ class Circuit(private val name: String, private val threshold: Int, private val 
         synchronized(s) {
             val wasOpen = s.openUntil != 0L
             s.fails = 0; s.openUntil = 0L; s.probing = false
-            if (wasOpen) log.info("circuit[{}] {} CLOSED — recovered", name, id)
+            if (wasOpen) log.info("circuit[{}] {} CLOSED - recovered", name, id)
         }
     }
 
@@ -58,7 +58,7 @@ class Circuit(private val name: String, private val threshold: Int, private val 
             if (s.fails >= threshold) {
                 val wasOpen = s.openUntil != 0L && System.currentTimeMillis() < s.openUntil
                 s.openUntil = System.currentTimeMillis() + cooldownMs // (re)arm so stragglers keep it open
-                if (!wasOpen) log.info("circuit[{}] {} OPEN after {} fails — fast-failing for {}s", name, id, s.fails, cooldownMs / 1000)
+                if (!wasOpen) log.info("circuit[{}] {} OPEN after {} fails - fast-failing for {}s", name, id, s.fails, cooldownMs / 1000)
             }
         }
     }

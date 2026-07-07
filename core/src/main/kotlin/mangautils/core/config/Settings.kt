@@ -89,4 +89,8 @@ data class Settings(
     val flareSolverrSessionTtlMinutes: Int = 15,
     /** Max time to allow FlareSolverr for a single solve, in milliseconds. */
     val flareSolverrTimeoutMs: Int = 60000,
+    // ---- USB backup (DYNO Phase 0) ----
+    /** Where the "Back up to USB" action writes (a mounted/bind-mounted drive path).
+     *  Blank = use the `MU_DYNO_DIR` env var, else the default `/dyno`. */
+    val usbBackupDir: String = "",
 )
