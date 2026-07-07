@@ -59,6 +59,19 @@ object HistoryStore {
 
     fun list(): List<HistoryEntry> = load()
 
+    /** Merge imported history with existing (dedup per chapter, newest readAt wins), capped at MAX. */
+    @Synchronized
+    fun restore(entries: List<HistoryEntry>) {
+        if (entries.isEmpty()) return
+        val merged = (load() + entries)
+            .groupBy { it.mangaUrl to it.chapterUrl }
+            .map { (_, g) -> g.maxByOrNull { it.readAt }!! }
+            .sortedByDescending { it.readAt }
+            .take(MAX)
+            .toMutableList()
+        save(merged)
+    }
+
     /** Remove every history entry for one manga (e.g. "remove from Continue reading"). */
     @Synchronized
     fun remove(sourceId: Long, mangaUrl: String) {

@@ -156,7 +156,7 @@ export const api = {
   importBackup: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/import', { method: 'POST', body: data })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Import failed')
-    return r.json() as Promise<{ imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number }>
+    return r.json() as Promise<{ imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number; historyRestored?: number }>
   },
   saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoDownloadNew: boolean; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })

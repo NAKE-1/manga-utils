@@ -22,6 +22,8 @@ import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.InstalledStore
 import mangautils.core.extension.RepoStore
 import mangautils.core.library.BookmarkStore
+import mangautils.core.library.HistoryEntry
+import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
 import mangautils.core.library.ReadStore
@@ -61,6 +63,7 @@ object BackupImport {
         val reposAdded: Int = 0,
         val extensionsInstalled: Int = 0,
         val extensionsFailed: Int = 0,
+        val historyRestored: Int = 0,
     )
 
     data class PreviewItem(val title: String, val source: Long, val chapters: Int, val read: Int, val inLibrary: Boolean)
@@ -133,6 +136,8 @@ object BackupImport {
             else null,
             repoUrls = if (sections.repos) RepoStore.list() else emptyList(),
             extensionPkgs = if (sections.extensions) InstalledStore.list().map { it.pkg } else emptyList(),
+            // Continue-reading history rides with the library section (it's reading progress).
+            historyJson = if (sections.library) json.encodeToString(HistoryStore.list()) else null,
         )
         val raw = ProtoBuf.encodeToByteArray(backup)
         val out = ByteArrayOutputStream()
@@ -186,6 +191,14 @@ object BackupImport {
                 .onSuccess { settingsRestored = true }
                 .onFailure { log.warn("backup: failed to restore settings: {}", it.message) }
         }
+        var historyRestored = 0
+        if (!backup.historyJson.isNullOrBlank()) {
+            runCatching {
+                val entries = json.decodeFromString<List<HistoryEntry>>(backup.historyJson)
+                HistoryStore.restore(entries)
+                historyRestored = entries.size
+            }.onFailure { log.warn("backup: failed to restore history: {}", it.message) }
+        }
         val reposAdded = backup.repoUrls.count { runCatching { RepoStore.add(it) }.getOrDefault(false) }
 
         var extInstalled = 0
@@ -201,10 +214,10 @@ object BackupImport {
         }
 
         log.info(
-            "backup import: {} manga imported, {} skipped; settings={}, repos+{}, extensions +{}/{}",
-            imported, skipped, settingsRestored, reposAdded, extInstalled, extFailed,
+            "backup import: {} manga imported, {} skipped; settings={}, history+{}, repos+{}, extensions +{}/{}",
+            imported, skipped, settingsRestored, historyRestored, reposAdded, extInstalled, extFailed,
         )
-        return Result(imported, skipped, favorites.size, settingsRestored, reposAdded, extInstalled, extFailed)
+        return Result(imported, skipped, favorites.size, settingsRestored, reposAdded, extInstalled, extFailed, historyRestored)
     }
 
     // ---- Minimal protobuf schema (Mihon field numbers) --------------------------------------------
@@ -216,6 +229,7 @@ object BackupImport {
         @ProtoNumber(900) val settingsJson: String? = null,
         @ProtoNumber(901) val repoUrls: List<String> = emptyList(),
         @ProtoNumber(902) val extensionPkgs: List<String> = emptyList(),
+        @ProtoNumber(903) val historyJson: String? = null, // continue-reading history (manga-utils native)
     )
 
     @Serializable

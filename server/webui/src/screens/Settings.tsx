@@ -99,6 +99,7 @@ export function Settings() {
       const r = await api.importBackup(pendingBackup.current)
       const extras = [
         r.settingsRestored ? 'settings' : '',
+        r.historyRestored ? `${r.historyRestored} history` : '',
         r.reposAdded ? `${r.reposAdded} repo${r.reposAdded === 1 ? '' : 's'}` : '',
         r.extensionsInstalled ? `${r.extensionsInstalled} extension${r.extensionsInstalled === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join(' · ')
@@ -403,7 +404,7 @@ export function Settings() {
           {exportOpen && (
             <div className="backup-preview">
               <div className="set-row-label">Export — choose what to include</div>
-              {([['library', 'Library (manga, read & bookmarks)'], ['settings', 'App settings'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
+              {([['library', 'Library (manga, read, bookmarks & continue-reading history)'], ['settings', 'App settings'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
                 <label key={k} className="pref-check">
                   <input type="checkbox" checked={!!exportSel[k]} onChange={(e) => setExportSel((s) => ({ ...s, [k]: e.target.checked }))} />
                   <span>{label}</span>

@@ -258,7 +258,7 @@ private data class FlareEventDto(val id: Long, val host: String, val phase: Stri
 private data class FlareEventsDto(val lastId: Long, val events: List<FlareEventDto>)
 
 @Serializable
-private data class BackupResultDto(val imported: Int, val skipped: Int, val total: Int, val settingsRestored: Boolean = false, val reposAdded: Int = 0, val extensionsInstalled: Int = 0, val extensionsFailed: Int = 0)
+private data class BackupResultDto(val imported: Int, val skipped: Int, val total: Int, val settingsRestored: Boolean = false, val reposAdded: Int = 0, val extensionsInstalled: Int = 0, val extensionsFailed: Int = 0, val historyRestored: Int = 0)
 
 @Serializable
 private data class BackupPreviewItemDto(val title: String, val source: String, val chapters: Int, val read: Int, val inLibrary: Boolean)
@@ -937,7 +937,7 @@ fun Application.module() {
             val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
             val r = withContext(Dispatchers.IO) { runCatching { mangautils.core.backup.BackupImport.import(bytes) } }
             r.fold(
-                onSuccess = { call.respond(BackupResultDto(it.imported, it.skipped, it.total, it.settingsRestored, it.reposAdded, it.extensionsInstalled, it.extensionsFailed)) },
+                onSuccess = { call.respond(BackupResultDto(it.imported, it.skipped, it.total, it.settingsRestored, it.reposAdded, it.extensionsInstalled, it.extensionsFailed, it.historyRestored)) },
                 onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup — is it a Mihon/Tachiyomi .tachibk? (${it.message})")) },
             )
         }
