@@ -9,8 +9,22 @@ const fmtUptime = (ms: number) => {
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`
 }
 
+// Settings is a tap-into-category screen (like the desktop's tabs): the landing lists categories,
+// tapping one shows just that category's controls with a back button.
+const CATS: { id: string; label: string; hint: string }[] = [
+  { id: 'downloads', label: 'Downloads', hint: 'Folder, format, parallelism, manage' },
+  { id: 'sources', label: 'Sources & languages', hint: 'Languages, extensions & repos' },
+  { id: 'reading', label: 'Reading', hint: 'History & new-chapter badges' },
+  { id: 'updates', label: 'Automatic updates', hint: 'Background checks, auto-download' },
+  { id: 'backup', label: 'Backup', hint: 'Restore, export, back up to USB' },
+  { id: 'network', label: 'Network', hint: 'Cloudflare bypass, speed tests' },
+  { id: 'system', label: 'System & about', hint: 'Source health, server status, version' },
+  { id: 'developer', label: 'Developer', hint: 'Test tools' },
+]
+
 export function Settings() {
   const nav = useNavigate()
+  const [cat, setCat] = useState<string | null>(null)
   const [info, setInfo] = useState<SettingsInfo | null>(null)
   const [dir, setDir] = useState('')
   const [savingDir, setSavingDir] = useState(false)
@@ -170,8 +184,9 @@ export function Settings() {
     else setSimMsg(`${r.title}: ${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'}${r.autoDownloaded ? ' · auto-downloading' : ''}`)
   }
 
-  // Live server stats — poll while the Settings page is open.
+  // Live server stats — poll while the System category is open.
   useEffect(() => {
+    if (cat !== 'system') return
     let alive = true
     const tick = () => {
       if (document.hidden) return // don't poll a backgrounded tab
@@ -181,7 +196,7 @@ export function Settings() {
     tick()
     const t = setInterval(tick, 6000) // was 2s — that buried the server log in /api/sources spam
     return () => { alive = false; clearInterval(t) }
-  }, [])
+  }, [cat])
 
   async function toggleLang(code: string) {
     if (!info) return
@@ -265,369 +280,393 @@ export function Settings() {
     setDiagRunning(false)
   }
 
+  // ---- Landing: the category list -------------------------------------------------------------
+  if (cat === null) {
+    return (
+      <div className="settings">
+        <h2 className="set-h">Settings</h2>
+        <div className="set-catlist">
+          {CATS.map((c) => (
+            <button key={c.id} className="set-cat" onClick={() => setCat(c.id)}>
+              <div className="set-cat-text">
+                <div className="set-cat-label">{c.label}</div>
+                <div className="set-cat-hint">{c.hint}</div>
+              </div>
+              <span className="set-cat-chev">›</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // ---- A category's controls ------------------------------------------------------------------
   return (
     <div className="settings">
-      <h2 className="set-h">Settings</h2>
+      <button className="set-back" onClick={() => setCat(null)}>‹ Settings</button>
+      <h2 className="set-h">{CATS.find((c) => c.id === cat)?.label}</h2>
 
-      <section className="set-section">
-        <div className="set-section-h">Downloads</div>
-        <div className="set-card">
-          <div className="set-row-label">Download folder</div>
-          <div className="set-hint">Where chapters and covers are saved on the server. Leave blank for the default.</div>
-          <input className="set-input" value={dir} onChange={(e) => setDir(e.target.value)} placeholder={info?.effectiveDownloadDir || 'default'} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
-          <div className="set-actions">
-            <button className="btn primary" disabled={savingDir} onClick={saveDir}>{savingDir ? 'Saving…' : 'Save'}</button>
-            {dirMsg && <span className={'set-msg' + (dirMsg.err ? ' err' : '')}>{dirMsg.text}</span>}
-          </div>
-          <div className="set-kv"><span>Saving to</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
-        </div>
-        <div className="set-card">
-          <button className="set-toggle" onClick={toggleCbz}>
-            <div>
-              <div className="set-row-label">Save as CBZ</div>
-              <div className="set-hint">Off = a folder of page images.</div>
+      {cat === 'downloads' && (
+        <section className="set-section">
+          <div className="set-card">
+            <div className="set-row-label">Download folder</div>
+            <div className="set-hint">Where chapters and covers are saved on the server. Leave blank for the default.</div>
+            <input className="set-input" value={dir} onChange={(e) => setDir(e.target.value)} placeholder={info?.effectiveDownloadDir || 'default'} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+            <div className="set-actions">
+              <button className="btn primary" disabled={savingDir} onClick={saveDir}>{savingDir ? 'Saving…' : 'Save'}</button>
+              {dirMsg && <span className={'set-msg' + (dirMsg.err ? ' err' : '')}>{dirMsg.text}</span>}
             </div>
-            <span className={'switch' + (info?.downloadAsCbz ? ' on' : '')}><span className="knob" /></span>
-          </button>
-        </div>
-        <div className="set-card">
-          <div className="set-row-label">Parallel downloads</div>
-          <div className="set-hint">How many manga download at once (across different sources). Higher = faster.</div>
-          <div className="stepper">
-            <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) <= 1} onClick={() => setParallel((info?.parallelDownloads ?? 3) - 1)}>−</button>
-            <span className="step-val">{info?.parallelDownloads ?? 3}</span>
-            <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) >= 8} onClick={() => setParallel((info?.parallelDownloads ?? 3) + 1)}>+</button>
+            <div className="set-kv"><span>Saving to</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
           </div>
-        </div>
-        <div className="set-card">
-          <div className="set-row-label">Downloaded content</div>
-          <div className="set-hint">Browse what's on disk per series, delete chapters to re-download, or mark a series unread.</div>
-          <div className="set-actions"><button className="btn primary" onClick={() => nav('/downloads/manage')}>Manage downloads</button></div>
-        </div>
-        <div className="set-card">
-          <button className="set-toggle" onClick={togglePerSource}>
-            <div>
-              <div className="set-row-label">Allow same-source parallel</div>
-              <div className="set-hint">Off (default) = one manga per source at a time — gentler, fewer failures. On = multiple from the same source at once.</div>
-            </div>
-            <span className={'switch' + (info?.perSourceParallel ? ' on' : '')}><span className="knob" /></span>
-          </button>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-h">Sources</div>
-        <div className="set-card">
-          <div className="set-row-label">Source languages</div>
-          <div className="set-hint">Show sources in these languages. None selected = all.</div>
-          <div className="lang-chips">
-            {languages.map((code) => (
-              <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-h">Reading</div>
-        <div className="set-card">
-          <div className="set-row-label">Continue reading</div>
-          <div className="set-hint">Clear the “Continue reading” row (your reading history). Library and downloads are unaffected.</div>
-          <div className="set-actions">
-            <button className="btn danger" disabled={clearing} onClick={clearContinue}>{clearing ? 'Clearing…' : 'Clear continue reading'}</button>
-            {clearMsg && <span className="set-msg">{clearMsg}</span>}
-          </div>
-          <div className="set-actions">
-            <button className="btn" disabled={clearingNew} onClick={clearNewBadges}>{clearingNew ? 'Clearing…' : 'Clear new-chapter badges'}</button>
-            {clearNewMsg && <span className="set-msg">{clearNewMsg}</span>}
-          </div>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-h">Automatic updates</div>
-        <div className="set-card">
-          <button className="set-toggle" onClick={toggleAutoUpdate}>
-            <div>
-              <div className="set-row-label">Check for updates automatically</div>
-              <div className="set-hint">Periodically scan your whole library for new chapters in the background.</div>
-            </div>
-            <span className={'switch' + (info?.autoUpdate ? ' on' : '')}><span className="knob" /></span>
-          </button>
-          {info?.autoUpdate && (
-            <div className="set-inline">
-              <span className="set-row-label">Every</span>
-              <div className="stepper">
-                <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) <= 1} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) - 1)}>−</button>
-                <span className="step-val">{info?.autoUpdateHours ?? 12}h</span>
-                <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) >= 168} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) + 1)}>+</button>
+          <div className="set-card">
+            <button className="set-toggle" onClick={toggleCbz}>
+              <div>
+                <div className="set-row-label">Save as CBZ</div>
+                <div className="set-hint">Off = a folder of page images.</div>
               </div>
-            </div>
-          )}
-        </div>
-        <div className="set-card">
-          <button className="set-toggle" onClick={toggleAutoDownload}>
-            <div>
-              <div className="set-row-label">Auto-download new chapters</div>
-              <div className="set-hint">When an update finds new chapters (scheduled or manual), queue them for download automatically.</div>
-            </div>
-            <span className={'switch' + (info?.autoDownloadNew ? ' on' : '')}><span className="knob" /></span>
-          </button>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-h">Backup</div>
-        <div className="set-card">
-          <div className="set-row-label">Backup &amp; restore</div>
-          <div className="set-hint">Import a Mihon / Tachiyomi .tachibk / .proto.gz — you’ll see a preview first and nothing changes until you confirm. Export writes your current library to a .tachibk you can re-import (great for testing round-trips). Install the matching source extensions to actually read imported manga.</div>
-          <div className="set-actions">
-            <button className="btn primary" disabled={importing} onClick={() => backupInput.current?.click()}>{importing && !preview ? 'Reading…' : 'Choose backup to restore'}</button>
-            <button className="btn" onClick={() => setExportOpen(true)}>Export…</button>
-            {importMsg && <span className={'set-msg' + (importMsg.err ? ' err' : '')}>{importMsg.text}</span>}
+              <span className={'switch' + (info?.downloadAsCbz ? ' on' : '')}><span className="knob" /></span>
+            </button>
           </div>
-          {exportOpen && (
-            <div className="backup-preview">
-              <div className="set-row-label">Export — choose what to include</div>
-              {([['library', 'Library (manga, read & bookmarks)'], ['settings', 'App settings'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
-                <label key={k} className="pref-check">
-                  <input type="checkbox" checked={!!exportSel[k]} onChange={(e) => setExportSel((s) => ({ ...s, [k]: e.target.checked }))} />
-                  <span>{label}</span>
-                </label>
+          <div className="set-card">
+            <div className="set-row-label">Parallel downloads</div>
+            <div className="set-hint">How many manga download at once (across different sources). Higher = faster.</div>
+            <div className="stepper">
+              <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) <= 1} onClick={() => setParallel((info?.parallelDownloads ?? 3) - 1)}>−</button>
+              <span className="step-val">{info?.parallelDownloads ?? 3}</span>
+              <button className="step-btn" disabled={(info?.parallelDownloads ?? 3) >= 8} onClick={() => setParallel((info?.parallelDownloads ?? 3) + 1)}>+</button>
+            </div>
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Downloaded content</div>
+            <div className="set-hint">Browse what's on disk per series, delete chapters to re-download, or mark a series unread.</div>
+            <div className="set-actions"><button className="btn primary" onClick={() => nav('/downloads/manage')}>Manage downloads</button></div>
+          </div>
+          <div className="set-card">
+            <button className="set-toggle" onClick={togglePerSource}>
+              <div>
+                <div className="set-row-label">Allow same-source parallel</div>
+                <div className="set-hint">Off (default) = one manga per source at a time — gentler, fewer failures. On = multiple from the same source at once.</div>
+              </div>
+              <span className={'switch' + (info?.perSourceParallel ? ' on' : '')}><span className="knob" /></span>
+            </button>
+          </div>
+        </section>
+      )}
+
+      {cat === 'sources' && (
+        <section className="set-section">
+          <div className="set-card">
+            <div className="set-row-label">Source languages</div>
+            <div className="set-hint">Show sources in these languages. None selected = all.</div>
+            <div className="lang-chips">
+              {languages.map((code) => (
+                <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
               ))}
-              <div className="set-actions">
-                <button className="btn primary" disabled={!Object.values(exportSel).some(Boolean)} onClick={runExport}>Export</button>
-                <button className="btn" onClick={() => setExportOpen(false)}>Cancel</button>
-              </div>
             </div>
-          )}
-          {preview && (
-            <div className="backup-preview">
-              <div className="set-row-label">Preview · {preview.total} manga {preview.total === 0 && '(nothing to import)'}</div>
-              {preview.total > 0 && (
-                <div className="backup-list">
-                  {preview.manga.slice(0, 60).map((m, i) => (
-                    <div key={i} className="backup-item">
-                      <span className="backup-title">{m.title}</span>
-                      <span className="backup-meta">{m.chapters} ch · {m.read} read{m.inLibrary ? ' · already in library' : ''}</span>
-                    </div>
-                  ))}
-                  {preview.total > 60 && <div className="set-hint">…and {preview.total - 60} more</div>}
-                </div>
-              )}
-              {(preview.hasSettings || !!preview.repos || !!preview.extensions) && (
-                <div className="set-hint">
-                  Also in this backup (applied on import):
-                  {preview.hasSettings && <> · <b>app settings</b> (overwrites yours)</>}
-                  {!!preview.repos && <> · <b>{preview.repos} repo{preview.repos === 1 ? '' : 's'}</b> (added)</>}
-                  {!!preview.extensions && <> · <b>{preview.extensions} extension{preview.extensions === 1 ? '' : 's'}</b> (reinstalled if missing)</>}
-                </div>
-              )}
-              <div className="set-actions">
-                <button className="btn primary" disabled={importing || (preview.total === 0 && !preview.hasSettings && !preview.repos && !preview.extensions)} onClick={doImport}>{importing ? 'Importing…' : preview.total > 0 ? `Import ${preview.total} manga` : 'Restore'}</button>
-                <button className="btn" onClick={cancelImport}>Cancel</button>
-              </div>
-            </div>
-          )}
-          <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />
-        </div>
-        <div className="set-card">
-          <div className="set-row-label">Back up to USB</div>
-          <div className="set-hint">Writes a full metadata backup (library + read/bookmarks) plus a copy of every downloaded chapter to a mounted drive. Additive — it never deletes anything on the drive, and skips files already copied. On the server this is a bind-mounted USB path (default <code>/dyno</code>).</div>
-          <div className="set-actions">
-            <input className="set-input" placeholder="/dyno" value={usbDir} onChange={(e) => setUsbDir(e.target.value)} onBlur={saveUsbDir} />
           </div>
-          <div className="set-hint">Blank = use the <code>MU_DYNO_DIR</code> env var, else <code>/dyno</code>.</div>
-          <div className="set-actions">
-            <button className="btn primary" disabled={!!usbJob?.running} onClick={startUsbBackup}>{usbJob?.running ? 'Backing up…' : 'Back up to USB'}</button>
-            {usbJob?.running && (
-              <span className="set-msg">
-                {usbJob.phase === 'EXPORTING' ? 'Exporting backup…' : usbJob.phase === 'COPYING' ? `Copying ${usbJob.filesDone}/${usbJob.filesTotal}` : 'Preparing…'}
-              </span>
+          <div className="set-card">
+            <div className="set-row-label">Extensions &amp; repositories</div>
+            <div className="set-hint">Install, update or remove extensions and manage repos.</div>
+            <div className="set-actions"><button className="btn primary" onClick={() => nav('/extensions')}>Open manager</button></div>
+          </div>
+        </section>
+      )}
+
+      {cat === 'reading' && (
+        <section className="set-section">
+          <div className="set-card">
+            <div className="set-row-label">Continue reading</div>
+            <div className="set-hint">Clear the “Continue reading” row (your reading history). Library and downloads are unaffected.</div>
+            <div className="set-actions">
+              <button className="btn danger" disabled={clearing} onClick={clearContinue}>{clearing ? 'Clearing…' : 'Clear continue reading'}</button>
+              {clearMsg && <span className="set-msg">{clearMsg}</span>}
+            </div>
+            <div className="set-actions">
+              <button className="btn" disabled={clearingNew} onClick={clearNewBadges}>{clearingNew ? 'Clearing…' : 'Clear new-chapter badges'}</button>
+              {clearNewMsg && <span className="set-msg">{clearNewMsg}</span>}
+            </div>
+          </div>
+          <div className="set-card">
+            <button className="set-toggle" onClick={toggleDevContinueRemove}>
+              <div>
+                <div className="set-row-label">Continue-reading remove buttons</div>
+                <div className="set-hint">Show a ✕ on each Continue-reading card to remove it individually.</div>
+              </div>
+              <span className={'switch' + (devContinueRemove ? ' on' : '')}><span className="knob" /></span>
+            </button>
+          </div>
+        </section>
+      )}
+
+      {cat === 'updates' && (
+        <section className="set-section">
+          <div className="set-card">
+            <button className="set-toggle" onClick={toggleAutoUpdate}>
+              <div>
+                <div className="set-row-label">Check for updates automatically</div>
+                <div className="set-hint">Periodically scan your whole library for new chapters in the background.</div>
+              </div>
+              <span className={'switch' + (info?.autoUpdate ? ' on' : '')}><span className="knob" /></span>
+            </button>
+            {info?.autoUpdate && (
+              <div className="set-inline">
+                <span className="set-row-label">Every</span>
+                <div className="stepper">
+                  <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) <= 1} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) - 1)}>−</button>
+                  <span className="step-val">{info?.autoUpdateHours ?? 12}h</span>
+                  <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) >= 168} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) + 1)}>+</button>
+                </div>
+              </div>
             )}
-            {!usbJob?.running && usbMsg && <span className={'set-msg' + (usbMsg.err ? ' err' : '')}>{usbMsg.text}</span>}
           </div>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-h">Cloudflare bypass</div>
-        <div className="set-card">
-          <button className="set-toggle" onClick={toggleFlareSolverr}>
-            <div>
-              <div className="set-row-label">Use FlareSolverr</div>
-              <div className="set-hint">Solve Cloudflare challenges via a running FlareSolverr instance so protected sources work. Helps genuine CF challenges only — not a source outage.</div>
-            </div>
-            <span className={'switch' + (info?.flareSolverrEnabled ? ' on' : '')}><span className="knob" /></span>
-          </button>
-        </div>
-        <div className="set-card">
-          <div className="set-row-label">FlareSolverr URL</div>
-          <div className="set-hint">Where FlareSolverr is running (its /v1 endpoint is appended).</div>
-          <input className="set-input" value={fsUrl} onChange={(e) => setFsUrl(e.target.value)} onBlur={saveFsUrl} placeholder="http://localhost:8191" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
-          <div className="set-actions">
-            <button className="btn" disabled={fsTesting} onClick={testFs}>{fsTesting ? 'Testing…' : 'Test connection'}</button>
-            {fsTest && <span className={'set-msg' + (fsTest.ok ? '' : ' err')}>{fsTest.ok ? `Connected${fsTest.version ? ` · v${fsTest.version}` : ''}` : (fsTest.error || 'Failed')}</span>}
-          </div>
-        </div>
-        <div className="set-card">
-          <div className="set-row-label">Session TTL (minutes)</div>
-          <div className="set-hint">How long FlareSolverr keeps a solved browser session for reuse (faster repeat solves).</div>
-          <div className="stepper">
-            <button className="step-btn" disabled={(info?.flareSolverrSessionTtlMinutes ?? 15) <= 1} onClick={() => setFsTtl((info?.flareSolverrSessionTtlMinutes ?? 15) - 5)}>−</button>
-            <span className="step-val">{info?.flareSolverrSessionTtlMinutes ?? 15}</span>
-            <button className="step-btn" onClick={() => setFsTtl((info?.flareSolverrSessionTtlMinutes ?? 15) + 5)}>+</button>
-          </div>
-        </div>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-h">Developer</div>
-
-        <div className="set-card">
-          <div className="set-row-label">Simulate a new chapter (test)</div>
-          <div className="set-hint">Makes a library manga look like it got an update — sets its “!” badge, and auto-downloads it if that setting is on.</div>
-          <select className="set-select" value={simManga} onChange={(e) => setSimManga(e.target.value)}>
-            <option value="">Pick a manga…</option>
-            {[...library].sort((a, b) => a.title.localeCompare(b.title)).map((e) => (
-              <option key={e.sourceId + '|' + e.url} value={e.sourceId + '|' + e.url}>{e.title}</option>
-            ))}
-          </select>
-          <div className="set-actions">
-            <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
-            {simMsg && <span className="set-msg">{simMsg}</span>}
-          </div>
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Source health</div>
-          <div className="set-hint">Live from your reading — a source can serve its catalog fine while its images are down (an outage). Green = ok · orange = images failing · red = source unreachable / Cloudflare.</div>
-          {sources.length === 0 ? <div className="set-hint">No sources installed.</div> : (
-            <div className="srchealth">
-              {[...sources]
-                .sort((a, b) => (Number(b.imagesDown || b.down || b.cfState === 'red') - Number(a.imagesDown || a.down || a.cfState === 'red')) || a.name.localeCompare(b.name))
-                .map((s) => {
-                  const state = s.down || s.cfState === 'red' ? 'red' : s.imagesDown ? 'orange' : 'green'
-                  const label = state === 'red' ? (s.cfState === 'red' ? 'Cloudflare' : 'Unreachable') : state === 'orange' ? 'Images down' : 'OK'
-                  return (
-                    <div key={s.id} className="srch-row">
-                      <span className={'srch-dot srch-' + state} />
-                      <span className="srch-name">{s.name}</span>
-                      <span className={'srch-state srch-' + state}>{label}</span>
-                    </div>
-                  )
-                })}
-            </div>
-          )}
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Server status</div>
-          {!stats ? <div className="set-hint">Loading…</div> : (
-            <>
-              <div className="diag-result">
-                <div className="diag-stat"><span className="diag-num">{stats.processCpuPct.toFixed(0)}<small>%</small></span><span className="diag-lbl">Process CPU</span></div>
-                <div className="diag-stat"><span className="diag-num">{stats.threads}</span><span className="diag-lbl">Threads</span></div>
-                <div className="diag-stat"><span className="diag-num">{fmtUptime(stats.uptimeMs)}</span><span className="diag-lbl">Uptime</span></div>
+          <div className="set-card">
+            <button className="set-toggle" onClick={toggleAutoDownload}>
+              <div>
+                <div className="set-row-label">Auto-download new chapters</div>
+                <div className="set-hint">When an update finds new chapters (scheduled or manual), queue them for download automatically.</div>
               </div>
-              <div className="set-kv"><span>Process RAM (RSS)</span><code>{stats.processRssMb >= 0 ? `${stats.processRssMb} MB` : 'n/a'}</code></div>
-              <div className="set-kv"><span>Heap (used / max)</span><code>{stats.heapUsedMb} / {stats.heapMaxMb} MB</code></div>
-              <div className="dlc-bar"><div className="dlc-fill" style={{ width: Math.min(100, Math.round((stats.heapUsedMb / Math.max(1, stats.heapMaxMb)) * 100)) + '%' }} /></div>
-              <div className="set-kv"><span>Heap committed</span><code>{stats.heapCommittedMb} MB</code></div>
-              <div className="set-kv"><span>Off-heap</span><code>{stats.nonHeapUsedMb} MB</code></div>
-              <div className="set-kv"><span>System RAM</span><code>{(stats.systemRamUsedMb / 1024).toFixed(1)} / {(stats.systemRamTotalMb / 1024).toFixed(1)} GB</code></div>
-              <div className="set-kv"><span>Downloads</span><code>{stats.activeDownloads} active · {stats.queuedDownloads} queued</code></div>
-              <div className="set-kv"><span>Installed sources</span><code>{stats.installedSources}</code></div>
-              <div className="set-kv"><span>PID</span><code>{stats.pid}</code></div>
-              <div className="set-kv"><span>Runtime</span><code>{stats.jvm}</code></div>
-              <div className="set-kv"><span>Host</span><code>{stats.os}</code></div>
-            </>
-          )}
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Extensions &amp; repositories</div>
-          <div className="set-hint">Install, update or remove extensions and manage repos.</div>
-          <div className="set-actions"><button className="btn primary" onClick={() => nav('/extensions')}>Open manager</button></div>
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Connection speed (this device ↔ server)</div>
-          <div className="set-hint">Ping and up/down throughput between your phone and the server over your network. Transfers ~12 MB.</div>
-          <div className="set-actions">
-            <button className="btn primary" disabled={netRunning} onClick={runNetTest}>{netRunning ? 'Testing…' : 'Run speed test'}</button>
+              <span className={'switch' + (info?.autoDownloadNew ? ' on' : '')}><span className="knob" /></span>
+            </button>
           </div>
-          {net && (
-            <div className="diag-result">
-              <div className="diag-stat"><span className="diag-num">{Math.round(net.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
-              <div className="diag-stat"><span className="diag-num">{net.downMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Download</span></div>
-              <div className="diag-stat"><span className="diag-num">{net.upMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Upload</span></div>
+        </section>
+      )}
+
+      {cat === 'backup' && (
+        <section className="set-section">
+          <div className="set-card">
+            <div className="set-row-label">Backup &amp; restore</div>
+            <div className="set-hint">Import a Mihon / Tachiyomi .tachibk / .proto.gz — you’ll see a preview first and nothing changes until you confirm. Export writes your current library to a .tachibk you can re-import (great for testing round-trips). Install the matching source extensions to actually read imported manga.</div>
+            <div className="set-actions">
+              <button className="btn primary" disabled={importing} onClick={() => backupInput.current?.click()}>{importing && !preview ? 'Reading…' : 'Choose backup to restore'}</button>
+              <button className="btn" onClick={() => setExportOpen(true)}>Export…</button>
+              {importMsg && <span className={'set-msg' + (importMsg.err ? ' err' : '')}>{importMsg.text}</span>}
             </div>
-          )}
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Connection test</div>
-          <div className="set-hint">Ping + download speed to a source, measured from the server.</div>
-          <div className="set-diag-row"><SourcePicker sources={sources} value={diagSource} onChange={setDiagSource} /></div>
-          <div className="set-actions">
-            <button className="btn primary" disabled={diagRunning || !diagSource} onClick={runDiag}>{diagRunning ? 'Testing…' : 'Run test'}</button>
-          </div>
-          {diag && (diag.ok ? (
-            <div className="diag-result">
-              <div className="diag-stat"><span className="diag-num">{Math.round(diag.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
-              <div className="diag-stat"><span className="diag-num">{diag.speedMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Speed</span></div>
-              <div className="diag-stat"><span className="diag-num">{Math.round(diag.sampleBytes / 1024)}<small>KB</small></span><span className="diag-lbl">Sample</span></div>
-            </div>
-          ) : <div className="set-msg err">{diag.error || 'Test failed'}</div>)}
-        </div>
-
-        <div className="set-card">
-          <button className="set-toggle" onClick={toggleDevContinueRemove}>
-            <div>
-              <div className="set-row-label">Continue-reading remove buttons</div>
-              <div className="set-hint">Show a ✕ on each Continue-reading card to remove it individually.</div>
-            </div>
-            <span className={'switch' + (devContinueRemove ? ' on' : '')}><span className="knob" /></span>
-          </button>
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Server paths</div>
-          <div className="set-kv"><span>Downloads</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
-          <div className="set-kv"><span>Data folder</span><code>{info?.dataDir || '…'}</code></div>
-        </div>
-
-        <div className="set-section-h">About</div>
-        <div className="set-card">
-          {about ? (
-            <>
-              <div className="set-row-label">manga-utils · web</div>
-              <div className="about-ver">v{about.version} · <code>{about.commit}</code> · built {about.buildTime.replace('T', ' ')}</div>
-              <table className="tech-table">
-                <tbody>
-                  {about.tech.map((t) => (
-                    <tr key={t.role}><td className="tech-role">{t.role}</td><td className="tech-val">{t.tech}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="set-actions">
-                <button className="btn" onClick={() => setShowChangelog((v) => !v)}>{showChangelog ? 'Hide' : 'Show'} changelog ({about.changelog.length})</button>
-              </div>
-              {showChangelog && (
-                <div className="changelog">
-                  {about.changelog.map((c) => (
-                    <div className="cl-row" key={c.sha}>
-                      <span className="cl-meta"><code>{c.sha}</code> · {c.date}</span>
-                      <span className="cl-sub">{c.subject}</span>
-                    </div>
-                  ))}
+            {exportOpen && (
+              <div className="backup-preview">
+                <div className="set-row-label">Export — choose what to include</div>
+                {([['library', 'Library (manga, read & bookmarks)'], ['settings', 'App settings'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
+                  <label key={k} className="pref-check">
+                    <input type="checkbox" checked={!!exportSel[k]} onChange={(e) => setExportSel((s) => ({ ...s, [k]: e.target.checked }))} />
+                    <span>{label}</span>
+                  </label>
+                ))}
+                <div className="set-actions">
+                  <button className="btn primary" disabled={!Object.values(exportSel).some(Boolean)} onClick={runExport}>Export</button>
+                  <button className="btn" onClick={() => setExportOpen(false)}>Cancel</button>
                 </div>
+              </div>
+            )}
+            {preview && (
+              <div className="backup-preview">
+                <div className="set-row-label">Preview · {preview.total} manga {preview.total === 0 && '(nothing to import)'}</div>
+                {preview.total > 0 && (
+                  <div className="backup-list">
+                    {preview.manga.slice(0, 60).map((m, i) => (
+                      <div key={i} className="backup-item">
+                        <span className="backup-title">{m.title}</span>
+                        <span className="backup-meta">{m.chapters} ch · {m.read} read{m.inLibrary ? ' · already in library' : ''}</span>
+                      </div>
+                    ))}
+                    {preview.total > 60 && <div className="set-hint">…and {preview.total - 60} more</div>}
+                  </div>
+                )}
+                {(preview.hasSettings || !!preview.repos || !!preview.extensions) && (
+                  <div className="set-hint">
+                    Also in this backup (applied on import):
+                    {preview.hasSettings && <> · <b>app settings</b> (overwrites yours)</>}
+                    {!!preview.repos && <> · <b>{preview.repos} repo{preview.repos === 1 ? '' : 's'}</b> (added)</>}
+                    {!!preview.extensions && <> · <b>{preview.extensions} extension{preview.extensions === 1 ? '' : 's'}</b> (reinstalled if missing)</>}
+                  </div>
+                )}
+                <div className="set-actions">
+                  <button className="btn primary" disabled={importing || (preview.total === 0 && !preview.hasSettings && !preview.repos && !preview.extensions)} onClick={doImport}>{importing ? 'Importing…' : preview.total > 0 ? `Import ${preview.total} manga` : 'Restore'}</button>
+                  <button className="btn" onClick={cancelImport}>Cancel</button>
+                </div>
+              </div>
+            )}
+            <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Back up to USB</div>
+            <div className="set-hint">Writes a full metadata backup (library + read/bookmarks) plus a copy of every downloaded chapter to a mounted drive. Additive — it never deletes anything on the drive, and skips files already copied. On the server this is a bind-mounted USB path (default <code>/dyno</code>).</div>
+            <div className="set-actions">
+              <input className="set-input" placeholder="/dyno" value={usbDir} onChange={(e) => setUsbDir(e.target.value)} onBlur={saveUsbDir} />
+            </div>
+            <div className="set-hint">Blank = use the <code>MU_DYNO_DIR</code> env var, else <code>/dyno</code>.</div>
+            <div className="set-actions">
+              <button className="btn primary" disabled={!!usbJob?.running} onClick={startUsbBackup}>{usbJob?.running ? 'Backing up…' : 'Back up to USB'}</button>
+              {usbJob?.running && (
+                <span className="set-msg">
+                  {usbJob.phase === 'EXPORTING' ? 'Exporting backup…' : usbJob.phase === 'COPYING' ? `Copying ${usbJob.filesDone}/${usbJob.filesTotal}` : 'Preparing…'}
+                </span>
               )}
-            </>
-          ) : <div className="set-hint">Loading build info…</div>}
-        </div>
-      </section>
+              {!usbJob?.running && usbMsg && <span className={'set-msg' + (usbMsg.err ? ' err' : '')}>{usbMsg.text}</span>}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {cat === 'network' && (
+        <section className="set-section">
+          <div className="set-card">
+            <button className="set-toggle" onClick={toggleFlareSolverr}>
+              <div>
+                <div className="set-row-label">Use FlareSolverr</div>
+                <div className="set-hint">Solve Cloudflare challenges via a running FlareSolverr instance so protected sources work. Helps genuine CF challenges only — not a source outage.</div>
+              </div>
+              <span className={'switch' + (info?.flareSolverrEnabled ? ' on' : '')}><span className="knob" /></span>
+            </button>
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">FlareSolverr URL</div>
+            <div className="set-hint">Where FlareSolverr is running (its /v1 endpoint is appended).</div>
+            <input className="set-input" value={fsUrl} onChange={(e) => setFsUrl(e.target.value)} onBlur={saveFsUrl} placeholder="http://localhost:8191" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+            <div className="set-actions">
+              <button className="btn" disabled={fsTesting} onClick={testFs}>{fsTesting ? 'Testing…' : 'Test connection'}</button>
+              {fsTest && <span className={'set-msg' + (fsTest.ok ? '' : ' err')}>{fsTest.ok ? `Connected${fsTest.version ? ` · v${fsTest.version}` : ''}` : (fsTest.error || 'Failed')}</span>}
+            </div>
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Session TTL (minutes)</div>
+            <div className="set-hint">How long FlareSolverr keeps a solved browser session for reuse (faster repeat solves).</div>
+            <div className="stepper">
+              <button className="step-btn" disabled={(info?.flareSolverrSessionTtlMinutes ?? 15) <= 1} onClick={() => setFsTtl((info?.flareSolverrSessionTtlMinutes ?? 15) - 5)}>−</button>
+              <span className="step-val">{info?.flareSolverrSessionTtlMinutes ?? 15}</span>
+              <button className="step-btn" onClick={() => setFsTtl((info?.flareSolverrSessionTtlMinutes ?? 15) + 5)}>+</button>
+            </div>
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Connection speed (this device ↔ server)</div>
+            <div className="set-hint">Ping and up/down throughput between your phone and the server over your network. Transfers ~12 MB.</div>
+            <div className="set-actions">
+              <button className="btn primary" disabled={netRunning} onClick={runNetTest}>{netRunning ? 'Testing…' : 'Run speed test'}</button>
+            </div>
+            {net && (
+              <div className="diag-result">
+                <div className="diag-stat"><span className="diag-num">{Math.round(net.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
+                <div className="diag-stat"><span className="diag-num">{net.downMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Download</span></div>
+                <div className="diag-stat"><span className="diag-num">{net.upMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Upload</span></div>
+              </div>
+            )}
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Connection test</div>
+            <div className="set-hint">Ping + download speed to a source, measured from the server.</div>
+            <div className="set-diag-row"><SourcePicker sources={sources} value={diagSource} onChange={setDiagSource} /></div>
+            <div className="set-actions">
+              <button className="btn primary" disabled={diagRunning || !diagSource} onClick={runDiag}>{diagRunning ? 'Testing…' : 'Run test'}</button>
+            </div>
+            {diag && (diag.ok ? (
+              <div className="diag-result">
+                <div className="diag-stat"><span className="diag-num">{Math.round(diag.pingMs)}<small>ms</small></span><span className="diag-lbl">Ping</span></div>
+                <div className="diag-stat"><span className="diag-num">{diag.speedMbps.toFixed(1)}<small>Mbps</small></span><span className="diag-lbl">Speed</span></div>
+                <div className="diag-stat"><span className="diag-num">{Math.round(diag.sampleBytes / 1024)}<small>KB</small></span><span className="diag-lbl">Sample</span></div>
+              </div>
+            ) : <div className="set-msg err">{diag.error || 'Test failed'}</div>)}
+          </div>
+        </section>
+      )}
+
+      {cat === 'system' && (
+        <section className="set-section">
+          <div className="set-card">
+            <div className="set-row-label">Source health</div>
+            <div className="set-hint">Live from your reading — a source can serve its catalog fine while its images are down (an outage). Green = ok · orange = images failing · red = source unreachable / Cloudflare.</div>
+            {sources.length === 0 ? <div className="set-hint">No sources installed.</div> : (
+              <div className="srchealth">
+                {[...sources]
+                  .sort((a, b) => (Number(b.imagesDown || b.down || b.cfState === 'red') - Number(a.imagesDown || a.down || a.cfState === 'red')) || a.name.localeCompare(b.name))
+                  .map((s) => {
+                    const state = s.down || s.cfState === 'red' ? 'red' : s.imagesDown ? 'orange' : 'green'
+                    const label = state === 'red' ? (s.cfState === 'red' ? 'Cloudflare' : 'Unreachable') : state === 'orange' ? 'Images down' : 'OK'
+                    return (
+                      <div key={s.id} className="srch-row">
+                        <span className={'srch-dot srch-' + state} />
+                        <span className="srch-name">{s.name}</span>
+                        <span className={'srch-state srch-' + state}>{label}</span>
+                      </div>
+                    )
+                  })}
+              </div>
+            )}
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Server status</div>
+            {!stats ? <div className="set-hint">Loading…</div> : (
+              <>
+                <div className="diag-result">
+                  <div className="diag-stat"><span className="diag-num">{stats.processCpuPct.toFixed(0)}<small>%</small></span><span className="diag-lbl">Process CPU</span></div>
+                  <div className="diag-stat"><span className="diag-num">{stats.threads}</span><span className="diag-lbl">Threads</span></div>
+                  <div className="diag-stat"><span className="diag-num">{fmtUptime(stats.uptimeMs)}</span><span className="diag-lbl">Uptime</span></div>
+                </div>
+                <div className="set-kv"><span>Process RAM (RSS)</span><code>{stats.processRssMb >= 0 ? `${stats.processRssMb} MB` : 'n/a'}</code></div>
+                <div className="set-kv"><span>Heap (used / max)</span><code>{stats.heapUsedMb} / {stats.heapMaxMb} MB</code></div>
+                <div className="dlc-bar"><div className="dlc-fill" style={{ width: Math.min(100, Math.round((stats.heapUsedMb / Math.max(1, stats.heapMaxMb)) * 100)) + '%' }} /></div>
+                <div className="set-kv"><span>Heap committed</span><code>{stats.heapCommittedMb} MB</code></div>
+                <div className="set-kv"><span>Off-heap</span><code>{stats.nonHeapUsedMb} MB</code></div>
+                <div className="set-kv"><span>System RAM</span><code>{(stats.systemRamUsedMb / 1024).toFixed(1)} / {(stats.systemRamTotalMb / 1024).toFixed(1)} GB</code></div>
+                <div className="set-kv"><span>Downloads</span><code>{stats.activeDownloads} active · {stats.queuedDownloads} queued</code></div>
+                <div className="set-kv"><span>Installed sources</span><code>{stats.installedSources}</code></div>
+                <div className="set-kv"><span>PID</span><code>{stats.pid}</code></div>
+                <div className="set-kv"><span>Runtime</span><code>{stats.jvm}</code></div>
+                <div className="set-kv"><span>Host</span><code>{stats.os}</code></div>
+              </>
+            )}
+          </div>
+          <div className="set-card">
+            <div className="set-row-label">Server paths</div>
+            <div className="set-kv"><span>Downloads</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
+            <div className="set-kv"><span>Data folder</span><code>{info?.dataDir || '…'}</code></div>
+          </div>
+          <div className="set-card">
+            {about ? (
+              <>
+                <div className="set-row-label">manga-utils · web</div>
+                <div className="about-ver">v{about.version} · <code>{about.commit}</code> · built {about.buildTime.replace('T', ' ')}</div>
+                <table className="tech-table">
+                  <tbody>
+                    {about.tech.map((t) => (
+                      <tr key={t.role}><td className="tech-role">{t.role}</td><td className="tech-val">{t.tech}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="set-actions">
+                  <button className="btn" onClick={() => setShowChangelog((v) => !v)}>{showChangelog ? 'Hide' : 'Show'} changelog ({about.changelog.length})</button>
+                </div>
+                {showChangelog && (
+                  <div className="changelog">
+                    {about.changelog.map((c) => (
+                      <div className="cl-row" key={c.sha}>
+                        <span className="cl-meta"><code>{c.sha}</code> · {c.date}</span>
+                        <span className="cl-sub">{c.subject}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : <div className="set-hint">Loading build info…</div>}
+          </div>
+        </section>
+      )}
+
+      {cat === 'developer' && (
+        <section className="set-section">
+          <div className="set-card">
+            <div className="set-row-label">Simulate a new chapter (test)</div>
+            <div className="set-hint">Makes a library manga look like it got an update — sets its “!” badge, and auto-downloads it if that setting is on.</div>
+            <select className="set-select" value={simManga} onChange={(e) => setSimManga(e.target.value)}>
+              <option value="">Pick a manga…</option>
+              {[...library].sort((a, b) => a.title.localeCompare(b.title)).map((e) => (
+                <option key={e.sourceId + '|' + e.url} value={e.sourceId + '|' + e.url}>{e.title}</option>
+              ))}
+            </select>
+            <div className="set-actions">
+              <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
+              {simMsg && <span className="set-msg">{simMsg}</span>}
+            </div>
+          </div>
+        </section>
+      )}
 
       {confirm && <ConfirmDialog spec={confirm} />}
     </div>
