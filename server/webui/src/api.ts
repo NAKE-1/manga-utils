@@ -17,6 +17,9 @@ export interface Manga {
 
 export interface PageResult { mangas: Manga[]; hasNextPage: boolean }
 
+export interface BackupResult { imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number; historyRestored?: number; clientPrefsJson?: string | null }
+export interface ImportJob { state: string; phase: string; done: number; total: number; current: string; error?: string; result?: BackupResult | null }
+
 export interface Chapter {
   url: string
   name: string
@@ -153,10 +156,21 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Preview failed')
     return r.json() as Promise<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number }>
   },
-  importBackup: async (data: ArrayBuffer) => {
+  // Restore is a background job (so the UI can show a progress bar): start it, then poll progress.
+  importStart: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/import', { method: 'POST', body: data })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Import failed')
-    return r.json() as Promise<{ imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number; historyRestored?: number }>
+    return r.json() as Promise<ImportJob>
+  },
+  importProgress: async (): Promise<ImportJob | null> => {
+    const r = await fetch('/api/backup/import/progress')
+    if (r.status === 204) return null
+    return r.json() as Promise<ImportJob>
+  },
+  exportBackup: async (include: string[], clientPrefs: string | null): Promise<Blob> => {
+    const r = await fetch('/api/backup/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ include, clientPrefs }) })
+    if (!r.ok) throw new Error('Export failed')
+    return r.blob()
   },
   saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoDownloadNew: boolean; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })

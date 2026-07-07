@@ -64,7 +64,13 @@ object BackupImport {
         val extensionsInstalled: Int = 0,
         val extensionsFailed: Int = 0,
         val historyRestored: Int = 0,
+        val clientPrefsJson: String? = null, // browser reader prefs to hand back to the frontend
     )
+
+    /** Progress callback for a running import: phase label, items done, total, and the current item. */
+    fun interface Progress {
+        fun on(phase: String, done: Int, total: Int, current: String)
+    }
 
     data class PreviewItem(val title: String, val source: Long, val chapters: Int, val read: Int, val inLibrary: Boolean)
     data class Preview(
@@ -107,7 +113,7 @@ object BackupImport {
     /** Export the chosen [sections] as a gzipped protobuf. The library part is Mihon/Tachiyomi
      *  compatible; settings/repos/extensions live in manga-utils-native fields. */
     @OptIn(ExperimentalSerializationApi::class)
-    fun export(sections: Sections = Sections()): ByteArray {
+    fun export(sections: Sections = Sections(), clientPrefsJson: String? = null): ByteArray {
         val manga = if (!sections.library) emptyList() else
             LibraryStore.list().map { e ->
                 val read = ReadStore.readUrls(e.sourceId, e.mangaUrl)
@@ -138,6 +144,7 @@ object BackupImport {
             extensionPkgs = if (sections.extensions) InstalledStore.list().map { it.pkg } else emptyList(),
             // Continue-reading history rides with the library section (it's reading progress).
             historyJson = if (sections.library) json.encodeToString(HistoryStore.list()) else null,
+            clientPrefsJson = clientPrefsJson, // browser reader/display prefs, gathered by the caller
         )
         val raw = ProtoBuf.encodeToByteArray(backup)
         val out = ByteArrayOutputStream()
@@ -146,12 +153,13 @@ object BackupImport {
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    fun import(gzBytes: ByteArray): Result {
+    fun import(gzBytes: ByteArray, progress: Progress? = null): Result {
         val backup = decode(gzBytes)
         val favorites = backup.backupManga.filter { it.favorite }
         var imported = 0
         var skipped = 0
-        for (m in favorites) {
+        for ((i, m) in favorites.withIndex()) {
+            progress?.on("Importing library", i, favorites.size, m.title.ifBlank { m.url })
             runCatching {
                 val title = m.title.ifBlank { m.url }
                 val sManga =
@@ -206,18 +214,21 @@ object BackupImport {
         if (backup.extensionPkgs.isNotEmpty()) {
             val installer = ExtensionInstaller()
             val already = InstalledStore.list().map { it.pkg }.toSet()
-            for (pkg in backup.extensionPkgs.filter { it !in already }) {
+            val toInstall = backup.extensionPkgs.filter { it !in already }
+            for ((i, pkg) in toInstall.withIndex()) {
+                progress?.on("Installing extensions", i, toInstall.size, pkg)
                 runCatching { installer.install(pkg) }
                     .onSuccess { extInstalled++ }
                     .onFailure { log.warn("backup: failed to reinstall '{}': {}", pkg, it.message); extFailed++ }
             }
         }
+        progress?.on("Done", favorites.size, favorites.size, "")
 
         log.info(
             "backup import: {} manga imported, {} skipped; settings={}, history+{}, repos+{}, extensions +{}/{}",
             imported, skipped, settingsRestored, historyRestored, reposAdded, extInstalled, extFailed,
         )
-        return Result(imported, skipped, favorites.size, settingsRestored, reposAdded, extInstalled, extFailed, historyRestored)
+        return Result(imported, skipped, favorites.size, settingsRestored, reposAdded, extInstalled, extFailed, historyRestored, backup.clientPrefsJson)
     }
 
     // ---- Minimal protobuf schema (Mihon field numbers) --------------------------------------------
@@ -230,6 +241,7 @@ object BackupImport {
         @ProtoNumber(901) val repoUrls: List<String> = emptyList(),
         @ProtoNumber(902) val extensionPkgs: List<String> = emptyList(),
         @ProtoNumber(903) val historyJson: String? = null, // continue-reading history (manga-utils native)
+        @ProtoNumber(904) val clientPrefsJson: String? = null, // browser reader/display prefs (manga-utils native)
     )
 
     @Serializable

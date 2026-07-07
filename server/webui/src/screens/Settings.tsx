@@ -1,8 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob, BackupResult } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
+
+// Browser reader/display prefs live in localStorage (per device). Gather them into the backup, and
+// apply them back on restore, so a restore carries your reader setup — not just server-side state.
+function gatherClientPrefs(): string {
+  const out: Record<string, string> = {}
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i)
+    if (k && /^(reader|dev|search|browse)\./.test(k)) { const v = localStorage.getItem(k); if (v != null) out[k] = v }
+  }
+  return JSON.stringify(out)
+}
+function applyClientPrefs(jsonStr?: string | null) {
+  if (!jsonStr) return
+  try { const o = JSON.parse(jsonStr) as Record<string, string>; for (const [k, v] of Object.entries(o)) localStorage.setItem(k, String(v)) } catch { /* ignore bad prefs */ }
+}
 
 const fmtUptime = (ms: number) => {
   const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60)
@@ -40,15 +55,22 @@ export function Settings() {
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState<{ text: string; err: boolean } | null>(null)
+  const [importProg, setImportProg] = useState<{ phase: string; done: number; total: number; current: string } | null>(null)
   const [preview, setPreview] = useState<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number } | null>(null)
   const backupInput = useRef<HTMLInputElement>(null)
   const pendingBackup = useRef<ArrayBuffer | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [exportSel, setExportSel] = useState<Record<string, boolean>>({ library: true, settings: true, repos: true, extensions: false })
-  function runExport() {
+  async function runExport() {
     const inc = Object.entries(exportSel).filter(([, v]) => v).map(([k]) => k)
     if (!inc.length) return
-    window.location.href = '/api/backup/export?include=' + inc.join(',')
+    // Fold browser reader/display prefs into the backup when settings are included.
+    const prefs = inc.includes('settings') ? gatherClientPrefs() : null
+    const blob = await api.exportBackup(inc, prefs).catch(() => null)
+    if (!blob) return
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob); a.download = 'manga-utils.tachibk'; a.click()
+    URL.revokeObjectURL(a.href)
     setExportOpen(false)
   }
   const [fsUrl, setFsUrl] = useState('')
@@ -97,20 +119,31 @@ export function Settings() {
   }
   async function doImport() {
     if (!pendingBackup.current) return
-    setImporting(true); setImportMsg(null)
+    setImporting(true); setImportMsg(null); setImportProg({ phase: 'Starting…', done: 0, total: 0, current: '' })
     try {
-      const r = await api.importBackup(pendingBackup.current)
+      await api.importStart(pendingBackup.current) // kicks off the background restore
+      let r: BackupResult | null = null
+      for (;;) { // poll live progress until the job finishes
+        await new Promise((res) => setTimeout(res, 350))
+        const j = await api.importProgress().catch(() => null)
+        if (!j) continue
+        setImportProg({ phase: j.phase, done: j.done, total: j.total, current: j.current })
+        if (j.state === 'done') { r = j.result ?? null; break }
+        if (j.state === 'failed') throw new Error(j.error || 'Import failed')
+      }
+      applyClientPrefs(r?.clientPrefsJson)
       const extras = [
-        r.settingsRestored ? 'settings' : '',
-        r.historyRestored ? `${r.historyRestored} history` : '',
-        r.reposAdded ? `${r.reposAdded} repo${r.reposAdded === 1 ? '' : 's'}` : '',
-        r.extensionsInstalled ? `${r.extensionsInstalled} extension${r.extensionsInstalled === 1 ? '' : 's'}` : '',
+        r?.settingsRestored ? 'settings' : '',
+        r?.historyRestored ? `${r.historyRestored} history` : '',
+        r?.clientPrefsJson ? 'reader prefs' : '',
+        r?.reposAdded ? `${r.reposAdded} repo${r.reposAdded === 1 ? '' : 's'}` : '',
+        r?.extensionsInstalled ? `${r.extensionsInstalled} extension${r.extensionsInstalled === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join(' · ')
-      setImportMsg({ text: `Imported ${r.imported} manga${r.skipped ? ` · ${r.skipped} skipped` : ''}${extras ? ` · restored ${extras}` : ''}${r.extensionsFailed ? ` · ${r.extensionsFailed} ext failed` : ''}.`, err: false })
+      setImportMsg({ text: `Imported ${r?.imported ?? 0} manga${r?.skipped ? ` · ${r.skipped} skipped` : ''}${extras ? ` · restored ${extras}` : ''}${r?.extensionsFailed ? ` · ${r.extensionsFailed} ext failed` : ''}.`, err: false })
       setPreview(null); pendingBackup.current = null
     } catch (err) {
       setImportMsg({ text: err instanceof Error ? err.message : 'Import failed', err: true })
-    } finally { setImporting(false) }
+    } finally { setImporting(false); setImportProg(null) }
   }
   function cancelImport() { setPreview(null); pendingBackup.current = null }
   // Poll the USB-backup job ~1s while it's running.
@@ -414,7 +447,7 @@ export function Settings() {
           {exportOpen && (
             <div className="backup-preview">
               <div className="set-row-label">Export — choose what to include</div>
-              {([['library', 'Library (manga, read, bookmarks & continue-reading history)'], ['settings', 'App settings'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
+              {([['library', 'Library (manga, read, bookmarks & continue-reading history)'], ['settings', 'App settings & reader prefs'], ['repos', 'Extension repositories'], ['extensions', 'Installed extensions (reinstalled on restore)']] as [string, string][]).map(([k, label]) => (
                 <label key={k} className="pref-check">
                   <input type="checkbox" checked={!!exportSel[k]} onChange={(e) => setExportSel((s) => ({ ...s, [k]: e.target.checked }))} />
                   <span>{label}</span>
@@ -452,6 +485,13 @@ export function Settings() {
                 <button className="btn primary" disabled={importing || (preview.total === 0 && !preview.hasSettings && !preview.repos && !preview.extensions)} onClick={doImport}>{importing ? 'Importing…' : preview.total > 0 ? `Import ${preview.total} manga` : 'Restore'}</button>
                 <button className="btn" onClick={cancelImport}>Cancel</button>
               </div>
+            </div>
+          )}
+          {importProg && (
+            <div className="backup-preview">
+              <div className="set-row-label">{importProg.phase}{importProg.total > 0 ? ` · ${importProg.done}/${importProg.total}` : ''}</div>
+              <div className="dlc-bar"><div className="dlc-fill" style={{ width: (importProg.total > 0 ? Math.round((importProg.done / importProg.total) * 100) : 15) + '%' }} /></div>
+              {importProg.current && <div className="set-hint">{importProg.current}</div>}
             </div>
           )}
           <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />

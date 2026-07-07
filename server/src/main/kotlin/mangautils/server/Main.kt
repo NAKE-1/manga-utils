@@ -325,7 +325,18 @@ private data class FlareEventDto(val id: Long, val host: String, val phase: Stri
 private data class FlareEventsDto(val lastId: Long, val events: List<FlareEventDto>)
 
 @Serializable
-private data class BackupResultDto(val imported: Int, val skipped: Int, val total: Int, val settingsRestored: Boolean = false, val reposAdded: Int = 0, val extensionsInstalled: Int = 0, val extensionsFailed: Int = 0, val historyRestored: Int = 0)
+private data class BackupResultDto(val imported: Int, val skipped: Int, val total: Int, val settingsRestored: Boolean = false, val reposAdded: Int = 0, val extensionsInstalled: Int = 0, val extensionsFailed: Int = 0, val historyRestored: Int = 0, val clientPrefsJson: String? = null)
+
+@Serializable
+private data class ImportJobDto(val state: String, val phase: String, val done: Int, val total: Int, val current: String, val error: String = "", val result: BackupResultDto? = null)
+
+@Serializable
+private data class ExportReqDto(val include: List<String> = emptyList(), val clientPrefs: String? = null)
+
+private fun importJobDto(t: ImportJob.Task) = ImportJobDto(
+    t.state, t.phase, t.done, t.total, t.current, t.error,
+    t.result?.let { BackupResultDto(it.imported, it.skipped, it.total, it.settingsRestored, it.reposAdded, it.extensionsInstalled, it.extensionsFailed, it.historyRestored, it.clientPrefsJson) },
+)
 
 @Serializable
 private data class BackupPreviewItemDto(val title: String, val source: String, val chapters: Int, val read: Int, val inLibrary: Boolean)
@@ -986,11 +997,17 @@ fun Application.module() {
         // Import a Mihon / Tachiyomi / Suwayomi backup (.tachibk / .proto.gz) — raw gzipped bytes in the body.
         post("/api/backup/import") {
             val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
-            val r = withContext(Dispatchers.IO) { runCatching { mangautils.core.backup.BackupImport.import(bytes) } }
-            r.fold(
-                onSuccess = { call.respond(BackupResultDto(it.imported, it.skipped, it.total, it.settingsRestored, it.reposAdded, it.extensionsInstalled, it.extensionsFailed, it.historyRestored)) },
-                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup — is it a Mihon/Tachiyomi .tachibk? (${it.message})")) },
+            // Restore runs as a background job so the UI can show a live progress bar; poll /progress.
+            val t = withContext(Dispatchers.IO) { runCatching { ImportJob.start(bytes) } }
+            t.fold(
+                onSuccess = { call.respond(importJobDto(it)) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't start import (${it.message})")) },
             )
+        }
+        // Live progress for the running restore (null until one is started).
+        get("/api/backup/import/progress") {
+            val t = ImportJob.snapshot()
+            if (t == null) call.respond(HttpStatusCode.NoContent) else call.respond(importJobDto(t))
         }
         // Dry run: what a backup would import, without changing the library.
         post("/api/backup/preview") {
@@ -1006,6 +1023,14 @@ fun Application.module() {
             val include = call.request.queryParameters["include"]?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
             val sections = if (include.isNullOrEmpty()) mangautils.core.backup.BackupImport.Sections() else mangautils.core.backup.BackupImport.Sections.of(include)
             val bytes = withContext(Dispatchers.IO) { mangautils.core.backup.BackupImport.export(sections) }
+            call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils.tachibk\"")
+            call.respondBytes(bytes, ContentType.parse("application/gzip"))
+        }
+        // POST variant so the frontend can also fold in browser reader/display prefs (localStorage).
+        post("/api/backup/export") {
+            val req = call.receive<ExportReqDto>()
+            val sections = if (req.include.isEmpty()) mangautils.core.backup.BackupImport.Sections() else mangautils.core.backup.BackupImport.Sections.of(req.include.toSet())
+            val bytes = withContext(Dispatchers.IO) { mangautils.core.backup.BackupImport.export(sections, req.clientPrefs) }
             call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils.tachibk\"")
             call.respondBytes(bytes, ContentType.parse("application/gzip"))
         }
