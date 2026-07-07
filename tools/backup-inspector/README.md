@@ -1,8 +1,17 @@
 # Backup inspector
 
 A tiny **standalone** viewer for manga-utils / Mihon / Tachiyomi `.tachibk` backups. No dependencies,
-no server — decodes the gzip+protobuf and prints what's inside.
+no server — decodes the gzip+protobuf and shows what's inside. Comes in two forms:
 
+**GUI (window):**
+- `inspect-backup-gui.bat` — double-click to open the window (then *Open backup…*), or drag a
+  `.tachibk` onto it. Library shows as a table; settings / history / reader prefs / repos+extensions
+  in tabs.
+- or `python inspect_backup_gui.py [file.tachibk]`
+
+**CLI (terminal):**
+- `inspect-backup.bat` — drag a `.tachibk` onto it (or double-click and paste a path).
+- or:
 ```bash
 python inspect_backup.py my-backup.tachibk          # summary + library table
 python inspect_backup.py my-backup.tachibk --full    # also dump settings, prefs, history, repos, extensions
