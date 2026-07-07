@@ -60,6 +60,7 @@ export function DownloadWatcher() {
   const prev = useRef<Record<string, string>>({})
   const doneInBatch = useRef(0)
   const wasBusy = useRef(false)
+  const wasScanning = useRef(false)
   useEffect(() => {
     let alive = true
     // FlareSolverr solve activity → toasts, so a Cloudflare-solve pause is explained.
@@ -95,6 +96,12 @@ export function DownloadWatcher() {
         }
         wasBusy.current = busy > 0
       } catch { /* server not reachable — ignore */ }
+      // Library-update scan (manual OR the daily scheduled one) → a live "Scanning for updates NN%" toast.
+      try {
+        const u = await api.updateProgress()
+        if (u.running) { toast(`Scanning for updates ${u.total > 0 ? Math.round((u.done / u.total) * 100) : 0}%`, 'info', 5000, 'lib-scan'); wasScanning.current = true }
+        else if (wasScanning.current) { toast('Library scan complete', 'success', 3000, 'lib-scan'); wasScanning.current = false }
+      } catch { /* ignore */ }
     }
     const iv = window.setInterval(() => { if (alive) tick() }, 3500)
     tick()

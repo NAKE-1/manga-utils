@@ -23,6 +23,8 @@ const fmtUptime = (ms: number) => {
   const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60)
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`
 }
+// 0..23 -> "12:00 AM" .. "11:00 PM"
+const fmtHour = (h: number) => `${h % 12 === 0 ? 12 : h % 12}:00 ${h < 12 ? 'AM' : 'PM'}`
 
 // DYNO (USB backup) is hidden until the portable-library work is ready. Flip to true to restore it.
 const SHOW_USB_BACKUP = false
@@ -99,8 +101,8 @@ export function Settings() {
     const s = await api.saveSettings({ autoUpdate: !info.autoUpdate }).catch(() => null)
     if (s) setInfo(s)
   }
-  async function setAutoHours(n: number) {
-    const s = await api.saveSettings({ autoUpdateHours: Math.max(1, Math.min(168, n)) }).catch(() => null)
+  async function setAutoHour(n: number) {
+    const s = await api.saveSettings({ autoUpdateHour: Math.max(0, Math.min(23, n)) }).catch(() => null)
     if (s) setInfo(s)
   }
   // Choosing a file only PREVIEWS it — nothing changes until you confirm.
@@ -414,12 +416,10 @@ export function Settings() {
           </button>
           {info?.autoUpdate && (
             <div className="set-inline">
-              <span className="set-row-label">Every</span>
-              <div className="stepper">
-                <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) <= 1} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) - 1)}>−</button>
-                <span className="step-val">{info?.autoUpdateHours ?? 12}h</span>
-                <button className="step-btn" disabled={(info?.autoUpdateHours ?? 12) >= 168} onClick={() => setAutoHours((info?.autoUpdateHours ?? 12) + 1)}>+</button>
-              </div>
+              <span className="set-row-label">Every day at</span>
+              <select className="set-select" style={{ width: 'auto' }} value={info?.autoUpdateHour ?? 0} onChange={(e) => setAutoHour(Number(e.target.value))}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+              </select>
             </div>
           )}
         </div>

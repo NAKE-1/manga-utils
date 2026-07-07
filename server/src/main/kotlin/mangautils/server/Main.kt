@@ -275,6 +275,7 @@ private data class SettingsDto(
     val cloudflareBypass: Boolean,
     val autoUpdate: Boolean,
     val autoUpdateHours: Int,
+    val autoUpdateHour: Int,
     val autoDownloadNew: Boolean,
     val flareSolverrEnabled: Boolean,
     val flareSolverrUrl: String,
@@ -294,6 +295,7 @@ private data class SettingsPatch(
     val visibleLanguages: List<String>? = null,
     val autoUpdate: Boolean? = null,
     val autoUpdateHours: Int? = null,
+    val autoUpdateHour: Int? = null,
     val autoDownloadNew: Boolean? = null,
     val flareSolverrEnabled: Boolean? = null,
     val flareSolverrUrl: String? = null,
@@ -364,7 +366,7 @@ private fun backupJobDto(t: BackupJob.Task?) =
 private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
-    s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoDownloadNew,
+    s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
     s.usbBackupDir,
 )
@@ -974,6 +976,7 @@ fun Application.module() {
             body.visibleLanguages?.let { s = s.copy(visibleLanguages = it.map { l -> l.lowercase() }.distinct()) }
             body.autoUpdate?.let { s = s.copy(autoUpdate = it) }
             body.autoUpdateHours?.let { s = s.copy(autoUpdateHours = it.coerceIn(1, 168)) }
+            body.autoUpdateHour?.let { s = s.copy(autoUpdateHour = it.coerceIn(0, 23)) }
             body.autoDownloadNew?.let { s = s.copy(autoDownloadNew = it) }
             body.flareSolverrEnabled?.let { s = s.copy(flareSolverrEnabled = it) }
             body.flareSolverrUrl?.let { s = s.copy(flareSolverrUrl = it.trim()) }

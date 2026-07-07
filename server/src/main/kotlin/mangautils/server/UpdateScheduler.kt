@@ -32,12 +32,19 @@ object UpdateScheduler {
         task = null
         val s = runCatching { SettingsStore.get() }.getOrNull() ?: return
         if (!s.autoUpdate) { log.debug("scheduled updates disabled"); return }
-        val hours = s.autoUpdateHours.coerceIn(1, 168).toLong()
-        log.info("scheduled updates on: every {}h (auto-download new: {})", hours, s.autoDownloadNew)
-        // First run after one interval, not at boot (avoid an update storm on every restart).
+        val hour = s.autoUpdateHour.coerceIn(0, 23)
+        // Run once a day at the chosen local hour: compute the delay to the next HH:00, then repeat daily.
+        val now = java.time.ZonedDateTime.now()
+        var next = now.withHour(hour).withMinute(0).withSecond(0).withNano(0)
+        if (!next.isAfter(now)) next = next.plusDays(1)
+        val initialDelayMs = java.time.Duration.between(now, next).toMillis()
+        log.info(
+            "scheduled updates on: daily at {}:00 (first run in ~{}h, auto-download new: {})",
+            String.format("%02d", hour), initialDelayMs / 3_600_000, s.autoDownloadNew,
+        )
         task = exec.scheduleAtFixedRate(
             { runCatching { runNow() }.onFailure { log.warn("scheduled update failed: {}", it.message) } },
-            hours, hours, TimeUnit.HOURS,
+            initialDelayMs, TimeUnit.DAYS.toMillis(1), TimeUnit.MILLISECONDS,
         )
     }
 

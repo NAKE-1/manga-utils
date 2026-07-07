@@ -74,8 +74,10 @@ data class Settings(
     // ---- Scheduled updates ----
     /** Periodically check the whole library for new chapters in the background. */
     val autoUpdate: Boolean = false,
-    /** How often the background update runs, in hours. */
+    /** Deprecated: old interval-in-hours model. Superseded by [autoUpdateHour] (time-of-day). */
     val autoUpdateHours: Int = 12,
+    /** Hour of day (0-23, local time) the daily background update runs. 0 = midnight. */
+    val autoUpdateHour: Int = 0,
     /** When an update finds new chapters (scheduled OR manual), auto-enqueue them for download. */
     val autoDownloadNew: Boolean = false,
     // ---- Cloudflare bypass (FlareSolverr) ----
