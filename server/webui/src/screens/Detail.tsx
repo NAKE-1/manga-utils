@@ -19,6 +19,18 @@ function readingOrder(chapters: DetailT['chapters']): DetailT['chapters'] {
     : [...chapters].slice().reverse()
 }
 
+// Read-state is tracked per chapter URL, but a chapter can exist under several scanlators (each a
+// distinct URL). You read ONE scanlator's Ch.1, so Ch.1 is read — regardless of which scanlator row
+// you look at. Collapse read-state to the chapter NUMBER: a number is read if any of its variants is.
+function readNumberSet(chapters: DetailT['chapters'], readSet: Set<string>): Set<number> {
+  const s = new Set<number>()
+  for (const c of chapters) if (c.number > 0 && readSet.has(c.url)) s.add(c.number)
+  return s
+}
+function chapterRead(c: DetailT['chapters'][number], readSet: Set<string>, nums: Set<number>): boolean {
+  return readSet.has(c.url) || (c.number > 0 && nums.has(c.number))
+}
+
 function relative(ms: number): string {
   if (!ms) return ''
   const d = Math.floor((Date.now() - ms) / 86400000)
@@ -100,7 +112,7 @@ export function Detail() {
     if (prefetchedCont.current === key) return
     prefetchedCont.current = key
     const ordered = readingOrder(data.chapters)
-    const cont = ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1] || data.chapters[0]
+    const cont = ordered.find((c) => !chapterRead(c, readSet, readNumberSet(data.chapters, readSet))) || ordered[ordered.length - 1] || data.chapters[0]
     if (cont) {
       api.pages(sourceId, cont.url, data.manga.title, cont.name)
         .then((r) => { for (let i = 0; i < Math.min(4, r.count); i++) { const im = new Image(); im.src = pageUrl(sourceId, cont.url, i, data.manga.title, cont.name) } })
@@ -162,7 +174,7 @@ export function Detail() {
   function openContinue() {
     if (!data) return
     const ordered = readingOrder(data.chapters)
-    const c = ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1] || data.chapters[0]
+    const c = ordered.find((c) => !chapterRead(c, readSet, readNumberSet(data.chapters, readSet))) || ordered[ordered.length - 1] || data.chapters[0]
     if (c) openChapter(c.url, c.name)
   }
   function openChapter(chUrl: string, name: string) {
@@ -211,14 +223,15 @@ export function Detail() {
   const status = STATUS_LABELS[m.status] || 'Unknown'
   const newSet = new Set(data.newChapters)
   // The chapter you'd resume on (first unread ascending, else the latest) — gets a "Resume" marker.
+  const readNums = readNumberSet(data.chapters, readSet)
   const resumeUrl = (() => {
     const ordered = readingOrder(data.chapters)
-    return (ordered.find((c) => !readSet.has(c.url)) || ordered[ordered.length - 1])?.url
+    return (ordered.find((c) => !chapterRead(c, readSet, readNums)) || ordered[ordered.length - 1])?.url
   })()
 
   let chaps = data.chapters
-  if (tab === 'unread') chaps = chaps.filter((c) => !readSet.has(c.url))
-  else if (tab === 'read') chaps = chaps.filter((c) => readSet.has(c.url))
+  if (tab === 'unread') chaps = chaps.filter((c) => !chapterRead(c, readSet, readNums))
+  else if (tab === 'read') chaps = chaps.filter((c) => chapterRead(c, readSet, readNums))
   if (dlFilter === 'dl') chaps = chaps.filter((c) => c.downloaded)
   else if (dlFilter === 'undl') chaps = chaps.filter((c) => !c.downloaded)
   chaps = [...chaps].sort((a, b) => (asc ? a.number - b.number : b.number - a.number))
@@ -231,7 +244,7 @@ export function Detail() {
     else groups.push({ number: c.number, items: [c] })
   }
   const renderRow = (c: (typeof chaps)[number]) => {
-    const read = readSet.has(c.url)
+    const read = chapterRead(c, readSet, readNums)
     const bm = state.bookmarks.includes(c.url)
     const meta = [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
     const prog = dlProg[c.url]

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
@@ -51,6 +51,9 @@ export function Settings() {
   const [fsUrl, setFsUrl] = useState('')
   const [fsTest, setFsTest] = useState<{ ok: boolean; version?: string; error?: string } | null>(null)
   const [fsTesting, setFsTesting] = useState(false)
+  const [usbDir, setUsbDir] = useState('')
+  const [usbJob, setUsbJob] = useState<BackupJob | null>(null)
+  const [usbMsg, setUsbMsg] = useState<{ text: string; err: boolean } | null>(null)
 
   function toggleDevContinueRemove() {
     const v = !devContinueRemove
@@ -59,7 +62,7 @@ export function Settings() {
   }
 
   useEffect(() => {
-    api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || ''); setFsUrl(s.flareSolverrUrl || '') }).catch(() => {})
+    api.getSettings().then((s) => { setInfo(s); setDir(s.downloadDir || ''); setFsUrl(s.flareSolverrUrl || ''); setUsbDir(s.usbBackupDir || '') }).catch(() => {})
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
     api.version().then(setAbout).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
@@ -106,6 +109,33 @@ export function Settings() {
     } finally { setImporting(false) }
   }
   function cancelImport() { setPreview(null); pendingBackup.current = null }
+  // Poll the USB-backup job ~1s while it's running.
+  useEffect(() => {
+    if (!usbJob?.running) return
+    const t = setInterval(() => {
+      api.usbBackupProgress().then((j) => {
+        setUsbJob(j)
+        if (!j.running) {
+          if (j.state === 'done') setUsbMsg({ text: `Backup complete · ${j.filesDone - j.filesSkipped} copied · ${j.filesSkipped} up to date · ${j.blobName}`, err: false })
+          else if (j.state === 'failed') setUsbMsg({ text: j.error || 'Backup failed', err: true })
+        }
+      }).catch(() => {})
+    }, 1000)
+    return () => clearInterval(t)
+  }, [usbJob?.running])
+  async function saveUsbDir() {
+    const s = await api.saveSettings({ usbBackupDir: usbDir.trim() }).catch(() => null)
+    if (s) { setInfo(s); setUsbDir(s.usbBackupDir || '') }
+  }
+  async function startUsbBackup() {
+    setUsbMsg(null)
+    try {
+      const j = await api.backupToUsb()
+      setUsbJob(j)
+    } catch (err) {
+      setUsbMsg({ text: err instanceof Error ? err.message : 'Backup failed to start', err: true })
+    }
+  }
   async function toggleFlareSolverr() {
     if (!info) return
     const s = await api.saveSettings({ flareSolverrEnabled: !info.flareSolverrEnabled }).catch(() => null)
@@ -400,6 +430,23 @@ export function Settings() {
             </div>
           )}
           <input ref={backupInput} type="file" accept=".tachibk,.gz,.proto.gz,application/gzip,application/octet-stream" style={{ display: 'none' }} onChange={onBackupFile} />
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">Back up to USB</div>
+          <div className="set-hint">Writes a full metadata backup (library + read/bookmarks) plus a copy of every downloaded chapter to a mounted drive. Additive — it never deletes anything on the drive, and skips files already copied. On the server this is a bind-mounted USB path (default <code>/dyno</code>).</div>
+          <div className="set-actions">
+            <input className="set-input" placeholder="/dyno" value={usbDir} onChange={(e) => setUsbDir(e.target.value)} onBlur={saveUsbDir} />
+          </div>
+          <div className="set-hint">Blank = use the <code>MU_DYNO_DIR</code> env var, else <code>/dyno</code>.</div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={!!usbJob?.running} onClick={startUsbBackup}>{usbJob?.running ? 'Backing up…' : 'Back up to USB'}</button>
+            {usbJob?.running && (
+              <span className="set-msg">
+                {usbJob.phase === 'EXPORTING' ? 'Exporting backup…' : usbJob.phase === 'COPYING' ? `Copying ${usbJob.filesDone}/${usbJob.filesTotal}` : 'Preparing…'}
+              </span>
+            )}
+            {!usbJob?.running && usbMsg && <span className={'set-msg' + (usbMsg.err ? ' err' : '')}>{usbMsg.text}</span>}
+          </div>
         </div>
       </section>
 
