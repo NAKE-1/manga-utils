@@ -82,6 +82,73 @@ private fun applyFlareSolverr(s: mangautils.core.config.Settings) {
     System.getenv("MU_FLARESOLVERR_URL")?.trim()?.takeIf { it.isNotBlank() }?.let { c.url = it; c.enabled = true }
 }
 
+// Common places a FlareSolverr lives — probed in order when auto-discovering. The docker-internal
+// names (flaresolverr, host.docker.internal, 172.17.0.1) are only reachable from the SERVER, which
+// is why discovery runs server-side, not in the browser.
+private val FLARE_DEFAULTS = listOf(
+    "http://localhost:8191",
+    "http://127.0.0.1:8191",
+    "http://flaresolverr:8191",
+    "http://host.docker.internal:8191",
+    "http://172.17.0.1:8191",
+)
+
+/** Probe one FlareSolverr endpoint (short timeouts so a dead candidate fails fast). */
+private fun probeFlareOne(base: String): FlareTestDto = runCatching {
+    val u = base.trim().trimEnd('/')
+    val client = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+        .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+    val body = """{"cmd":"sessions.list"}""".toRequestBody("application/json".toMediaType())
+    client.newCall(okhttp3.Request.Builder().url("$u/v1").post(body).build()).execute().use { resp ->
+        val txt = resp.body?.string().orEmpty()
+        if (!resp.isSuccessful) error("HTTP ${resp.code}")
+        val ok = txt.contains("\"status\"") && txt.contains("ok")
+        val version = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.get(1)
+        FlareTestDto(ok, version, if (ok) null else "Unexpected response from FlareSolverr", if (ok) u else null)
+    }
+}.getOrElse { FlareTestDto(false, null, it.message ?: "Couldn't reach FlareSolverr") }
+
+/** Test [explicit] if given; otherwise auto-discover: probe the saved URL then the common defaults,
+ *  first ok wins. Returns the working url in [FlareTestDto.url] so the caller can save it. */
+private fun discoverFlare(explicit: String?): FlareTestDto {
+    if (!explicit.isNullOrBlank()) return probeFlareOne(explicit)
+    val candidates = buildList {
+        val saved = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.url.trim()
+        if (saved.isNotBlank()) add(saved)
+        addAll(FLARE_DEFAULTS)
+    }.distinct()
+    var last = FlareTestDto(false, null, "No FlareSolverr found on the usual endpoints")
+    for (base in candidates) {
+        val r = probeFlareOne(base)
+        if (r.ok) return r
+        last = r
+    }
+    return last
+}
+
+/** First-ever boot only: if the bypass isn't configured, auto-discover a running FlareSolverr and
+ *  wire it up, so a fresh install / container "just works" when a solver is on a default endpoint.
+ *  Marked with a file so it never re-probes on later boots (respecting the user's later choices). */
+private fun autoDetectFlareOnce() {
+    runCatching {
+        val marker = mangautils.core.config.AppConfig.dataDir.resolve(".flare-probed")
+        if (java.nio.file.Files.exists(marker)) return
+        val s = SettingsStore.get()
+        if (s.flareSolverrEnabled || !System.getenv("MU_FLARESOLVERR_URL").isNullOrBlank()) {
+            java.nio.file.Files.writeString(marker, "1"); return // already set up / env-driven
+        }
+        java.nio.file.Files.writeString(marker, "1") // once ever, found or not
+        val found = discoverFlare(null)
+        if (found.ok && found.url != null) {
+            SettingsStore.save(s.copy(flareSolverrUrl = found.url, flareSolverrEnabled = true))
+            applyFlareSolverr(SettingsStore.get())
+            log.info("FlareSolverr auto-detected at {} (first boot) - Cloudflare bypass enabled", found.url)
+        }
+    }
+}
+
 // ---- DTOs (IDs are Strings to survive JS number precision) ----------------------------------
 
 @Serializable
@@ -249,7 +316,7 @@ private fun mangautils.core.source.SourcePref.toDto() =
     SourcePrefDto(index, key, title, summary, type, value, entries, entryValues, enabled)
 
 @Serializable
-private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null)
+private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null, val url: String? = null)
 
 @Serializable
 private data class FlareEventDto(val id: Long, val host: String, val phase: String, val cookies: Int)
@@ -490,6 +557,7 @@ fun main() {
     // Honor a custom downloads directory chosen in Settings.
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
     applyFlareSolverr(SettingsStore.get()) // push the Cloudflare-bypass config into the network layer
+    autoDetectFlareOnce() // first-ever boot: find a running FlareSolverr on a default endpoint and wire it up
     // Detect Cloudflare-protected sources in the background (loads each source once).
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
     // Warm the download-manager series cache in the background so its first open is instant, not a ~3s scan.
@@ -908,29 +976,12 @@ fun Application.module() {
             UpdateScheduler.reschedule() // apply any change to the auto-update interval/toggle
             call.respond(settingsDto(s))
         }
-        // Verify a FlareSolverr instance is reachable (uses the passed url, else the saved one).
+        // Verify a FlareSolverr instance is reachable. With a url it tests that one; blank auto-discovers
+        // across the common local/docker endpoints and returns the working one (FlareTestDto.url).
         get("/api/flaresolverr/test") {
-            val base = (call.queryParam("url")?.takeIf { it.isNotBlank() }
-                ?: eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.url).trim().trimEnd('/')
-            val r = withContext(Dispatchers.IO) {
-                runCatching {
-                    val client = okhttp3.OkHttpClient.Builder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build()
-                    val body = """{"cmd":"sessions.list"}""".toRequestBody("application/json".toMediaType())
-                    client.newCall(okhttp3.Request.Builder().url("$base/v1").post(body).build()).execute().use { resp ->
-                        val txt = resp.body?.string().orEmpty()
-                        if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                        txt
-                    }
-                }
-            }
-            r.fold(
-                onSuccess = { txt ->
-                    val ok = txt.contains("\"status\"") && txt.contains("ok")
-                    val version = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.get(1)
-                    call.respond(FlareTestDto(ok, version, if (ok) null else "Unexpected response from FlareSolverr"))
-                },
-                onFailure = { call.respond(FlareTestDto(false, null, it.message ?: "Couldn't reach FlareSolverr")) },
-            )
+            val explicit = call.queryParam("url")?.takeIf { it.isNotBlank() }
+            val r = withContext(Dispatchers.IO) { discoverFlare(explicit) }
+            call.respond(r)
         }
         // Import a Mihon / Tachiyomi / Suwayomi backup (.tachibk / .proto.gz) — raw gzipped bytes in the body.
         post("/api/backup/import") {

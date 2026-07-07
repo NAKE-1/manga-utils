@@ -149,7 +149,14 @@ export function Settings() {
   async function testFs() {
     setFsTesting(true); setFsTest(null)
     const r = await api.flaresolverrTest(fsUrl.trim() || undefined).catch(() => ({ ok: false, error: 'Request failed' }))
-    setFsTest(r); setFsTesting(false)
+    setFsTesting(false)
+    // Auto-discovery (blank field): if the server found a working endpoint, fill it in + save it.
+    if (r.ok && r.url && r.url !== fsUrl.trim()) {
+      setFsUrl(r.url)
+      const s = await api.saveSettings({ flareSolverrUrl: r.url }).catch(() => null)
+      if (s) setInfo(s)
+    }
+    setFsTest(r)
   }
   async function setFsTtl(n: number) {
     const s = await api.saveSettings({ flareSolverrSessionTtlMinutes: Math.max(1, Math.min(1440, n)) }).catch(() => null)
@@ -478,11 +485,11 @@ export function Settings() {
         </div>
         <div className="set-card">
           <div className="set-row-label">FlareSolverr URL</div>
-          <div className="set-hint">Where FlareSolverr is running (its /v1 endpoint is appended).</div>
-          <input className="set-input" value={fsUrl} onChange={(e) => setFsUrl(e.target.value)} onBlur={saveFsUrl} placeholder="http://localhost:8191" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+          <div className="set-hint">Where FlareSolverr is running (its /v1 endpoint is appended). <b>Leave blank and hit Test to auto-detect</b> a running instance (localhost, the Docker sibling, the host, …).</div>
+          <input className="set-input" value={fsUrl} onChange={(e) => setFsUrl(e.target.value)} onBlur={saveFsUrl} placeholder="http://localhost:8191 — or blank to auto-detect" spellCheck={false} autoCapitalize="off" autoCorrect="off" />
           <div className="set-actions">
-            <button className="btn" disabled={fsTesting} onClick={testFs}>{fsTesting ? 'Testing…' : 'Test connection'}</button>
-            {fsTest && <span className={'set-msg' + (fsTest.ok ? '' : ' err')}>{fsTest.ok ? `Connected${fsTest.version ? ` · v${fsTest.version}` : ''}` : (fsTest.error || 'Failed')}</span>}
+            <button className="btn" disabled={fsTesting} onClick={testFs}>{fsTesting ? 'Searching…' : 'Test / auto-detect'}</button>
+            {fsTest && <span className={'set-msg' + (fsTest.ok ? '' : ' err')}>{fsTest.ok ? `✓ Found FlareSolverr${fsTest.url ? ` at ${fsTest.url}` : ''}${fsTest.version ? ` · v${fsTest.version}` : ''}` : (fsTest.error || 'Failed')}</span>}
           </div>
         </div>
         <div className="set-card">

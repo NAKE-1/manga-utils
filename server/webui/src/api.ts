@@ -146,7 +146,7 @@ export const api = {
     fetch(`/api/bookmarks?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&on=${on}`, { method: 'POST' }),
 
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
-  flaresolverrTest: (url?: string) => getJson<{ ok: boolean; version?: string; error?: string }>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
+  flaresolverrTest: (url?: string) => getJson<{ ok: boolean; version?: string; error?: string; url?: string }>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
   backupPreview: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/preview', { method: 'POST', body: data })
