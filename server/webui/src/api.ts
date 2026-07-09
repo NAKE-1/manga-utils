@@ -222,6 +222,13 @@ export const api = {
   stopDownload: (id: string) => fetch(`/api/downloads/stop?id=${encodeURIComponent(id)}`, { method: 'POST' }),
   stopAllDownloads: () => fetch('/api/downloads/stop-all', { method: 'POST' }),
   clearDownloads: () => fetch('/api/downloads/clear', { method: 'POST' }),
+  removeDownload: (id: string) => fetch(`/api/downloads/remove?id=${encodeURIComponent(id)}`, { method: 'POST' }),
+
+  // Mass download (whole-library)
+  massPlan: () => getJson<MassPlan>('/api/downloads/mass/plan'),
+  massStart: (items: { sourceId: string; mangaUrl: string }[]) =>
+    fetch('/api/downloads/mass/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then((r) => r.json() as Promise<{ count: number }>),
+  libraryUpdate: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json()),
 
   // Download manager (on-disk content)
   manageDownloads: () => getJson<ManagedSeries[]>('/api/downloads/manage'),
@@ -231,6 +238,9 @@ export const api = {
   deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
 }
+
+export interface MassPlanItem { sourceId: string; mangaUrl: string; title: string; source: string; total: number; downloaded: number; missing: number }
+export interface MassPlan { items: MassPlanItem[]; totalMissing: number; seriesWithMissing: number }
 
 export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean }
 export interface ManagedChapter { name: string; pages: number; bytes: number; cbz: boolean; complete: boolean }

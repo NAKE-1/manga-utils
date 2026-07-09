@@ -351,6 +351,11 @@ export function Settings() {
           <div className="set-actions"><button className="btn primary" onClick={() => nav('/downloads/manage')}>Manage downloads</button></div>
         </div>
         <div className="set-card">
+          <div className="set-row-label">Mass download</div>
+          <div className="set-hint">Scan the whole library and queue every missing chapter — pick which series to include before it starts.</div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/mass-download')}>Download missing chapters</button></div>
+        </div>
+        <div className="set-card">
           <button className="set-toggle" onClick={togglePerSource}>
             <div>
               <div className="set-row-label">Allow same-source parallel</div>

@@ -178,4 +178,7 @@ object DownloadQueue {
         futures.values.forEach { it.cancel(true) }
     }
     fun clearFinished() { tasks.entries.removeIf { !it.value.active } }
+
+    /** Remove ONE finished/failed/stopped task row (no-op while it's still active). */
+    fun remove(id: String) { tasks[id]?.let { if (!it.active) tasks.remove(id) } }
 }

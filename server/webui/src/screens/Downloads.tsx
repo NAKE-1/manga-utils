@@ -51,7 +51,7 @@ export function Downloads() {
   async function retry(t: DlTask) {
     if (!t.failedChapters.length) return
     const i = t.mangaKey.indexOf('|'); const sid = t.mangaKey.slice(0, i); const mangaUrl = t.mangaKey.slice(i + 1)
-    await api.clearDownloads().catch(() => {}) // drop finished rows so the retried task doesn't double-up
+    await api.removeDownload(t.id).catch(() => {}) // drop ONLY this row so a retry doesn't double-up (keep other failed rows)
     await api.enqueueDownload(sid, mangaUrl, t.mangaTitle, t.failedChapters).catch(() => {})
     setData(await api.downloads().catch(() => data))
   }

@@ -10,6 +10,7 @@ import { Settings } from './screens/Settings'
 import { Extensions } from './screens/Extensions'
 import { Downloads } from './screens/Downloads'
 import { DownloadsManager } from './screens/DownloadsManager'
+import MassDownload from './screens/MassDownload'
 import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher } from './components/Toast'
 import { PullToRefresh } from './components/PullToRefresh'
@@ -42,6 +43,7 @@ export function App() {
               <Route path="/extensions" element={<Extensions />} />
               <Route path="/downloads" element={<Downloads />} />
               <Route path="/downloads/manage" element={<DownloadsManager />} />
+              <Route path="/mass-download" element={<MassDownload />} />
               <Route path="/manga/:sourceId" element={<Detail />} />
               <Route path="*" element={<Stub name="Not found" />} />
             </Routes>

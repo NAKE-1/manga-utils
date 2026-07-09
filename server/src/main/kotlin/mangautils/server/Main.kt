@@ -228,6 +228,20 @@ private data class LibraryDto(
 @Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean)
 @Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
+// Mass-download: a per-series preview (downloaded/total + how many would queue) and the grand total.
+@Serializable private data class MassPlanItemDto(
+    val sourceId: String,
+    val mangaUrl: String,
+    val title: String,
+    val source: String,
+    val total: Int,
+    val downloaded: Int,
+    val missing: Int,
+)
+@Serializable private data class MassPlanDto(val items: List<MassPlanItemDto>, val totalMissing: Int, val seriesWithMissing: Int)
+@Serializable private data class MassStartItem(val sourceId: String, val mangaUrl: String)
+@Serializable private data class MassStartReq(val items: List<MassStartItem>)
+
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
@@ -852,6 +866,10 @@ fun Application.module() {
         }
         post("/api/downloads/stop-all") { DownloadQueue.stopAll(); call.respond(downloadsSnapshot()) }
         post("/api/downloads/clear") { DownloadQueue.clearFinished(); call.respond(downloadsSnapshot()) }
+        post("/api/downloads/remove") {
+            val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            DownloadQueue.remove(id); call.respond(downloadsSnapshot())
+        }
 
         // ---- Download manager (browse / delete on-disk content) ----
         get("/api/downloads/manage") {
@@ -913,6 +931,44 @@ fun Application.module() {
                 plans.sumOf { it.second.size }
             }
             call.respond(CountDto(n))
+        }
+
+        // Mass download — plan: per-series downloaded/total (unique chapters, mirrors the library badge)
+        // + the grand total that would queue. Uses cached knownChapters (no network); the UI can run
+        // /api/library/update first to refresh. Sorted most-missing first.
+        get("/api/downloads/mass/plan") {
+            val plan = withContext(Dispatchers.IO) {
+                val items = LibraryStore.list().map { e ->
+                    val onDisk = runCatching { DownloadManager.downloadedChapterNames(e.title) }.getOrDefault(emptySet())
+                    val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
+                    val total = groups.size
+                    val downloaded = groups.count { (_, vs) -> vs.any { DownloadManager.sanitize(it.name) in onDisk } }
+                    val src = runCatching { SourceManager.loadSource(e.sourceId)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: e.sourceId.toString()
+                    MassPlanItemDto(e.sourceId.toString(), e.mangaUrl, e.title, src, total, downloaded, total - downloaded)
+                }.sortedWith(compareByDescending<MassPlanItemDto> { it.missing }.thenBy { it.title.lowercase() })
+                MassPlanDto(items, items.sumOf { it.missing }, items.count { it.missing > 0 })
+            }
+            call.respond(plan)
+        }
+
+        // Mass download — start: enqueue every missing chapter (one variant per unique number) for the
+        // chosen series. Returns the count queued.
+        post("/api/downloads/mass/start") {
+            val body = call.receive<MassStartReq>()
+            val wanted = body.items.mapNotNull { i -> i.sourceId.toLongOrNull()?.let { it to i.mangaUrl } }.toSet()
+            val queued = withContext(Dispatchers.IO) {
+                var n = 0
+                LibraryStore.list().filter { (it.sourceId to it.mangaUrl) in wanted }.forEach { e ->
+                    val onDisk = runCatching { DownloadManager.downloadedChapterNames(e.title) }.getOrDefault(emptySet())
+                    val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
+                    val missing = groups.filterNot { (_, vs) -> vs.any { DownloadManager.sanitize(it.name) in onDisk } }
+                        .map { (_, vs) -> vs.first() }
+                        .map { DownloadQueue.Chapter(it.url, it.name) }
+                    if (missing.isNotEmpty()) { DownloadQueue.enqueue(e.sourceId, e.mangaUrl, e.title, missing); n += missing.size }
+                }
+                n
+            }
+            call.respond(CountDto(queued))
         }
 
         // Downloaded-files management for a series (used by the remove-from-library confirm flow).
