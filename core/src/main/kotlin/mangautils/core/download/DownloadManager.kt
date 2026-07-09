@@ -426,6 +426,20 @@ class DownloadManager(
             }.getOrDefault(0)
         }
 
+        /** Sanitized base names (no .cbz) of downloaded chapters for a series — one dir listing, for
+         *  matching against known chapters (so the download badge can count UNIQUE chapters, not files). */
+        fun downloadedChapterNames(title: String): Set<String> {
+            val dir = AppConfig.downloadsDir.resolve(sanitize(title))
+            if (!java.nio.file.Files.isDirectory(dir)) return emptySet()
+            return runCatching {
+                java.nio.file.Files.list(dir).use { st ->
+                    st.filter { java.nio.file.Files.isDirectory(it) || it.toString().endsWith(".cbz") }
+                        .map { it.fileName.toString().removeSuffix(".cbz") }
+                        .toList().toSet()
+                }
+            }.getOrDefault(emptySet())
+        }
+
         /** The on-disk cover for a downloaded series (cover.jpg/png/webp/…), or null. */
         fun localCover(title: String): java.nio.file.Path? {
             val dir = AppConfig.downloadsDir.resolve(sanitize(title))

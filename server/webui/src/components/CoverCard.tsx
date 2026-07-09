@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { IconDownload } from './icons'
+import noPoster from '../assets/no-poster.png'
 
 // Warm the detail (server + browser cache) on hover/press so the tap opens instantly.
 const prefetched = new Set<string>()
@@ -47,8 +48,8 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
       onPointerDown={(e) => { if (e.pointerType === 'mouse') prefetchDetail(sourceId, url) }}
     >
       <div className="cover-frame">
-        {!loaded && !failed && <div className="cover-skel skeleton" />}
-        {failed && !loaded && <div className="cover-fail" aria-hidden>{title.slice(0, 1).toUpperCase()}</div>}
+        {cover && !loaded && !failed && <div className="cover-skel skeleton" />}
+        {(failed || !cover) && !loaded && <img className="cover-fail-img" src={noPoster} alt="" aria-hidden />}
         {onRemove && <button className="cover-remove" aria-label="Remove" onClick={(e) => { e.stopPropagation(); onRemove() }}>✕</button>}
         {cover && (
           <img

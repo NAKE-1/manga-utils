@@ -754,9 +754,15 @@ fun Application.module() {
             val entries = withContext(Dispatchers.IO) {
                 LibraryService.list().map {
                     val last = it.knownChapters.maxByOrNull { c -> c.number }
-                    val downloaded = runCatching { DownloadManager.downloadCount(it.title) }.getOrDefault(0)
+                    // Group known chapters by number (dedup multi-scanlator variants); a chapter counts as
+                    // downloaded if ANY of its variants has a file on disk. Badge = unique chapters, not the
+                    // scanlator-inflated total, so a fully-downloaded series reads green (not perpetual yellow).
+                    val onDisk = runCatching { DownloadManager.downloadedChapterNames(it.title) }.getOrDefault(emptySet())
+                    val groups = it.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
+                    val total = groups.size
+                    val downloaded = groups.count { (_, vs) -> vs.any { c -> DownloadManager.sanitize(c.name) in onDisk } }
                     LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size,
-                        last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0, downloaded, it.knownChapters.size)
+                        last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0, downloaded, total)
                 }
             }
             call.respond(entries)

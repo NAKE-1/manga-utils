@@ -6,6 +6,7 @@ import { ProgressRing } from '../components/ProgressRing'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
+import noPoster from '../assets/no-poster.png'
 
 // Chapters oldest-first, for finding the "next to read". Sorting by chapter number only works when
 // the source actually parses numbers; some (e.g. aquamanga) leave them at -1, which turns the sort
@@ -277,7 +278,9 @@ export function Detail() {
     <BackWrap nav={nav}>
       <div className="detail-head">
         <div className="detail-cover">
-          {m.thumbnailUrl ? <img src={coverUrl(sourceId, m.thumbnailUrl, m.title)} alt="" /> : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
+          {m.thumbnailUrl
+            ? <img src={coverUrl(sourceId, m.thumbnailUrl, m.title)} alt="" onError={(e) => { if (e.currentTarget.src !== noPoster) e.currentTarget.src = noPoster }} />
+            : <img src={noPoster} alt="" />}
         </div>
         <div className="detail-head-info">
           <h1 className="detail-title">{m.title}</h1>
