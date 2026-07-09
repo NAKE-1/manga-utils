@@ -132,6 +132,12 @@ class DownloadManager(
                 }
 
             var anySuccess = false
+            // Job-local circuit breaker: a source that keeps failing (e.g. a managed-Cloudflare site
+            // like kagane whose images a cookie bypass can't fetch) is skipped for the rest of the job
+            // after MAX_SOURCE_FAILURES consecutive misses, instead of grinding a doomed solve per chapter.
+            // Kept separate from the browse-path SourceCircuits: browse may succeed via the FlareSolverr
+            // rendered-response fallback even when image downloads can't.
+            val srcFails = java.util.concurrent.ConcurrentHashMap<Long, Int>()
             for (chapter in targets) {
                 if (cancelled()) { log.info("download stopped - {} finished, remaining skipped", job.attempts.count { it.outcome == "ok" }); break }
                 val candidates =
@@ -142,8 +148,15 @@ class DownloadManager(
                             val match = chs.firstOrNull { chapterNumberOf(it) == target }
                             if (match != null) add(Candidate(ref.sourceId, src, match))
                         }
-                    }
-                if (downloadChapter(job, title, details, chapter, candidates)) anySuccess = true
+                    }.filter { (srcFails[it.sourceId] ?: 0) < MAX_SOURCE_FAILURES }
+                if (candidates.isEmpty()) {
+                    job.attempts.add(
+                        JobAttempt(sourceId = 0, target = chapter.name, outcome = "skipped", message = "source unavailable (too many consecutive failures)"),
+                    )
+                    StatusStore.save(job)
+                    continue
+                }
+                if (downloadChapter(job, title, details, chapter, candidates, srcFails)) anySuccess = true
             }
 
             job.state = if (anySuccess) JobState.DONE else JobState.FAILED
@@ -164,6 +177,7 @@ class DownloadManager(
         details: SManga,
         chapter: SChapter,
         candidates: List<Candidate>,
+        srcFails: MutableMap<Long, Int> = java.util.concurrent.ConcurrentHashMap(),
     ): Boolean {
         val dest = destFor(title, chapter)
         if (java.nio.file.Files.exists(dest) && !shouldReplaceExisting(chapter.name, dest)) {
@@ -202,10 +216,12 @@ class DownloadManager(
                     ),
                 )
                 StatusStore.save(job)
+                srcFails[cand.sourceId] = 0 // this source is healthy again — reset its failure streak
                 log.debug("Saved '{}' from source {} ({} pages)", chapter.name, cand.sourceId, images.size)
                 return true
             } catch (e: Exception) {
                 if (cancelled()) return false // stopped mid-page: discard this partial chapter, keep the rest
+                srcFails.merge(cand.sourceId, 1, Int::plus)
                 job.attempts.add(
                     JobAttempt(
                         sourceId = cand.sourceId,
@@ -395,6 +411,9 @@ class DownloadManager(
             ?: error("Source $sourceId is not installed, or is not an HTTP source")
 
     companion object {
+        /** Skip a source for the rest of a job after this many consecutive chapter failures. */
+        private const val MAX_SOURCE_FAILURES = 4
+
         fun sanitize(name: String): String =
             name
                 .replace(Regex("[\\\\/:*?\"<>|]"), "_")
