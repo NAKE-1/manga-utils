@@ -12,12 +12,15 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Cookie
 import okhttp3.FormBody
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -101,6 +104,18 @@ class FlareSolverrInterceptor(
             if (!isCloudflareChallenge(retried)) return retried // cleared
             retried.close()
             if (last) {
+                // Suwayomi PR #990: a managed/Turnstile challenge can't be cleared by cookie replay
+                // (the clearance is bound to the browser's fingerprint), but FlareSolverr's real browser
+                // DID fetch the page — so for TEXT requests (search/browse/details) hand its rendered
+                // body back to the extension. Not usable for images (a browser returns HTML, not binary).
+                if (request.method.equals("GET", true) && !isImageUrl(request.url)) {
+                    val rendered = runCatching { solve(request, returnOnlyCookies = false) }.getOrNull()
+                    if (!rendered?.response.isNullOrBlank()) {
+                        FlareSolverrConfig.recordSolveDone(host, cookies.size)
+                        log.info { "FlareSolverr: cookie replay still blocked on $host — returning its rendered response body instead" }
+                        return flareResponse(request, rendered!!)
+                    }
+                }
                 FlareSolverrConfig.recordSolveFail(host)
                 throw IOException(
                     "Cloudflare is still blocking $host after $attempt FlareSolverr solve(s) — this " +
@@ -113,7 +128,7 @@ class FlareSolverrInterceptor(
         throw IOException("Cloudflare bypass failed for $host.")
     }
 
-    private fun solve(request: Request): FsSolution? {
+    private fun solve(request: Request, returnOnlyCookies: Boolean = true): FsSolution? {
         val cfg = FlareSolverrConfig
         val isPost = request.method.equals("POST", ignoreCase = true)
         val postData =
@@ -141,6 +156,7 @@ class FlareSolverrInterceptor(
                 maxTimeout = cfg.timeoutMs,
                 session = cfg.session.ifBlank { null },
                 sessionTtlMinutes = cfg.sessionTtlMinutes.takeIf { it > 0 },
+                returnOnlyCookies = returnOnlyCookies,
                 postData = if (usePost) postData else null,
             )
 
@@ -179,12 +195,30 @@ class FlareSolverrInterceptor(
         }.getOrDefault(false)
     }
 
+    /** True for page-image requests — the FlareSolverr rendered-body fallback can't serve binary. */
+    private fun isImageUrl(url: HttpUrl): Boolean {
+        val name = url.encodedPath.substringAfterLast('/').lowercase()
+        return IMAGE_EXTS.any { name.endsWith(it) }
+    }
+
+    /** Wrap FlareSolverr's rendered page body as an OkHttp response the extension can parse. */
+    private fun flareResponse(request: Request, sol: FsSolution): Response =
+        Response.Builder()
+            .request(request)
+            .protocol(Protocol.HTTP_1_1)
+            .code(if (sol.status in 100..599) sol.status else 200)
+            .message("OK (FlareSolverr)")
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body((sol.response ?: "").toResponseBody("text/html; charset=utf-8".toMediaType()))
+            .build()
+
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private val ERROR_CODES = listOf(403, 503)
         private val SERVER_CHECK = listOf("cloudflare-nginx", "cloudflare")
         private val CHALLENGE_MARKERS =
             listOf("challenge-platform", "cf-browser-verification", "_cf_chl", "cf_chl_opt", "Just a moment", "cf-mitigated")
+        private val IMAGE_EXTS = listOf(".webp", ".jpg", ".jpeg", ".png", ".gif", ".avif", ".bmp")
     }
 }
 
@@ -214,6 +248,7 @@ data class FsSolution(
     val status: Int = 0,
     val userAgent: String? = null,
     val cookies: List<FsCookie> = emptyList(),
+    val response: String? = null, // rendered page body (only when solved with returnOnlyCookies=false)
 )
 
 @Serializable

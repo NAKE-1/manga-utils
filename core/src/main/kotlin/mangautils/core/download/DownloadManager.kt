@@ -401,6 +401,7 @@ class DownloadManager(
                 .replace(Regex("\\s+"), " ")
                 .trim()
                 .take(150)
+                .trimEnd(' ', '.') // Windows forbids names ending in '.' or ' ' — chapters like "…Are..." else never save
                 .ifBlank { "untitled" }
 
         /** True if this chapter is downloaded — as a CBZ file or a (non-empty) image folder. */

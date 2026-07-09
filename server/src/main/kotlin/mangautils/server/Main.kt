@@ -1350,7 +1350,11 @@ private suspend fun browse(
             call.respond(it)
         },
         onFailure = {
-            if (it !is kotlinx.coroutines.CancellationException) mangautils.core.source.SourceCircuits.api.recordFailure(id)
+            // A timeout IS a source failure (must trip the breaker so flaky/slow sources fast-fail);
+            // only a PLAIN cancellation (client navigated away) shouldn't count.
+            if (it !is kotlinx.coroutines.CancellationException || it is kotlinx.coroutines.TimeoutCancellationException) {
+                mangautils.core.source.SourceCircuits.api.recordFailure(id)
+            }
             markFailure(id, it)
             call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it)))
         },
