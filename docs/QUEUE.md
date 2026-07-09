@@ -40,19 +40,28 @@ the phone reads from Proxmox, which is ~20 commits behind.
 
 ### Tier 3 — medium
 7. **App modes in the ☰ drawer — Normal / Incognito / Dev** (segmented control or dropdown).
-   - **Incognito (for NSFW):** session-only history. While on, reading / continue-reading go to an
-     **ephemeral** store, NOT the persistent `HistoryStore` — the Continue-reading row + History page
-     show the incognito session's history, and it's **discarded when you switch back to Normal**, so
-     NSFW reading leaves no trace in normal history. Needs a flag/header on the read + history-record
-     calls so the server routes to the ephemeral store vs persistent (single-user server, so the mode
-     is a UI toggle the client sends). Consider: separate search-recents; optionally only surface NSFW
-     sources while incognito.
+   **Incognito is a FULLY SEPARATE PROFILE** (not just ephemeral history) — this makes it a bigger
+   feature (data-namespacing across the app).
+   - **Separate everything:** Incognito has its **own installed extensions/sources, own library, own
+     history, own search + recents, own downloads** — isolated from Normal. You install NSFW
+     extensions and add manga *while in Incognito* and they live only there; switching to Normal shows
+     none of it. Implemented via a **profile-scoped data namespace** — e.g. Normal = `data/`,
+     Incognito = `data/incognito/` (+ its own downloads dir) — with every store (`LibraryStore`,
+     `HistoryStore`, `InstalledStore`/extensions, `ReadStore`, `BookmarkStore`, browse/search state)
+     resolving its path from the **active profile**, which the client sends as a mode flag/header
+     (single-user server, so the mode is a UI toggle). Extension loading/`SourceManager` must load the
+     active profile's extensions dir.
+   - **"Wipe Incognito" button:** nukes the entire Incognito namespace — its extensions, library,
+     history, search, and downloads — one click, back to empty. (Confirm dialog.)
+   - **Persistence:** Incognito **persists on disk until wiped** (so you can build up an NSFW
+     collection), NOT per-session-ephemeral. (This is a deliberate change from the earlier ephemeral idea.)
    - **Dev mode toggle:** gate the Developer settings section + dev-only UI/diagnostics behind it
      (hidden by default, shown when on).
-   - UI: in `Drawer.tsx` — a Normal|Incognito segment + a Dev switch. Persist Dev (localStorage);
-     **decide** whether Incognito persists across reloads or always resets on app close (privacy → reset).
-   - **Decisions to confirm:** exactly what Incognito hides (history only, or also library-adds /
-     new-chapter badges?); does it reset on reload; should NSFW sources be hidden unless incognito.
+   - UI: `Drawer.tsx` — a Normal|Incognito segment + a Dev switch. Mode persists in localStorage so a
+     reload keeps you where you were; a subtle app-wide indicator when Incognito is active.
+   - **Effort:** substantial — the whole server data layer becomes profile-aware. **Decisions to
+     confirm:** does downloads get namespaced too (yes, so NSFW files are isolated + wiped); is there a
+     lock/PIN on entering Incognito (probably not for v1); does Wipe also clear the mode's browse cache.
 8. **Migration** — move a followed series to another source, keeping progress (match chapters by
    number, carry read/bookmarks/resume, replace-with-undo, leave existing downloads). Scoped.
 8. **JCEF-fetch for images (managed-CF downloads/reading).** Our unique edge vs Suwayomi (we bundle
