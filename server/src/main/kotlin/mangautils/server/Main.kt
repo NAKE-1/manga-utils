@@ -383,6 +383,7 @@ private data class DiagDto(
 )
 
 @Serializable private data class ErrorDto(val error: String)
+@Serializable private data class ResolveDto(val sourceId: String, val mangaUrl: String, val title: String, val cover: String? = null)
 
 @Serializable
 private data class MangaStateDto(val inLibrary: Boolean, val bookmarked: Boolean, val read: List<String>, val bookmarks: List<String>)
@@ -654,6 +655,38 @@ fun Application.module() {
         get("/api/sources/{id}/search") {
             val q = call.queryParam("q") ?: ""
             browse(call, "search|$q") { id, page -> SourceBrowser.searchAsync(id, q, page) }
+        }
+
+        // Paste a source URL (e.g. https://atsu.moe/manga/-tya) → match the installed source by host and
+        // resolve the manga directly, bypassing search (some sites' search APIs omit titles that exist).
+        get("/api/resolve") {
+            val raw = call.queryParam("url")?.trim()
+            if (raw.isNullOrBlank()) return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("no url"))
+            val normalized = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
+            val uri = runCatching { java.net.URI(normalized) }.getOrNull()
+            val host = uri?.host?.removePrefix("www.")?.lowercase()
+            if (host.isNullOrBlank()) return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("Not a URL"))
+            val path = (uri.path ?: "").trimEnd('/')
+            val lastSeg = path.substringAfterLast('/')
+            // A site path can map to the extension's manga-url in a few ways (full path, bare slug, …) — try each.
+            val candidates = listOf(path, path.removePrefix("/"), "/$lastSeg", lastSeg)
+                .map { it.trim() }.filter { it.isNotBlank() }.distinct()
+            val result = withContext(mangautils.core.async.Pools.source) {
+                for (s in InstalledStore.list().flatMap { it.sources }) {
+                    val http = runCatching { SourceManager.loadSource(s.id) as? eu.kanade.tachiyomi.source.online.HttpSource }.getOrNull() ?: continue
+                    val srcHost = runCatching { java.net.URI(http.baseUrl).host?.removePrefix("www.")?.lowercase() }.getOrNull() ?: continue
+                    if (srcHost != host) continue
+                    for (cand in candidates) {
+                        val d = runCatching { SourceBrowser.detailsAsync(s.id, cand) }.getOrNull()
+                        if (d != null && (d.chapters.isNotEmpty() || d.manga.title.isNotBlank())) {
+                            return@withContext ResolveDto(s.id.toString(), cand, d.manga.title, d.manga.thumbnail_url)
+                        }
+                    }
+                }
+                null
+            }
+            if (result == null) call.respond(HttpStatusCode.NotFound, ErrorDto("Couldn't open that URL — is its source installed?"))
+            else call.respond(result)
         }
 
         get("/api/sources/{id}/manga") {

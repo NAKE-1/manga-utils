@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { api, coverUrl, mediaType, isWebViewWarmup, Source, Manga } from '../api'
+import { toast } from '../components/Toast'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
@@ -32,6 +33,7 @@ export function Search() {
   // Deep-linkable search: /search?source=<id>&q=<query>&mode=latest. The URL is the shareable/
   // bookmarkable state; the module cache still handles instant restore-on-Back.
   const [sp, setSp] = useSearchParams()
+  const nav = useNavigate()
   const urlSource = sp.get('source') || ''
   const urlQ = sp.get('q') || ''
   const urlMode = sp.get('mode') as Mode | null
@@ -164,9 +166,21 @@ export function Search() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the source SET, not its array identity
   }, [isGlobal, query, sourceKey])
 
-  function submit(q: string) {
+  async function submit(q: string) {
     const t = q.trim()
     if (!t) { if (!isGlobal) setMode('popular'); setQuery(''); return }
+    // Pasted a source URL (e.g. https://atsu.moe/manga/-tya)? Resolve + open it directly — bypasses
+    // search, which some sites' APIs omit titles from even when the manga exists.
+    if (/^https?:\/\//i.test(t) || /^[\w-]+(?:\.[\w-]+)+\/\S/.test(t)) {
+      toast('Opening link…', 'info', 2500, 'resolve')
+      try {
+        const r = await api.resolve(t)
+        nav(`/manga/${r.sourceId}?url=${encodeURIComponent(r.mangaUrl)}`)
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "Couldn't open that URL", 'error', 5000, 'resolve')
+      }
+      return
+    }
     pushRecent(t); setRecent(recents()); setInput(t); if (!isGlobal) setMode('search'); setQuery(t)
   }
 
@@ -176,7 +190,7 @@ export function Search() {
         <div className="search-bar-wrap">
           <div className="search-bar">
             <IconSearch className="sb-ic" />
-            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { submit(input); e.currentTarget.blur() } }} placeholder={isGlobal ? 'Search all sources…' : 'Search manga…'} inputMode="search" enterKeyHint="search" />
+            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { submit(input); e.currentTarget.blur() } }} placeholder={isGlobal ? 'Search all sources or paste a link…' : 'Search or paste a link…'} inputMode="search" enterKeyHint="search" />
             {input && <button className="sb-clear" onClick={() => { setInput(''); submit('') }} aria-label="Clear">✕</button>}
           </div>
         </div>

@@ -118,6 +118,12 @@ export const api = {
   library: () => getJson<LibraryEntry[]>('/api/library'),
   updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }>),
   updateProgress: () => getJson<{ done: number; total: number; running: boolean }>('/api/library/update/progress'),
+  // Resolve a pasted source URL (e.g. https://atsu.moe/manga/-tya) to an installed source's manga.
+  resolve: async (url: string) => {
+    const r = await fetch(`/api/resolve?url=${encodeURIComponent(url)}`)
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Couldn't open that URL")
+    return r.json() as Promise<{ sourceId: string; mangaUrl: string; title: string; cover?: string }>
+  },
   history: () => getJson<HistoryItem[]>('/api/history'),
   popular: (id: string, page = 1, signal?: AbortSignal) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`, 2, 15000, signal),
   latest: (id: string, page = 1, signal?: AbortSignal) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`, 2, 15000, signal),
