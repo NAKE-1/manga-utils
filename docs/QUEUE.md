@@ -8,35 +8,33 @@ Ranked by impact × effort. A big session's worth of fixes are committed but **o
 the phone reads from Proxmox, which is ~20 commits behind.
 
 ### Tier 1 — highest impact / ship-blockers
-1. **SHIP: Docker rebuild → push → Proxmox `compose pull && up -d`.** Everything this session
-   (open-by-URL, download-badge fix, No Poster, backup reader-prefs + restore progress bar,
-   auto-update time-of-day + scan toast, working drawer, FlareSolverr auto-detect, scanlator read
-   fix, circuit-breaker, stop-download) is only on `w`. The phone has none of it. **Do first.**
-2. **Filename sanitize: strip trailing dots/spaces.** Chapters whose name ends in `...` (e.g. "The
-   Guy She Was Interested In…" Ch.138 "…Are...") never save on Windows and forever show "not
-   downloaded" (write fails / `isDownloaded` mismatch). One line: `.take(150).trim(' ', '.')` in
-   `DownloadManager.sanitize`. Aligns with Windows' auto-trim so partial saves get recognized. Also a
-   cross-platform hazard (Linux allows trailing dots). Small, high value.
-3. **Circuit-breaker: count timeouts as failures.** In `Main.kt` `browse()` onFailure the guard
-   `if (it !is CancellationException)` wrongly skips `TimeoutCancellationException`, so a source that
-   times out (e.g. `6084…` at 20s every search) NEVER trips the breaker and stalls global search 20s
-   each time. Fix = the same TimeoutCancellationException-vs-plain-cancel distinction already used in
-   `SourceImage`. Small, kills the search stalls.
+1. **SHIP: Docker rebuild → push → Proxmox `compose pull && up -d`.** Everything (open-by-URL,
+   download-badge fix, No Poster, backup reader-prefs + restore progress bar, auto-update time-of-day
+   + scan toast, working drawer, FlareSolverr auto-detect, scanlator read fix, circuit-breaker,
+   stop-download, PLUS the 2026-07-09 batch below) is only on `w`. The phone has none of it. Per user:
+   **ship once a few more features are done.** ← still the only open Tier-1 item.
+2. ✅ **DONE (0ddbe59) — Filename sanitize: strip trailing dots/spaces.** `trimEnd(' ', '.')` after
+   truncation in `DownloadManager.sanitize`. Chapters like Ch.138 "…Are..." now save on Windows.
+3. ✅ **DONE (0ddbe59) — Circuit-breaker counts timeouts.** `browse()` onFailure now records a
+   `TimeoutCancellationException` as a source failure → flaky sources trip the breaker; no 20s stalls.
 
 ### Tier 2 — high impact, more effort
-4. **FlareSolverr-response fallback (text).** Adopt Suwayomi PR #990: when cookie-replay is still
-   blocked but FlareSolverr saw no challenge, return FlareSolverr's rendered response body instead of
-   replaying cookies. Fixes **comix/kagane SEARCH + browse** (managed-challenge sites). Does NOT work
-   for images (FlareSolverr returns HTML, not binary). Proven approach.
-5. **Download-path circuit breaker + skip managed-challenge sources.** Downloads have no breaker, so a
-   managed-CF source (kagane) grinds every chapter doing 2 FlareSolverr solves (~2s) each, all doomed.
-   Prereq for a sane mass-download. Skip a source after N managed-challenge fails.
-6. **Mass-download library** (user-requested). Settings button → scan for new → **plan preview**
-   (per-manga, grouped by source, chapter counts, exclude unreachable/managed-CF sources) → confirm →
-   enqueue "missing only". Reuse `LibraryService.update`, the badge's `downloadedChapterNames`, and
-   `DownloadQueue`. Decisions to confirm: everything-missing vs new-only (default: missing); summary
-   vs per-manga list (lean summary+expand); auto-skip managed-CF; no size estimate (too costly);
-   dedicated preview screen.
+4. ✅ **DONE (0ddbe59) — FlareSolverr rendered-response fallback (text).** Suwayomi PR #990: on a
+   still-blocked GET (non-image), re-solve with `returnOnlyCookies=false` and return FlareSolverr's
+   rendered body. Should fix comix/kagane **search + browse**. NOT for images (browser → HTML). Needs
+   on-device verification. Caveat: JSON-API sources may get browser-wrapped HTML — watch for that.
+5. ✅ **DONE (849ff1f) — Download-path job-local circuit breaker.** A source that fails 4 consecutive
+   chapters in a job is skipped for the rest of that job (remaining chapters → "skipped" fast) instead
+   of grinding doomed FlareSolverr solves. Reset on any success. Separate from the browse breaker.
+6. ✅ **DONE (e2ad631) — Mass-download library.** Settings → "Download missing chapters" → MassDownload
+   screen: grand-total missing + per-series `downloaded/total` + `+missing` badge, checkboxes,
+   select-all/clear, "Show complete" toggle, "Scan for new" (runs a library update first), sticky
+   "Download N chapters" → Downloads. Endpoints `GET /api/downloads/mass/plan` + `POST .../start`.
+   (Managed-CF sources aren't pre-excluded — the #5 download breaker skips them mid-job.)
+
+- ✅ **DONE (e2ad631) — Retry bug.** Retrying one failed task called `clearDownloads()` (wiped ALL
+  finished rows) so other failed tasks vanished. Added `DownloadQueue.remove(id)` + `POST
+  /api/downloads/remove`; retry now removes only its own row.
 
 ### Tier 3 — medium
 7. **App modes in the ☰ drawer — Normal / Incognito / Dev** (segmented control or dropdown).
@@ -84,7 +82,8 @@ the phone reads from Proxmox, which is ~20 commits behind.
 - Reader polish (tap-zone, brightness, zoom, paged) — "none of the reader stuff matters."
 - HTTP/2 / two-port — not worth it on working sources.
 - Desktop Compose UI — focus is the web UI.
-- mangadot / mangafire — managed-CF / vrf; extension-side, not our code.
+- mangadot — managed-CF / outdated extension; extension-side, not our code.
+- ~~mangafire~~ — **working now** (per user 2026-07-09); the `vrf`/WebView provider fix landed.
 
 
 ## Next up (source bugs — hurt daily use)
