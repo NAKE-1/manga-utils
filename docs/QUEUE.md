@@ -39,7 +39,21 @@ the phone reads from Proxmox, which is ~20 commits behind.
    dedicated preview screen.
 
 ### Tier 3 — medium
-7. **Migration** — move a followed series to another source, keeping progress (match chapters by
+7. **App modes in the ☰ drawer — Normal / Incognito / Dev** (segmented control or dropdown).
+   - **Incognito (for NSFW):** session-only history. While on, reading / continue-reading go to an
+     **ephemeral** store, NOT the persistent `HistoryStore` — the Continue-reading row + History page
+     show the incognito session's history, and it's **discarded when you switch back to Normal**, so
+     NSFW reading leaves no trace in normal history. Needs a flag/header on the read + history-record
+     calls so the server routes to the ephemeral store vs persistent (single-user server, so the mode
+     is a UI toggle the client sends). Consider: separate search-recents; optionally only surface NSFW
+     sources while incognito.
+   - **Dev mode toggle:** gate the Developer settings section + dev-only UI/diagnostics behind it
+     (hidden by default, shown when on).
+   - UI: in `Drawer.tsx` — a Normal|Incognito segment + a Dev switch. Persist Dev (localStorage);
+     **decide** whether Incognito persists across reloads or always resets on app close (privacy → reset).
+   - **Decisions to confirm:** exactly what Incognito hides (history only, or also library-adds /
+     new-chapter badges?); does it reset on reload; should NSFW sources be hidden unless incognito.
+8. **Migration** — move a followed series to another source, keeping progress (match chapters by
    number, carry read/bookmarks/resume, replace-with-undo, leave existing downloads). Scoped.
 8. **JCEF-fetch for images (managed-CF downloads/reading).** Our unique edge vs Suwayomi (we bundle
    JCEF, they don't): route flagged hosts' page/image requests through the real browser to beat
