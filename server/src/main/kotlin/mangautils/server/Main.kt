@@ -248,8 +248,6 @@ private data class LibraryDto(
 @Serializable private data class StatsDto(
     val chaptersRead: Int,
     val seriesInLibrary: Int,
-    val chaptersDownloaded: Int,
-    val bytesOnDisk: Long,
     val readThisWeek: Int,
     val topSeries: List<StatSeriesDto>,
     val recent: List<StatRecentDto>,
@@ -1027,27 +1025,29 @@ fun Application.module() {
                 val history = HistoryStore.list()
                 val histByKey = history.associateBy { "${it.sourceId}|${it.mangaUrl}" }
                 val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-                val topSeries = readCounts.entries.filter { it.value > 0 }.sortedByDescending { it.value }.take(10).map { (k, c) ->
-                    val parts = k.split("|", limit = 2)
-                    val le = libByKey[k]
-                    val h = histByKey[k]
-                    StatSeriesDto(
-                        title = le?.title ?: h?.mangaTitle ?: parts.getOrNull(1) ?: k,
-                        count = c,
-                        sourceId = parts.getOrNull(0) ?: "",
-                        mangaUrl = parts.getOrNull(1) ?: "",
-                        thumbnailUrl = le?.thumbnailUrl ?: h?.thumbnailUrl,
-                    )
-                }
-                val recent = history.take(12).map {
-                    StatRecentDto(it.mangaTitle, it.chapterName, it.readAt, it.sourceId.toString(), it.mangaUrl, it.thumbnailUrl)
-                }
-                val series = runCatching { DownloadStore.listSeries() }.getOrDefault(emptyList())
+                val topSeries = readCounts.entries.filter { it.value > 0 }
+                    .mapNotNull { (k, c) ->
+                        val parts = k.split("|", limit = 2)
+                        val le = libByKey[k]
+                        val h = histByKey[k]
+                        // Resolve a real title from the library or reading history. If the series was removed
+                        // and isn't in history either, skip it — never surface a raw url slug like "LJyx5".
+                        val title = le?.title ?: h?.mangaTitle
+                        if (title.isNullOrBlank()) null
+                        else StatSeriesDto(title, c, parts.getOrNull(0) ?: "", parts.getOrNull(1) ?: "", le?.thumbnailUrl ?: h?.thumbnailUrl)
+                    }
+                    .sortedByDescending { it.count }
+                    .take(10)
+                // Recently read: ONE row per manga (its latest chapter), not every chapter of the same series.
+                // History is newest-first, so the first time we see a manga key is its most recent read.
+                val seenManga = HashSet<String>()
+                val recent = history
+                    .filter { seenManga.add("${it.sourceId}|${it.mangaUrl}") }
+                    .take(15)
+                    .map { StatRecentDto(it.mangaTitle, it.chapterName, it.readAt, it.sourceId.toString(), it.mangaUrl, it.thumbnailUrl) }
                 StatsDto(
                     chaptersRead = readCounts.values.sum(),
                     seriesInLibrary = lib.size,
-                    chaptersDownloaded = series.sumOf { it.chapters },
-                    bytesOnDisk = series.sumOf { it.bytes },
                     readThisWeek = history.count { it.readAt >= weekAgo },
                     topSeries = topSeries,
                     recent = recent,

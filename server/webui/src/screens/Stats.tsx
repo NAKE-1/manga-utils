@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { api, type Stats as StatsData } from '../api'
 import { IconArrowLeft } from '../components/icons'
 
-const fmtSize = (b: number) => (b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(0)} MB` : `${Math.max(0, Math.round(b / 1024))} KB`)
 function ago(ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000))
   if (s < 60) return 'just now'
@@ -34,8 +33,6 @@ export default function Stats() {
             <div className="dm-stat"><span className="dm-stat-n">{s.chaptersRead.toLocaleString()}</span><span className="dm-stat-l">chapters read</span></div>
             <div className="dm-stat"><span className="dm-stat-n">{s.readThisWeek.toLocaleString()}</span><span className="dm-stat-l">this week</span></div>
             <div className="dm-stat"><span className="dm-stat-n">{s.seriesInLibrary.toLocaleString()}</span><span className="dm-stat-l">in library</span></div>
-            <div className="dm-stat"><span className="dm-stat-n">{s.chaptersDownloaded.toLocaleString()}</span><span className="dm-stat-l">downloaded</span></div>
-            <div className="dm-stat wide"><span className="dm-stat-n">{fmtSize(s.bytesOnDisk)}</span><span className="dm-stat-l">on disk</span></div>
           </div>
 
           <div className="st-section-h">Most read</div>

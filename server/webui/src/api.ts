@@ -243,7 +243,7 @@ export const api = {
 
 export interface StatSeries { title: string; count: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }
 export interface StatRecent { title: string; chapter: string; readAt: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }
-export interface Stats { chaptersRead: number; seriesInLibrary: number; chaptersDownloaded: number; bytesOnDisk: number; readThisWeek: number; topSeries: StatSeries[]; recent: StatRecent[] }
+export interface Stats { chaptersRead: number; seriesInLibrary: number; readThisWeek: number; topSeries: StatSeries[]; recent: StatRecent[] }
 
 export interface MassPlanItem { sourceId: string; mangaUrl: string; title: string; source: string; total: number; downloaded: number; missing: number }
 export interface MassPlan { items: MassPlanItem[]; totalMissing: number; seriesWithMissing: number }
