@@ -46,6 +46,9 @@ object ReadStore {
         mangaUrl: String,
     ): Set<String> = load()[key(sourceId, mangaUrl)].orEmpty()
 
+    /** ("sourceId|mangaUrl" -> chapters-marked-read) for every series, in one load. For the stats page. */
+    fun allReadCounts(): Map<String, Int> = load().mapValues { it.value.size }
+
     fun isRead(
         sourceId: Long,
         mangaUrl: String,

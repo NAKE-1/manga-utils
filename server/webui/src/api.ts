@@ -224,6 +224,8 @@ export const api = {
   clearDownloads: () => fetch('/api/downloads/clear', { method: 'POST' }),
   removeDownload: (id: string) => fetch(`/api/downloads/remove?id=${encodeURIComponent(id)}`, { method: 'POST' }),
 
+  stats: () => getJson<Stats>('/api/stats'),
+
   // Mass download (whole-library)
   massPlan: () => getJson<MassPlan>('/api/downloads/mass/plan'),
   massStart: (items: { sourceId: string; mangaUrl: string }[]) =>
@@ -238,6 +240,10 @@ export const api = {
   deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
 }
+
+export interface StatSeries { title: string; count: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }
+export interface StatRecent { title: string; chapter: string; readAt: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }
+export interface Stats { chaptersRead: number; seriesInLibrary: number; chaptersDownloaded: number; bytesOnDisk: number; readThisWeek: number; topSeries: StatSeries[]; recent: StatRecent[] }
 
 export interface MassPlanItem { sourceId: string; mangaUrl: string; title: string; source: string; total: number; downloaded: number; missing: number }
 export interface MassPlan { items: MassPlanItem[]; totalMissing: number; seriesWithMissing: number }

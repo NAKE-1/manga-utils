@@ -387,6 +387,11 @@ export function Settings() {
       <section className="set-section">
         <div className="set-section-h">Reading</div>
         <div className="set-card">
+          <div className="set-row-label">Reading stats</div>
+          <div className="set-hint">Chapters read, most-read series, and recent activity.</div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/stats')}>View stats</button></div>
+        </div>
+        <div className="set-card">
           <div className="set-row-label">Continue reading</div>
           <div className="set-hint">Clear the “Continue reading” row (your reading history). Library and downloads are unaffected.</div>
           <div className="set-actions">

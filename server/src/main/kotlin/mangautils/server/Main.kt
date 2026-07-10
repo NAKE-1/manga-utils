@@ -242,6 +242,19 @@ private data class LibraryDto(
 @Serializable private data class MassStartItem(val sourceId: String, val mangaUrl: String)
 @Serializable private data class MassStartReq(val items: List<MassStartItem>)
 
+// Reading stats page.
+@Serializable private data class StatSeriesDto(val title: String, val count: Int, val sourceId: String = "", val mangaUrl: String = "", val thumbnailUrl: String? = null)
+@Serializable private data class StatRecentDto(val title: String, val chapter: String, val readAt: Long, val sourceId: String, val mangaUrl: String, val thumbnailUrl: String? = null)
+@Serializable private data class StatsDto(
+    val chaptersRead: Int,
+    val seriesInLibrary: Int,
+    val chaptersDownloaded: Int,
+    val bytesOnDisk: Long,
+    val readThisWeek: Int,
+    val topSeries: List<StatSeriesDto>,
+    val recent: List<StatRecentDto>,
+)
+
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
@@ -999,6 +1012,44 @@ fun Application.module() {
                 n
             }
             call.respond(CountDto(queued))
+        }
+
+        // Reading stats — aggregates ReadStore + HistoryStore + library + downloads for the stats page.
+        get("/api/stats") {
+            val dto = withContext(Dispatchers.IO) {
+                val lib = LibraryStore.list()
+                val libByKey = lib.associateBy { "${it.sourceId}|${it.mangaUrl}" }
+                val readCounts = ReadStore.allReadCounts()
+                val history = HistoryStore.list()
+                val histByKey = history.associateBy { "${it.sourceId}|${it.mangaUrl}" }
+                val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+                val topSeries = readCounts.entries.filter { it.value > 0 }.sortedByDescending { it.value }.take(10).map { (k, c) ->
+                    val parts = k.split("|", limit = 2)
+                    val le = libByKey[k]
+                    val h = histByKey[k]
+                    StatSeriesDto(
+                        title = le?.title ?: h?.mangaTitle ?: parts.getOrNull(1) ?: k,
+                        count = c,
+                        sourceId = parts.getOrNull(0) ?: "",
+                        mangaUrl = parts.getOrNull(1) ?: "",
+                        thumbnailUrl = le?.thumbnailUrl ?: h?.thumbnailUrl,
+                    )
+                }
+                val recent = history.take(12).map {
+                    StatRecentDto(it.mangaTitle, it.chapterName, it.readAt, it.sourceId.toString(), it.mangaUrl, it.thumbnailUrl)
+                }
+                val series = runCatching { DownloadStore.listSeries() }.getOrDefault(emptyList())
+                StatsDto(
+                    chaptersRead = readCounts.values.sum(),
+                    seriesInLibrary = lib.size,
+                    chaptersDownloaded = series.sumOf { it.chapters },
+                    bytesOnDisk = series.sumOf { it.bytes },
+                    readThisWeek = history.count { it.readAt >= weekAgo },
+                    topSeries = topSeries,
+                    recent = recent,
+                )
+            }
+            call.respond(dto)
         }
 
         // Downloaded-files management for a series (used by the remove-from-library confirm flow).
