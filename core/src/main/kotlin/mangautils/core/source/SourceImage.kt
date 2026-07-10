@@ -28,15 +28,16 @@ object SourceImage {
         url: String,
     ): ByteArray? {
         if (url.isBlank()) return null
-        if (SourceCircuits.images.isOpen(sourceId)) return null // breaker open (dead CDN) → instant fail
+        // Covers deliberately do NOT use SourceCircuits.images. That breaker protects the READER from
+        // hammering a dead CDN mid-chapter — but a grid loads ~40 covers at once, and a source that 404s
+        // a few genuinely-missing posters (normal for atsu.moe etc.) would trip the threshold and then
+        // blackhole EVERY cover for that source for the whole cooldown → "No Poster" across the grid.
+        // A cover miss must fail only that one card, never cascade; so each fetch stands alone here.
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
         return try {
             val request = Request.Builder().url(url).headers(src.headers).build()
-            val bytes = src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
-            if (bytes != null) SourceCircuits.images.recordSuccess(sourceId) else SourceCircuits.images.recordFailure(sourceId)
-            bytes
+            src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
         } catch (e: Exception) {
-            SourceCircuits.images.recordFailure(sourceId)
             log.debug("cover fetch failed {}: {}", url, e.message)
             null
         }
