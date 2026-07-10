@@ -475,6 +475,7 @@ class DownloadManager(
             if (!java.nio.file.Files.exists(dir)) return false
             return runCatching {
                 java.nio.file.Files.walk(dir).use { st -> st.sorted(Comparator.reverseOrder()).forEach { java.nio.file.Files.deleteIfExists(it) } }
+                DownloadStore.invalidate() // drop the cached series list so "Delete all" reflects on disk immediately (deleteChapter already does this)
                 true
             }.getOrDefault(false)
         }
