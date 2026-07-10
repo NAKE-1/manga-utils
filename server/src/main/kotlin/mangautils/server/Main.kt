@@ -599,19 +599,23 @@ private fun sniffImageType(b: ByteArray): ContentType = when {
  * Printed via println (not the logger) so the art isn't prefixed with a timestamp on every line.
  */
 private fun printStartupBanner(port: Int) {
-    val logo = """
-      #   #   ###   #   #   ####   ###          u t i l s
-      ## ##  #   #  ##  #  #      #   #     .......................
-      # # #  #####  # # #  # ###  #####     phone-first manga reader
-      #   #  #   #  #  ##  #   #  #   #      served over your tailnet
-      #   #  #   #  #   #   ####  #   #
-    """.trimIndent()
-    val bar = "=".repeat(58)
+    // "manga-utils" in the figlet "slant" font. Raw string so the backslashes stay literal; ASCII-only
+    // (Windows console isn't UTF-8 — box/block glyphs mojibake, hence no Unicode here).
+    val logo =
+        """
+                                                  __  _ __
+   ____ ___  ____ _____  ____ _____ _      __  __/ /_(_) /____
+  / __ `__ \/ __ `/ __ \/ __ `/ __ `/_____/ / / / __/ / / ___/
+ / / / / / / /_/ / / / / /_/ / /_/ /_____/ /_/ / /_/ / (__  )
+/_/ /_/ /_/\__,_/_/ /_/\__, /\__,_/      \__,_/\__/_/_/____/
+                      /____/
+"""
+    val bar = "=".repeat(64)
     val sb = StringBuilder("\n\n")
-    logo.lineSequence().forEach { sb.append("   ").append(it).append('\n') }
+    logo.trim('\n').lines().forEach { sb.append("   ").append(it).append('\n') }
     sb.append('\n')
     sb.append("   ").append(bar).append('\n')
-    sb.append("     [*]  SERVER ONLINE\n")
+    sb.append("     [*]  SERVER ONLINE   .   phone-first manga reader\n")
     sb.append("     [>]  http://0.0.0.0:$port      (or http://<tailscale-ip>:$port)\n")
     sb.append("   ").append(bar).append("\n\n")
     println(sb)
