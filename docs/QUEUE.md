@@ -70,9 +70,15 @@ the phone reads from Proxmox, which is ~20 commits behind.
    shorter interactive timeout (~8–10s) helps even before the breaker trips.
 
 ### Tier 4 — small polish / low
-10. **Stale delete-total refresh** — after Delete-all a series still shows "57 ch · 329 MB" until refresh.
-11. **Throttle the `/api/sources` poll** (log/perf cleanliness).
-12. **Reading stats page** — chapters read, per-series (user lukewarm; optional).
+10. ✅ **DONE (3d091c2)** — Stale delete-total refresh. `deleteDownloads()` now calls
+    `DownloadStore.invalidate()` (deleteChapter already did) so "Delete all" updates instantly.
+11. ✅ **DONE (02856cd)** — `/api/sources` no longer logged (exact-path exclude); Settings client poll
+    split so source-health polls at 18s while live stats stay at 6s.
+12. ✅ **DONE (125f881)** — Reading stats page. `GET /api/stats` + Stats screen (Settings → View stats).
+
+- ✅ **DONE (dbb0013)** — Cover grids no longer show "No Poster" en masse: covers decoupled from the
+  images circuit breaker (a missing/slow poster fails only its own card).
+- ✅ **DONE (17a4d79)** — ASCII startup banner ("SERVER ONLINE" + MANGA logo) once the server is bound.
 
 ### Big / later (needs its own design pass)
 13. **DYNO** — portable USB library. Spec in `dyno md/`, test fixture ready. Paused for a design
