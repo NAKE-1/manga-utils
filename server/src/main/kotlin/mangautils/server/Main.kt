@@ -580,6 +580,30 @@ private fun sniffImageType(b: ByteArray): ContentType = when {
     else -> ContentType.Image.JPEG
 }
 
+/**
+ * ASCII startup banner printed once the server is live. Pure ASCII on purpose — the Windows console
+ * isn't UTF-8, so box-drawing/Unicode glyphs mojibake (same reason the log separators are ASCII).
+ * Printed via println (not the logger) so the art isn't prefixed with a timestamp on every line.
+ */
+private fun printStartupBanner(port: Int) {
+    val logo = """
+      #   #   ###   #   #   ####   ###          u t i l s
+      ## ##  #   #  ##  #  #      #   #     .......................
+      # # #  #####  # # #  # ###  #####     phone-first manga reader
+      #   #  #   #  #  ##  #   #  #   #      served over your tailnet
+      #   #  #   #  #   #   ####  #   #
+    """.trimIndent()
+    val bar = "=".repeat(58)
+    val sb = StringBuilder("\n\n")
+    logo.lineSequence().forEach { sb.append("   ").append(it).append('\n') }
+    sb.append('\n')
+    sb.append("   ").append(bar).append('\n')
+    sb.append("     [*]  SERVER ONLINE\n")
+    sb.append("     [>]  http://0.0.0.0:$port      (or http://<tailscale-ip>:$port)\n")
+    sb.append("   ").append(bar).append("\n\n")
+    println(sb)
+}
+
 fun main() {
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     // Honor a custom downloads directory chosen in Settings.
@@ -594,7 +618,11 @@ fun main() {
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     try {
-        embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = true)
+        // start(wait=false) returns once Netty is bound & listening — THEN print the "online" banner so
+        // it reflects a truly-up server, then block the main thread forever on a latch.
+        embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = false)
+        printStartupBanner(port)
+        java.util.concurrent.CountDownLatch(1).await() // park main thread; the server runs on Netty's threads
     } catch (e: java.net.BindException) {
         // A stale server (or something else) is already on the port — say so plainly instead of
         // dumping a BindException stack trace.
