@@ -308,6 +308,7 @@ img { display: block; }
 .strip { display: flex; flex-direction: column; align-items: center; min-height: 100dvh; }
 .page-slot { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 60vh; }
 .page-slot.loaded { min-height: 0; }
+.reader-sentinel { width: 100%; height: 1px; pointer-events: none; }
 .spinner.sm { width: 24px; height: 24px; margin: 0; position: absolute; }
 .page { display: block; opacity: 0; transition: opacity .2s ease; }
 .page.loaded { opacity: 1; }

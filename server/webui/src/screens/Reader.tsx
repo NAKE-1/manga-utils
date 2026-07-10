@@ -386,26 +386,50 @@ export function Reader() {
     if (now - lastTap.current < 300) { setChrome((v) => !v); lastTap.current = 0 } else lastTap.current = now
   }
 
+  // Grow the render window from the ACTUAL load boundary, not a scroll-fraction estimate. A sentinel is
+  // rendered just past the last mounted page; when it comes within ~2 screens of the viewport the window
+  // extends. This is immune to the loaded-vs-reserved height mismatch (loaded pages ~130vh vs 60vh slots)
+  // that made the old estimate stall mid-chapter, so ~2 screens of pages stay mounted ahead of you.
+  const sentinelObs = useRef<IntersectionObserver | null>(null)
+  const setSentinel = useCallback((el: HTMLDivElement | null) => {
+    sentinelObs.current?.disconnect()
+    if (!el) return
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) setRenderMax((m) => m + 4) },
+      { rootMargin: '0px 0px 200% 0px' },
+    )
+    io.observe(el)
+    sentinelObs.current = io
+  }, [])
+  useEffect(() => () => sentinelObs.current?.disconnect(), [])
+
   return (
     <div className="reader">
       <div className="reader-scroll" onClick={onTap}>
         {count === null && <div className="spinner" />}
         {count === 0 && <div className="center-msg" style={{ color: '#ccc' }}>Couldn't load this chapter's pages.</div>}
-        {count !== null && count > 0 && (
-          <div className="strip" style={{ gap: gap + 'px' }}>
-            {Array.from({ length: count }, (_, i) => {
-              // Windowing: only mount an <img> for pages up to renderCeil. Pages beyond it are empty,
-              // height-reserved slots with NO request. EAGER honors its promise ("loads every page at
-              // once") and mounts the whole chapter — they still queue through the IMG_MAX gate in
-              // order, so it's a sequential full-chapter prefetch (ideal for a downloaded manga). The
-              // other modes stay windowed (grows as you scroll) so a slow/down source can't pin every
-              // browser connection and freeze the app.
-              const renderCeil = loadMode === 'eager' ? count - 1 : Math.max(renderMax, Math.max(preload, 3))
-              if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
-              return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
-            })}
-          </div>
-        )}
+        {count !== null && count > 0 && (() => {
+          // Windowing: mount an <img> for pages up to renderCeil; pages beyond are empty height-reserved
+          // slots with NO request. EAGER honors its promise ("loads every page at once") and mounts the
+          // whole chapter — they queue through the IMG_MAX gate in order, so it's a sequential full-chapter
+          // prefetch (ideal for a downloaded manga). Other modes stay windowed, but the window now grows
+          // from the sentinel observer (see setSentinel) instead of a scroll-fraction estimate, so a
+          // slow/down source still can't pin every connection AND the next pages are always mounted ahead.
+          const renderCeil = loadMode === 'eager' ? count - 1 : Math.max(renderMax, Math.max(preload, 3))
+          return (
+            <div className="strip" style={{ gap: gap + 'px' }}>
+              {Array.from({ length: count }, (_, i) => {
+                if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
+                return (
+                  <React.Fragment key={i}>
+                    <ReaderPage index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
+                    {i === renderCeil && renderCeil < count - 1 && <div ref={setSentinel} className="reader-sentinel" aria-hidden />}
+                  </React.Fragment>
+                )
+              })}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Source-trouble banner: shown when pages are failing, so it's never a silent infinite spinner.
