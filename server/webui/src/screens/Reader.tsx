@@ -394,11 +394,13 @@ export function Reader() {
         {count !== null && count > 0 && (
           <div className="strip" style={{ gap: gap + 'px' }}>
             {Array.from({ length: count }, (_, i) => {
-              // Windowing: only mount an <img> for pages up to renderMax (which grows as you scroll).
-              // Pages beyond it are empty, height-reserved slots with NO request — so opening a
-              // chapter fires ~preload requests, not all 68 (which would pin every browser connection
-              // and freeze the app, esp. on a down source). This holds regardless of loadMode.
-              const renderCeil = Math.max(renderMax, Math.max(preload, 3))
+              // Windowing: only mount an <img> for pages up to renderCeil. Pages beyond it are empty,
+              // height-reserved slots with NO request. EAGER honors its promise ("loads every page at
+              // once") and mounts the whole chapter — they still queue through the IMG_MAX gate in
+              // order, so it's a sequential full-chapter prefetch (ideal for a downloaded manga). The
+              // other modes stay windowed (grows as you scroll) so a slow/down source can't pin every
+              // browser connection and freeze the app.
+              const renderCeil = loadMode === 'eager' ? count - 1 : Math.max(renderMax, Math.max(preload, 3))
               if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
               return <ReaderPage key={i} index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
             })}
