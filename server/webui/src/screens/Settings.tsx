@@ -219,14 +219,14 @@ export function Settings() {
   // Live server stats — poll while the Settings page is open.
   useEffect(() => {
     let alive = true
-    const tick = () => {
-      if (document.hidden) return // don't poll a backgrounded tab
-      api.devStats().then((s) => { if (alive) setStats(s) }).catch(() => {})
-      api.sources().then((s) => { if (alive) setSources(s) }).catch(() => {}) // keep source health fresh
-    }
-    tick()
-    const t = setInterval(tick, 6000) // was 2s — that buried the server log in /api/sources spam
-    return () => { alive = false; clearInterval(t) }
+    // Live stats (memory/CPU) want a snappy refresh; source health changes slowly, so poll it 3x less
+    // often on its own timer — keeps /api/sources out of the hot loop (was every 2s → log spam).
+    const pollStats = () => { if (!document.hidden) api.devStats().then((s) => { if (alive) setStats(s) }).catch(() => {}) }
+    const pollSources = () => { if (!document.hidden) api.sources().then((s) => { if (alive) setSources(s) }).catch(() => {}) }
+    pollStats(); pollSources()
+    const ts = setInterval(pollStats, 6000)
+    const tsrc = setInterval(pollSources, 18000)
+    return () => { alive = false; clearInterval(ts); clearInterval(tsrc) }
   }, [])
 
   async function toggleLang(code: string) {
