@@ -21,6 +21,50 @@
   --safe-t: env(safe-area-inset-top, 0px);
 }
 
+/* ---- Colour themes (override the colour vars only) ---------------------------------------------
+   Selected by data-theme on <html>. Higher specificity than :root, so they win when set. Keep the
+   preview colours in themes.ts in sync with these. */
+:root[data-theme="amoled"] {
+  --bg: #000000; --bg-2: #0a0a0c; --card: #0e0e10; --card-2: #161619; --border: #212127;
+  --text: #ececf1; --muted: #9a9aa3; --muted-2: #66666e;
+  --accent: #8a7cf0; --accent-press: #7567e0;
+}
+:root[data-theme="monokai"] {
+  --bg: #2d2a2e; --bg-2: #221f22; --card: #353136; --card-2: #403e41; --border: #48454a;
+  --text: #fcfcfa; --muted: #b8b4b9; --muted-2: #85818a;
+  --accent: #ffd866; --accent-press: #e6c04d;
+  --manga: #ff6188; --manhwa: #78dce8; --manhua: #fc9867;
+}
+:root[data-theme="dracula"] {
+  --bg: #282a36; --bg-2: #21222c; --card: #343746; --card-2: #3c4055; --border: #454863;
+  --text: #f8f8f2; --muted: #bcbdd6; --muted-2: #6272a4;
+  --accent: #bd93f9; --accent-press: #a97ff0;
+  --manga: #bd93f9; --manhwa: #8be9fd; --manhua: #ffb86c;
+}
+:root[data-theme="nord"] {
+  --bg: #2e3440; --bg-2: #2b303b; --card: #3b4252; --card-2: #434c5e; --border: #4c566a;
+  --text: #eceff4; --muted: #b8c0cf; --muted-2: #7b8494;
+  --accent: #88c0d0; --accent-press: #7fb0c0;
+  --manga: #88c0d0; --manhwa: #81a1c1; --manhua: #d08770;
+}
+:root[data-theme="rosepine"] {
+  --bg: #191724; --bg-2: #1a1826; --card: #1f1d2e; --card-2: #26233a; --border: #403d52;
+  --text: #e0def4; --muted: #a29fc0; --muted-2: #6e6a86;
+  --accent: #ebbcba; --accent-press: #d9a7a5;
+  --manga: #c4a7e7; --manhwa: #9ccfd8; --manhua: #f6c177;
+}
+
+/* Theme picker swatches (Settings → Appearance) */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.theme-swatch { display: flex; flex-direction: column; gap: 7px; padding: 9px; border-radius: 12px;
+  background: var(--card-2); border: 1px solid var(--border); cursor: pointer; text-align: left; }
+.theme-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.theme-prev { height: 40px; border-radius: 8px; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.06); }
+.theme-prev .tp-card { position: absolute; left: 7px; right: 7px; top: 8px; height: 9px; border-radius: 4px; }
+.theme-prev .tp-dot { position: absolute; left: 7px; bottom: 7px; width: 14px; height: 14px; border-radius: 50%; }
+.theme-name { font-size: 12px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 5px; }
+.theme-name .tick { color: var(--accent); font-size: 12px; }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body, #root { height: 100%; }
 body {

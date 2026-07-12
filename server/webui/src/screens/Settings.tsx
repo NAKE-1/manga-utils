@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob, BackupResult } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
+import { THEMES, applyTheme, currentTheme } from '../themes'
 
 // Browser reader/display prefs live in localStorage (per device). Gather them into the backup, and
 // apply them back on restore, so a restore carries your reader setup — not just server-side state.
@@ -10,13 +11,13 @@ function gatherClientPrefs(): string {
   const out: Record<string, string> = {}
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i)
-    if (k && /^(reader|dev|search|browse)\./.test(k)) { const v = localStorage.getItem(k); if (v != null) out[k] = v }
+    if (k && /^(reader|dev|search|browse|app)\./.test(k)) { const v = localStorage.getItem(k); if (v != null) out[k] = v }
   }
   return JSON.stringify(out)
 }
 function applyClientPrefs(jsonStr?: string | null) {
   if (!jsonStr) return
-  try { const o = JSON.parse(jsonStr) as Record<string, string>; for (const [k, v] of Object.entries(o)) localStorage.setItem(k, String(v)) } catch { /* ignore bad prefs */ }
+  try { const o = JSON.parse(jsonStr) as Record<string, string>; for (const [k, v] of Object.entries(o)) localStorage.setItem(k, String(v)); applyTheme(currentTheme()) } catch { /* ignore bad prefs */ }
 }
 
 const fmtUptime = (ms: number) => {
@@ -311,9 +312,35 @@ export function Settings() {
     setDiagRunning(false)
   }
 
+  const [theme, setTheme] = useState(currentTheme())
+
   return (
     <div className="settings">
       <h2 className="set-h">Settings</h2>
+
+      <section className="set-section">
+        <div className="set-section-h">Appearance</div>
+        <div className="set-card">
+          <div className="set-row-label">Theme</div>
+          <div className="set-hint">Applies instantly and sticks on this device.</div>
+          <div className="theme-grid">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                className={'theme-swatch' + (theme === t.id ? ' on' : '')}
+                onClick={() => { setTheme(t.id); applyTheme(t.id) }}
+                aria-pressed={theme === t.id}
+              >
+                <span className="theme-prev" style={{ background: t.bg }}>
+                  <span className="tp-card" style={{ background: t.card }} />
+                  <span className="tp-dot" style={{ background: t.accent }} />
+                </span>
+                <span className="theme-name">{t.name}{theme === t.id && <span className="tick">✓</span>}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
 
       <section className="set-section">
         <div className="set-section-h">Downloads</div>
