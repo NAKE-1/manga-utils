@@ -2,6 +2,11 @@
 
 Pending work, roughly prioritized. Reflects decisions on 2026-07-05.
 
+> **Planned batch (2026-07-12):** themes, queue-reorder, broken-download detection, error-log + latency
+> test, source-health dashboard, health sweep, and webhooks → Discord notifications. Full build plan with
+> per-feature test guides in [PLAN-themes-diagnostics-notifications.md](PLAN-themes-diagnostics-notifications.md).
+> Not started — build small → big when the user gives the go-ahead.
+
 ## PRIORITIZED BACKLOG (updated 2026-07-09)
 
 Ranked by impact × effort. A big session's worth of fixes are committed but **only on local `w`** —
