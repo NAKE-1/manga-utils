@@ -613,6 +613,11 @@ export function Settings() {
             </div>
           ) : <div className="set-msg err">{diag.error || 'Test failed'}</div>)}
         </div>
+        <div className="set-card">
+          <div className="set-row-label">Server logs</div>
+          <div className="set-hint">Recent warnings and errors from the server — handy when a source misbehaves.</div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/logs')}>View logs</button></div>
+        </div>
       </section>
 
       <section className="set-section">

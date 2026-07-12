@@ -627,6 +627,7 @@ private fun printStartupBanner(port: Int) {
 }
 
 fun main() {
+    LogBuffer.install() // capture WARN/ERROR into a ring buffer for the in-app log viewer
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     // Honor a custom downloads directory chosen in Settings.
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
@@ -667,7 +668,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -1265,6 +1266,11 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        get("/api/logs") {
+            val level = call.queryParam("level") ?: "warn"
+            val limit = call.queryParam("limit")?.toIntOrNull() ?: 200
+            call.respond(LogBuffer.recent(level, limit).map { LogDto(it.ts, it.level, it.logger, it.msg) })
+        }
 
         // ---- Client<->host speed test (phone <-> server over Tailscale). Timed on the client. ----
         get("/api/net/ping") { call.respondBytes("pong".toByteArray()) }

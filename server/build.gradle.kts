@@ -28,7 +28,7 @@ dependencies {
     implementation("io.ktor:ktor-server-status-pages:$ktorVersion")
     implementation("io.ktor:ktor-server-default-headers:$ktorVersion")
 
-    runtimeOnly(libs.logback.classic)
+    implementation(libs.logback.classic) // was runtimeOnly — LogBuffer attaches a logback appender
 }
 
 application {
