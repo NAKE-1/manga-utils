@@ -915,6 +915,11 @@ fun Application.module() {
             val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
             DownloadQueue.remove(id); call.respond(downloadsSnapshot())
         }
+        post("/api/downloads/move") {
+            val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val up = call.queryParam("dir") != "down"
+            DownloadQueue.move(id, up); call.respond(downloadsSnapshot())
+        }
 
         // ---- Download manager (browse / delete on-disk content) ----
         get("/api/downloads/manage") {

@@ -223,6 +223,7 @@ export const api = {
   stopAllDownloads: () => fetch('/api/downloads/stop-all', { method: 'POST' }),
   clearDownloads: () => fetch('/api/downloads/clear', { method: 'POST' }),
   removeDownload: (id: string) => fetch(`/api/downloads/remove?id=${encodeURIComponent(id)}`, { method: 'POST' }),
+  moveDownload: (id: string, dir: 'up' | 'down') => fetch(`/api/downloads/move?id=${encodeURIComponent(id)}&dir=${dir}`, { method: 'POST' }),
 
   stats: () => getJson<Stats>('/api/stats'),
 

@@ -56,8 +56,11 @@ export function Downloads() {
     setData(await api.downloads().catch(() => data))
   }
 
+  async function move(t: DlTask, dir: 'up' | 'down') { setData(await api.moveDownload(t.id, dir).then((r) => r.json()).catch(() => data)) }
+
   if (!data) return <div className="spinner" />
   const tasks = data.tasks
+  const queuedIds = tasks.filter((t) => t.state === 'queued').map((t) => t.id)
 
   return (
     <>
@@ -75,13 +78,17 @@ export function Downloads() {
       {tasks.length === 0 ? (
         <div className="center-msg">No downloads. Use the download button on a manga.</div>
       ) : (
-        <div className="dl-list">{tasks.map((t) => <TaskCard key={t.id} t={t} onStop={() => stop(t)} onRetry={() => retry(t)} />)}</div>
+        <div className="dl-list">{tasks.map((t) => {
+          const qi = queuedIds.indexOf(t.id)
+          return <TaskCard key={t.id} t={t} onStop={() => stop(t)} onRetry={() => retry(t)}
+            onMove={(dir) => move(t, dir)} canUp={qi > 0} canDown={qi >= 0 && qi < queuedIds.length - 1} />
+        })}</div>
       )}
     </>
   )
 }
 
-function TaskCard({ t, onStop, onRetry }: { t: DlTask; onStop: () => void; onRetry: () => void }) {
+function TaskCard({ t, onStop, onRetry, onMove, canUp, canDown }: { t: DlTask; onStop: () => void; onRetry: () => void; onMove: (dir: 'up' | 'down') => void; canUp: boolean; canDown: boolean }) {
   const running = t.state === 'running' || t.state === 'queued'
   const queued = t.state === 'queued'
   const failed = t.state === 'failed'
@@ -96,11 +103,19 @@ function TaskCard({ t, onStop, onRetry }: { t: DlTask; onStop: () => void; onRet
     <div className="dlc">
       <div className="dlc-top">
         <div className="dlc-title">{t.mangaTitle}</div>
-        {running
-          ? <button className="dl-link" onClick={onStop}>Stop</button>
-          : failed && t.failedChapters.length
-            ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
-            : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
+        <div className="dlc-actions">
+          {queued && (
+            <span className="dlc-reorder">
+              <button className="dlc-move" disabled={!canUp} onClick={() => onMove('up')} aria-label="Move up">▲</button>
+              <button className="dlc-move" disabled={!canDown} onClick={() => onMove('down')} aria-label="Move down">▼</button>
+            </span>
+          )}
+          {running
+            ? <button className="dl-link" onClick={onStop}>Stop</button>
+            : failed && t.failedChapters.length
+              ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
+              : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
+        </div>
       </div>
       <div className="dlc-sub">
         <span>

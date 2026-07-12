@@ -844,3 +844,11 @@ main > * { animation: fade-up .22s ease backwards; }
 .st-recent-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-recent-sub { font-size: 12px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-recent-time { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
+
+/* Download-queue reorder controls */
+.dlc-actions { display: flex; align-items: center; gap: 10px; }
+.dlc-reorder { display: inline-flex; gap: 2px; }
+.dlc-move { width: 26px; height: 24px; border-radius: 7px; background: var(--card-2); border: 1px solid var(--border);
+  color: var(--muted); font-size: 10px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.dlc-move:disabled { opacity: .35; }
+.dlc-move:not(:disabled):active { background: var(--accent); color: #fff; border-color: var(--accent); }

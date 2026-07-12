@@ -36,6 +36,7 @@ object DownloadQueue {
         val chapters: List<Chapter>,
     ) {
         val total = chapters.size
+        @Volatile var order = 0 // sort key for the queue; lower runs first (reorderable while queued)
         @Volatile var state = "queued" // queued | running | done | failed | stopped
         @Volatile var doneCount = 0
         @Volatile var failedCount = 0
@@ -74,8 +75,9 @@ object DownloadQueue {
     @Synchronized
     fun enqueue(sourceId: Long, mangaUrl: String, mangaTitle: String, chapters: List<Chapter>) {
         if (chapters.isEmpty()) return
-        val id = "dl-${seq++}-${System.nanoTime().toString(36).takeLast(4)}"
-        tasks[id] = Task(id, sourceId, mangaUrl, mangaTitle, chapters)
+        val n = seq++
+        val id = "dl-$n-${System.nanoTime().toString(36).takeLast(4)}"
+        tasks[id] = Task(id, sourceId, mangaUrl, mangaTitle, chapters).apply { order = n.toInt() }
         pump()
     }
 
@@ -92,7 +94,7 @@ object DownloadQueue {
         var slots = poolSize - running.size
         if (slots <= 0) return
         val busySources = running.map { it.sourceId }.toMutableSet()
-        for (task in tasks.values.sortedBy { it.id }) {
+        for (task in tasks.values.sortedBy { it.order }) {
             if (slots <= 0) break
             if (task.state != "queued") continue
             if (!perSource && task.sourceId in busySources) continue
@@ -163,7 +165,21 @@ object DownloadQueue {
         pump() // a slot (and this source) just freed — start the next eligible manga
     }
 
-    fun tasks(): List<Task> = tasks.values.sortedBy { it.id }
+    fun tasks(): List<Task> = tasks.values.sortedBy { it.order }
+
+    /** Move a QUEUED task one place earlier/later by swapping its order with the adjacent queued task.
+     *  No-op on running/finished tasks (their position is fixed). */
+    @Synchronized
+    fun move(id: String, up: Boolean) {
+        val t = tasks[id] ?: return
+        if (t.state != "queued") return
+        val queued = tasks.values.filter { it.state == "queued" }.sortedBy { it.order }
+        val idx = queued.indexOfFirst { it.id == id }
+        val swapIdx = if (up) idx - 1 else idx + 1
+        if (idx < 0 || swapIdx !in queued.indices) return
+        val other = queued[swapIdx]
+        val tmp = t.order; t.order = other.order; other.order = tmp
+    }
     fun queuedCount(): Int = tasks.values.count { it.state == "queued" }
     fun activeCount(): Int = tasks.values.count { it.active }
     fun totalBytesPerSec(): Double = tasks.values.filter { it.state == "running" }.sumOf { it.bytesPerSec }
