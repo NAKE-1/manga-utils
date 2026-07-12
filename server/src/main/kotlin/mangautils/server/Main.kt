@@ -253,6 +253,13 @@ private data class LibraryDto(
     val recent: List<StatRecentDto>,
 )
 
+// Broken-download detection.
+@Serializable private data class BrokenSeriesDto(val title: String, val broken: List<String>, val total: Int)
+@Serializable private data class BrokenReportDto(val series: List<BrokenSeriesDto>, val totalBroken: Int)
+
+// In-app error log.
+@Serializable private data class LogDto(val ts: Long, val level: String, val logger: String, val msg: String)
+
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
@@ -922,6 +929,19 @@ fun Application.module() {
         }
 
         // ---- Download manager (browse / delete on-disk content) ----
+        // Broken-download detection: every series with interrupted/incomplete chapters (missing the
+        // ComicInfo.xml written last), for a one-glance "N broken" report + repair.
+        get("/api/downloads/broken") {
+            val rep = withContext(Dispatchers.IO) {
+                val series = DownloadStore.listSeries().filter { it.incomplete > 0 }.map { s ->
+                    val names = DownloadStore.listChapters(s.title).filterNot { it.complete }.map { it.name }
+                    BrokenSeriesDto(s.title, names, s.chapters)
+                }.filter { it.broken.isNotEmpty() }
+                BrokenReportDto(series, series.sumOf { it.broken.size })
+            }
+            call.respond(rep)
+        }
+
         get("/api/downloads/manage") {
             val list = withContext(Dispatchers.IO) {
                 DownloadStore.listSeries().map { ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover) }

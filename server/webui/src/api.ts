@@ -240,7 +240,13 @@ export const api = {
   markSeriesUnread: (title: string) => fetch(`/api/downloads/manage/mark-unread?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
+  brokenDownloads: () => getJson<BrokenReport>('/api/downloads/broken'),
+  logs: (level = 'warn', limit = 200) => getJson<LogEntry[]>(`/api/logs?level=${level}&limit=${limit}`),
 }
+
+export interface BrokenSeries { title: string; broken: string[]; total: number }
+export interface BrokenReport { series: BrokenSeries[]; totalBroken: number }
+export interface LogEntry { ts: number; level: string; logger: string; msg: string }
 
 export interface StatSeries { title: string; count: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }
 export interface StatRecent { title: string; chapter: string; readAt: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }

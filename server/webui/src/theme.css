@@ -852,3 +852,10 @@ main > * { animation: fade-up .22s ease backwards; }
   color: var(--muted); font-size: 10px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
 .dlc-move:disabled { opacity: .35; }
 .dlc-move:not(:disabled):active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Broken-downloads banner */
+.dm-broken { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; padding: 13px 15px;
+  background: color-mix(in srgb, #e0b64c 12%, var(--card)); border: 1px solid color-mix(in srgb, #e0b64c 40%, var(--border)); border-radius: 12px; }
+.dm-broken-main { flex: 1 1 auto; min-width: 0; }
+.dm-broken-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.dm-broken-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }

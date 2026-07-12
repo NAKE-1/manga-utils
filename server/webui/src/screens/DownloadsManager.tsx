@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, ManagedSeries, ManagedChapter } from '../api'
+import { api, ManagedSeries, ManagedChapter, BrokenReport } from '../api'
 import { IconArrowLeft, IconChevronDown, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
@@ -13,9 +13,24 @@ export function DownloadsManager() {
   const [chapters, setChapters] = useState<Record<string, ManagedChapter[]>>({})
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
   const [msg, setMsg] = useState('')
+  const [broken, setBroken] = useState<BrokenReport | null>(null)
+  const [repairingAll, setRepairingAll] = useState(false)
 
-  const load = () => api.manageDownloads().then(setSeries).catch(() => setSeries([]))
+  const load = () => {
+    api.manageDownloads().then(setSeries).catch(() => setSeries([]))
+    api.brokenDownloads().then(setBroken).catch(() => setBroken(null))
+  }
   useEffect(() => { load() }, [])
+
+  async function repairAll() {
+    if (!broken?.series.length) return
+    setRepairingAll(true)
+    let n = 0
+    for (const s of broken.series) { const r = await api.repairDownloads(s.title).catch(() => ({ count: 0 })); n += r.count }
+    setRepairingAll(false)
+    flash(n > 0 ? `Re-downloading ${n} chapter${n === 1 ? '' : 's'} — see Downloads` : 'Nothing could be repaired')
+    load()
+  }
 
   function toggle(title: string) {
     if (open === title) { setOpen(null); return }
@@ -78,6 +93,16 @@ export function DownloadsManager() {
         <button className="iconbtn" onClick={() => nav('/settings')} aria-label="Back"><IconArrowLeft /></button>
         <span className="ext-title">Downloaded content</span>
       </div>
+
+      {broken && broken.totalBroken > 0 && (
+        <div className="dm-broken">
+          <div className="dm-broken-main">
+            <div className="dm-broken-title">⚠ {broken.totalBroken} broken chapter{broken.totalBroken === 1 ? '' : 's'} across {broken.series.length} series</div>
+            <div className="dm-broken-sub">Interrupted or partial downloads — repair re-fetches them.</div>
+          </div>
+          <button className="btn primary" disabled={repairingAll} onClick={repairAll}>{repairingAll ? 'Repairing…' : 'Repair all'}</button>
+        </div>
+      )}
 
       {series === null ? <div className="spinner" /> : series.length === 0 ? (
         <div className="center-msg">Nothing downloaded yet.</div>
