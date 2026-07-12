@@ -218,3 +218,116 @@ Because the test box isn't final hardware, keep everything **env/path-driven** (
 Do 0→1→2 on the test box to prove auto-mount + trust, then 3→4 for the in-app experience, then 5, then 6
 (the big sync, which is the main DYNO spec's job). Everything path/env-driven so the weak test box → final
 hardware move is config-only.
+
+---
+
+## 8. DYNO Maker — cross-platform Python app (+ .bat launcher)
+
+**Goal:** a small Python app you can run on Windows / Linux / mac to **turn a USB into a DYNO cartridge** —
+generate the format, name it, sign it, (optionally) load content — without touching the server. Windows
+gets a double-click `.bat`; Linux/mac a `.sh`. GUI (Tkinter) + a CLI for scripting. Modelled on the
+existing `tools/backup-inspector/` (Tkinter + `.bat`) and `dyno md/test suite/generate_fixture.py`.
+
+**Location:** `tools/dyno-maker/` — `dyno_maker.py` (core + CLI), `dyno_maker_gui.py` (Tkinter),
+`Make DYNO USB.bat` (Windows), `make-dyno-usb.sh` (Linux/mac), `README.md`.
+
+**What it does**
+1. **Pick a drive** (lists removable volumes; on Windows drive letters, on Linux `/dev/sd*` + mountpoints).
+2. **Name** the cartridge; **generate a random UUID** (identity, `UUIDv5` — see §9 for the code variant).
+3. Write **`dyno.json`** (manifest) and **`dyno.sig`** (HMAC using the pairing-code key from §9).
+4. Optionally **format** as exFAT first (with a big confirm — this wipes the drive), or just write the
+   marker onto an existing drive.
+5. Optionally **copy content** (a metadata export + downloads) into the cartridge — or leave that to the
+   server's DYNO sync later; the maker's minimum job is *identity + format + signature*.
+6. **Verify** an existing cartridge (recompute the sig, check `dyno.contents.json`).
+7. **Manage the pairing code** locally (enter once, cached in a config file so you don't retype).
+
+**CLI example**
+```
+# first time: set the pairing code (cached in ~/.dyno/maker.cfg)
+python dyno_maker.py pair --code "DYNO-K7QF-9XM2-4TZP"
+
+# make a cartridge on E:  (Windows)  /  /media/usb (Linux)
+python dyno_maker.py make --drive E: --name nakano-main
+#  -> writes E:\dyno.json, E:\dyno.sig   (signed with the code-derived key)
+
+python dyno_maker.py verify --drive E:
+#  -> signature OK · nakano-main · id b3f1c2e4… · 0 bad files
+```
+
+**GUI:** one window — drive dropdown, name field, "pairing code" field (with a *Generate* button), and
+**Make cartridge** / **Verify** / **Eject** buttons + a log pane. Same look/feel as the backup-inspector.
+
+---
+
+## 9. Pairing without copying a giant secret — code-derived key
+
+The problem: §2 uses a 64-char host secret; copying that to the Windows maker is annoying. Fix: derive the
+signing key from a short **pairing code** typed on *both* sides.
+
+**Scheme (recommended):**
+- **Pairing code**: short + human-typable, e.g. `DYNO-K7QF-9XM2-4TZP` (3 groups of 4 Crockford-base32 ≈ 60
+  bits) or a 4-word passphrase. Generated once by the maker (or you pick it).
+- **KDF**: `key = PBKDF2-HMAC-SHA256(code, salt="dyno-v1", iters=200000, dkLen=32)`. PBKDF2 is in both
+  Python (`hashlib.pbkdf2_hmac`) and the JVM (`javax.crypto`), so maker and app agree. The **short code
+  never becomes the key directly** — the KDF makes brute-forcing a stolen cartridge expensive.
+- **Both sides run the KDF once, then store the 32-byte key** — no KDF per insert:
+  - **Maker**: `pair --code …` derives the key, caches it in `~/.dyno/maker.cfg`.
+  - **Host**: `dyno-enroll --code …` (a tiny Python/host tool) derives the same key, writes it to
+    `/etc/dyno/secret`. The bash watcher just HMACs with that stored key (no KDF in bash needed).
+- Result: **you type the same short code twice — once in the maker, once on the host — and every cartridge
+  you make auto-mounts.** No giant string, no per-drive step.
+
+**"Generate a UUID from a code" variant (your idea):** if you'd rather the *identity itself* come from the
+code, set `id = UUIDv5(DYNO_NAMESPACE, code + ":" + name)` — then the host can compute the expected UUID
+for a given code without the drive present. Useful, but the **key**-from-code above is what actually gates
+trust; the UUID is just the label. We can do both: code → key (for the signature) **and** code → UUID (for
+a recognisable, reproducible id).
+
+**Rotating:** change the code → re-`pair` on the maker + re-`enroll` on the host → old cartridges stop
+auto-mounting (they'd fall to the "allow & remember" path in §10). Good for revocation.
+
+---
+
+## 10. "Allow & remember" — trust-on-first-use, the easy/insecure path
+
+For when you don't want to bother with codes (testing, or an ad-hoc drive): the host **remembers drives you
+explicitly authorize**, so it's a one-time click per cartridge — not blind trust of every USB.
+
+**How it works**
+- Host keeps an allowlist: `/etc/dyno/authorized.json` → `{ "<uuid>": { name, addedAt } }`.
+- `dyno-check` trust order: (1) **signature valid** (§9) → mount; else (2) uuid **in allowlist** → mount;
+  else (3) **pending** — write `/srv/dyno-pending/<uuid>.json` (name, id, first-seen) and **do not mount**.
+- The app polls the pending dir → **toast "Authorize DYNO 'nakano-main'? (id b3f1c2e4)"** + a card in the
+  DYNO dev panel with **Allow** / **Deny**.
+- **Allow** → app appends the uuid to `authorized.json` (via a host-writable shared path or a small
+  host-side `dyno-authorize` helper the app signals) → next insert (or an immediate re-check) auto-mounts.
+- **Deny** → uuid added to a denylist so it stops prompting.
+- Enable via `DYNO_ALLOW_ENROLL=1`; strict mode (signature only) is the default for real hardware.
+
+So the two paths coexist:
+- **Paired (code):** your own cartridges auto-mount, zero prompts — best for daily use.
+- **Allow & remember (TOFU):** authorize a drive once with a click — best for testing on the weak box or a
+  cartridge made elsewhere. "Remembers drives with correct dyno.json formatting," exactly as described.
+
+**App endpoints for this:** `GET /api/dyno/pending`, `POST /api/dyno/authorize?id=`,
+`POST /api/dyno/deny?id=` (all reflected in the dev panel).
+
+---
+
+## 11. Updated build phases
+
+| Phase | What | Where | Size |
+|-------|------|-------|------|
+| 0 | Cartridge format + **pairing scheme** (dyno.json, dyno.sig, PBKDF2 code→key, UUIDv5) | spec | S |
+| 1 | **DYNO Maker** Python app (CLI + Tkinter GUI + .bat/.sh) — make/sign/verify | tools/dyno-maker | M |
+| 2 | Host: udev + systemd + `dyno-check`/`dyno-unmount` + `dyno-enroll` (code→/etc/dyno/secret) | Debian box | M |
+| 3 | Host: **allow & remember** — allowlist + pending dir + `dyno-authorize` helper | Debian box | S–M |
+| 4 | App `DynoWatcher` + `/api/dyno/*` (cartridges, pending, authorize, verify, usage, eject) + toasts | :server | M |
+| 5 | DYNO dev panel (list, authorize/deny, verify, usage, eject, dev status) | webui | M |
+| 6 | Safe eject via request-file + host timer/inotify | Debian box | S |
+| 7 | Sync (cartridge ↔ library) | per DYNO main spec | L |
+
+Order to prove it out on the weak box: **0 → 1 (maker) → 2 (auto-mount + enroll)** gets a signed cartridge
+auto-mounting; **3** adds click-to-authorize; **4 → 5** bring the in-app toasts + dev panel; **6** safe
+eject; **7** the real sync. All path/env-driven so moving off the test box is config-only.
