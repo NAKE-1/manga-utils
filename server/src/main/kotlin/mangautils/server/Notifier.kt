@@ -86,16 +86,15 @@ object Notifier {
         }
     }
 
-    /** Per-manga embed: cover on the LEFT (author icon) with the title beside it, info as the body, and
-     *  the source in the footer — matching the sketch. The cover rides as the `cover.jpg` attachment. */
+    /** Per-manga embed: title (top-left, clickable), info as the body, source in the footer + violet
+     *  accent, and the cover as the ~80px top-right thumbnail (Discord's larger compact image slot — an
+     *  icon is too small, a full image is too tall to batch 10). Cover rides as the `cover.jpg` attachment. */
     fun mangaEmbed(title: String, url: String?, info: String, source: String, withCover: Boolean = true): Embed = Embed(
-        author = Author(
-            name = title.take(256),
-            url = url?.takeIf { it.startsWith("http") },
-            icon_url = if (withCover) "attachment://cover.jpg" else null,
-        ),
+        title = title.take(256),
+        url = url?.takeIf { it.startsWith("http") },
         description = info.take(4000),
         color = ACCENT,
         footer = Footer(source.take(2048)),
+        thumbnail = if (withCover) Img("attachment://cover.jpg") else null,
     )
 }
