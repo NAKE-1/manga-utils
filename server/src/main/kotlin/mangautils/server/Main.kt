@@ -328,6 +328,8 @@ private data class SettingsDto(
     val autoUpdateHours: Int,
     val autoUpdateHour: Int,
     val autoDownloadNew: Boolean,
+    val healthCheckEnabled: Boolean,
+    val healthCheckHour: Int,
     val flareSolverrEnabled: Boolean,
     val flareSolverrUrl: String,
     val flareSolverrSession: String,
@@ -348,6 +350,8 @@ private data class SettingsPatch(
     val autoUpdateHours: Int? = null,
     val autoUpdateHour: Int? = null,
     val autoDownloadNew: Boolean? = null,
+    val healthCheckEnabled: Boolean? = null,
+    val healthCheckHour: Int? = null,
     val flareSolverrEnabled: Boolean? = null,
     val flareSolverrUrl: String? = null,
     val flareSolverrSession: String? = null,
@@ -418,6 +422,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadDir, AppConfig.downloadsDir.toString(), AppConfig.dataDir.toString(),
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel,
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
+    s.healthCheckEnabled, s.healthCheckHour,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
     s.usbBackupDir,
 )
@@ -657,6 +662,7 @@ fun main() {
     // Warm the download-manager series cache in the background so its first open is instant, not a ~3s scan.
     Thread { runCatching { mangautils.core.download.DownloadStore.listSeries() } }.apply { isDaemon = true; name = "dl-warm" }.start()
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
+    HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     try {
@@ -1231,6 +1237,8 @@ fun Application.module() {
             body.autoUpdateHours?.let { s = s.copy(autoUpdateHours = it.coerceIn(1, 168)) }
             body.autoUpdateHour?.let { s = s.copy(autoUpdateHour = it.coerceIn(0, 23)) }
             body.autoDownloadNew?.let { s = s.copy(autoDownloadNew = it) }
+            body.healthCheckEnabled?.let { s = s.copy(healthCheckEnabled = it) }
+            body.healthCheckHour?.let { s = s.copy(healthCheckHour = it.coerceIn(0, 23)) }
             body.flareSolverrEnabled?.let { s = s.copy(flareSolverrEnabled = it) }
             body.flareSolverrUrl?.let { s = s.copy(flareSolverrUrl = it.trim()) }
             body.flareSolverrSession?.let { s = s.copy(flareSolverrSession = it.trim()) }
@@ -1241,6 +1249,7 @@ fun Application.module() {
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
             UpdateScheduler.reschedule() // apply any change to the auto-update interval/toggle
+            HealthScheduler.reschedule() // apply any change to the health-check schedule
             call.respond(settingsDto(s))
         }
         // Verify a FlareSolverr instance is reachable. With a url it tests that one; blank auto-discovers

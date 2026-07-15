@@ -106,6 +106,15 @@ export function Settings() {
     const s = await api.saveSettings({ autoUpdateHour: Math.max(0, Math.min(23, n)) }).catch(() => null)
     if (s) setInfo(s)
   }
+  async function toggleHealthCheck() {
+    if (!info) return
+    const s = await api.saveSettings({ healthCheckEnabled: !info.healthCheckEnabled }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function setHealthHour(n: number) {
+    const s = await api.saveSettings({ healthCheckHour: Math.max(0, Math.min(23, n)) }).catch(() => null)
+    if (s) setInfo(s)
+  }
   // Choosing a file only PREVIEWS it — nothing changes until you confirm.
   async function onBackupFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -468,6 +477,23 @@ export function Settings() {
             </div>
             <span className={'switch' + (info?.autoDownloadNew ? ' on' : '')}><span className="knob" /></span>
           </button>
+        </div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleHealthCheck}>
+            <div>
+              <div className="set-row-label">Scheduled health check</div>
+              <div className="set-hint">Proactively probe every source once a day so the health dashboard stays current. You can also run it any time from the dashboard.</div>
+            </div>
+            <span className={'switch' + (info?.healthCheckEnabled ? ' on' : '')}><span className="knob" /></span>
+          </button>
+          {info?.healthCheckEnabled && (
+            <div className="set-inline">
+              <span className="set-row-label">Every day at</span>
+              <select className="set-select" style={{ width: 'auto' }} value={info?.healthCheckHour ?? 3} onChange={(e) => setHealthHour(Number(e.target.value))}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+              </select>
+            </div>
+          )}
         </div>
       </section>
 

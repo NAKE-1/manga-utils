@@ -80,6 +80,10 @@ data class Settings(
     val autoUpdateHour: Int = 0,
     /** When an update finds new chapters (scheduled OR manual), auto-enqueue them for download. */
     val autoDownloadNew: Boolean = false,
+    /** Run a proactive source health sweep daily. */
+    val healthCheckEnabled: Boolean = false,
+    /** Hour of day (0-23, local time) the daily health sweep runs. */
+    val healthCheckHour: Int = 3,
     // ---- Cloudflare bypass (FlareSolverr) ----
     /** Solve Cloudflare challenges via a running FlareSolverr instance. */
     val flareSolverrEnabled: Boolean = false,
