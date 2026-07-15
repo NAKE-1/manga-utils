@@ -28,7 +28,8 @@ data class HistoryEntry(
 object HistoryStore {
     private val json = Json { ignoreUnknownKeys = true }
     private val file get() = AppConfig.dataDir.resolve("history.json")
-    private const val MAX = 500
+    // No cap: the full lifetime reading history is kept so it moves 1:1 in a backup. Entries are small
+    // text; even tens of thousands total to a few MB. Dedup below keeps it from double-counting a chapter.
 
     @Synchronized
     private fun load(): MutableList<HistoryEntry> {
@@ -54,12 +55,13 @@ object HistoryStore {
         val list = load()
         list.removeAll { it.chapterUrl == chapterUrl && it.mangaUrl == mangaUrl }
         list.add(0, HistoryEntry(sourceId, mangaUrl, mangaTitle, thumbnailUrl, chapterUrl, chapterName, System.currentTimeMillis()))
-        save(if (list.size > MAX) list.take(MAX) else list)
+        save(list)
     }
 
     fun list(): List<HistoryEntry> = load()
 
-    /** Merge imported history with existing (dedup per chapter, newest readAt wins), capped at MAX. */
+    /** Merge imported history with existing (dedup per chapter, newest readAt wins). Uncapped so a backup
+     *  restores the full history. */
     @Synchronized
     fun restore(entries: List<HistoryEntry>) {
         if (entries.isEmpty()) return
@@ -67,7 +69,6 @@ object HistoryStore {
             .groupBy { it.mangaUrl to it.chapterUrl }
             .map { (_, g) -> g.maxByOrNull { it.readAt }!! }
             .sortedByDescending { it.readAt }
-            .take(MAX)
             .toMutableList()
         save(merged)
     }
