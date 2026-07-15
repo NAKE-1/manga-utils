@@ -33,8 +33,10 @@ object Notifier {
     const val ACCENT = 0x8a7cf0
 
     @Serializable data class Footer(val text: String, val icon_url: String? = null)
+    @Serializable data class Author(val name: String, val url: String? = null, val icon_url: String? = null)
     @Serializable data class Img(val url: String)
     @Serializable data class Embed(
+        val author: Author? = null,
         val title: String? = null,
         val url: String? = null,
         val description: String? = null,
@@ -84,14 +86,16 @@ object Notifier {
         }
     }
 
-    /** Build a per-manga embed matching the agreed layout: title / info(description) / source(footer),
-     *  cover carried separately as the attachment. */
-    fun mangaEmbed(title: String, url: String?, info: String, source: String): Embed = Embed(
-        title = title.take(256),
-        url = url?.takeIf { it.startsWith("http") },
+    /** Per-manga embed: cover on the LEFT (author icon) with the title beside it, info as the body, and
+     *  the source in the footer — matching the sketch. The cover rides as the `cover.jpg` attachment. */
+    fun mangaEmbed(title: String, url: String?, info: String, source: String, withCover: Boolean = true): Embed = Embed(
+        author = Author(
+            name = title.take(256),
+            url = url?.takeIf { it.startsWith("http") },
+            icon_url = if (withCover) "attachment://cover.jpg" else null,
+        ),
         description = info.take(4000),
         color = ACCENT,
         footer = Footer(source.take(2048)),
-        thumbnail = Img("attachment://cover.jpg"),
     )
 }

@@ -783,8 +783,7 @@ fun Application.module() {
                 val srcName = sid?.let { runCatching { SourceManager.loadSource(it)?.name }.getOrNull() } ?: "Some Source"
                 val title = lib?.title ?: "Sample Manga"
                 val cover = lib?.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { t -> sid?.let { runCatching { SourceImage.coverBytes(it, t) }.getOrNull() } }
-                fun mangaEmbed(info: String) = Notifier.mangaEmbed(title, lib?.mangaUrl, info, srcName)
-                    .let { if (cover != null) it else it.copy(thumbnail = null) }
+                fun mangaEmbed(info: String) = Notifier.mangaEmbed(title, lib?.mangaUrl, info, srcName, cover != null)
                 when (body.kind) {
                     "sourcedown" -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(
                         Notifier.Embed(title = "⚠ $srcName is unreachable", description = "The source stopped responding during a health check.", color = 0xe86e8f, footer = Notifier.Footer(srcName)),

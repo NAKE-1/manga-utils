@@ -87,9 +87,10 @@ export default function Webhooks() {
       </div>
 
       <div className="wh-note">
-        <b>Format:</b> title → embed title · info (chapters) → description · source → footer + accent.
-        The cover uploads as a file attachment (Discord can't reach your tailnet), so it renders as the
-        embed thumbnail (top-right).
+        <b>Format:</b> cover → top-left icon (with the title beside it) · info (chapters) → description ·
+        source → footer + violet accent. The cover uploads as a file attachment (Discord can't reach your
+        tailnet). Note: Discord caps the left icon small — for a bigger cover the only options are the
+        right-side thumbnail or a full-width image below.
         <br /><b>Limits (for the real thing):</b> ≤10 embeds/message, ≤6000 chars across embeds, 8&nbsp;MB
         total, 5 requests/2s per webhook, 30 messages/min per channel — a big update will batch 10 manga
         per message and pace itself.
