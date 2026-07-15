@@ -789,6 +789,12 @@ fun Application.module() {
                         Notifier.Embed(title = "⚠ $srcName is unreachable", description = "The source stopped responding during a health check.", color = 0xe86e8f, footer = Notifier.Footer(srcName)),
                     )))
                     "download" -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(mangaEmbed("📥 Downloaded 3 chapters\n• Chapter 138\n• Chapter 139\n• Chapter 140"))), cover)
+                    "poster" -> {
+                        // Full-width "poster" image instead of the small thumbnail, to compare the look.
+                        val e = Notifier.mangaEmbed(title, lib?.mangaUrl, "🆕 3 new chapters\n• Chapter 138\n• Chapter 139\n• Chapter 140", srcName, withCover = false)
+                            .copy(image = if (cover != null) Notifier.Img("attachment://cover.jpg") else null)
+                        Notifier.sendNow(url, Notifier.Payload(embeds = listOf(e)), cover)
+                    }
                     else -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(mangaEmbed("🆕 3 new chapters\n• Chapter 138\n• Chapter 139\n• Chapter 140"))), cover)
                 }
             }

@@ -5,6 +5,7 @@ import { IconArrowLeft } from '../components/icons'
 
 const KINDS: { id: string; label: string }[] = [
   { id: 'newchapters', label: 'New chapters' },
+  { id: 'poster', label: 'Poster (big image)' },
   { id: 'download', label: 'Download complete' },
   { id: 'sourcedown', label: 'Source down' },
 ]

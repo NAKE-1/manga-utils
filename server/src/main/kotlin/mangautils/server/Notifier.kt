@@ -43,6 +43,7 @@ object Notifier {
         val color: Int? = null,
         val footer: Footer? = null,
         val thumbnail: Img? = null,
+        val image: Img? = null,
     )
     @Serializable data class Payload(val content: String? = null, val embeds: List<Embed> = emptyList())
 
