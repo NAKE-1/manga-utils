@@ -279,6 +279,10 @@ private data class LibraryDto(
 @Serializable private data class HealthReportDto(val sources: List<HealthSourceDto>, val healthy: Int, val degraded: Int, val down: Int)
 @Serializable private data class SweepProgressDto(val done: Int, val total: Int, val running: Boolean)
 
+// Discord webhook tester.
+@Serializable private data class WebhookResultDto(val ok: Boolean, val status: Int, val rateLimited: Boolean, val retryAfter: Double? = null, val error: String? = null)
+@Serializable private data class WebhookSampleReq(val source: String = "", val mangaUrl: String = "", val kind: String = "newchapters")
+
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
@@ -336,6 +340,7 @@ private data class SettingsDto(
     val flareSolverrSessionTtlMinutes: Int,
     val flareSolverrTimeoutMs: Int,
     val usbBackupDir: String,
+    val discordWebhookUrl: String,
 )
 
 @Serializable
@@ -358,6 +363,7 @@ private data class SettingsPatch(
     val flareSolverrSessionTtlMinutes: Int? = null,
     val flareSolverrTimeoutMs: Int? = null,
     val usbBackupDir: String? = null,
+    val discordWebhookUrl: String? = null,
 )
 
 @Serializable
@@ -424,7 +430,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
     s.healthCheckEnabled, s.healthCheckHour,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
-    s.usbBackupDir,
+    s.usbBackupDir, s.discordWebhookUrl,
 )
 
 @Serializable
@@ -761,6 +767,34 @@ fun Application.module() {
         }
         post("/api/health/sweep") { HealthSweep.start(); call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
         get("/api/health/sweep/progress") { call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
+
+        // ---- Discord webhook tester (no event wiring yet — just iterate on the embed format) ----
+        post("/api/webhooks/test/ping") {
+            val url = SettingsStore.get().discordWebhookUrl
+            val r = withContext(Dispatchers.IO) { Notifier.sendNow(url, Notifier.Payload(content = "✅ **manga-utils** connected to this channel.")) }
+            call.respond(WebhookResultDto(r.ok, r.status, r.rateLimited, r.retryAfter, r.error))
+        }
+        post("/api/webhooks/test/sample") {
+            val body = call.receive<WebhookSampleReq>()
+            val url = SettingsStore.get().discordWebhookUrl
+            val r = withContext(Dispatchers.IO) {
+                val sid = body.source.toLongOrNull()
+                val lib = sid?.let { LibraryStore.find(it, body.mangaUrl) }
+                val srcName = sid?.let { runCatching { SourceManager.loadSource(it)?.name }.getOrNull() } ?: "Some Source"
+                val title = lib?.title ?: "Sample Manga"
+                val cover = lib?.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { t -> sid?.let { runCatching { SourceImage.coverBytes(it, t) }.getOrNull() } }
+                fun mangaEmbed(info: String) = Notifier.mangaEmbed(title, lib?.mangaUrl, info, srcName)
+                    .let { if (cover != null) it else it.copy(thumbnail = null) }
+                when (body.kind) {
+                    "sourcedown" -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(
+                        Notifier.Embed(title = "⚠ $srcName is unreachable", description = "The source stopped responding during a health check.", color = 0xe86e8f, footer = Notifier.Footer(srcName)),
+                    )))
+                    "download" -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(mangaEmbed("📥 Downloaded 3 chapters\n• Chapter 138\n• Chapter 139\n• Chapter 140"))), cover)
+                    else -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(mangaEmbed("🆕 3 new chapters\n• Chapter 138\n• Chapter 139\n• Chapter 140"))), cover)
+                }
+            }
+            call.respond(WebhookResultDto(r.ok, r.status, r.rateLimited, r.retryAfter, r.error))
+        }
 
         // Distinct languages across all installed sources (for the visibility picker).
         get("/api/languages") {
@@ -1245,6 +1279,7 @@ fun Application.module() {
             body.flareSolverrSessionTtlMinutes?.let { s = s.copy(flareSolverrSessionTtlMinutes = it.coerceIn(1, 1440)) }
             body.flareSolverrTimeoutMs?.let { s = s.copy(flareSolverrTimeoutMs = it.coerceIn(10000, 180000)) }
             body.usbBackupDir?.let { s = s.copy(usbBackupDir = it.trim()) }
+            body.discordWebhookUrl?.let { s = s.copy(discordWebhookUrl = it.trim()) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config

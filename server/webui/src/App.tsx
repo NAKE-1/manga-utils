@@ -14,6 +14,7 @@ import MassDownload from './screens/MassDownload'
 import Stats from './screens/Stats'
 import Logs from './screens/Logs'
 import Health from './screens/Health'
+import Webhooks from './screens/Webhooks'
 import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher } from './components/Toast'
 import { PullToRefresh } from './components/PullToRefresh'
@@ -50,6 +51,7 @@ export function App() {
               <Route path="/stats" element={<Stats />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/health" element={<Health />} />
+              <Route path="/webhooks" element={<Webhooks />} />
               <Route path="/manga/:sourceId" element={<Detail />} />
               <Route path="*" element={<Stub name="Not found" />} />
             </Routes>

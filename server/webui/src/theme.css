@@ -895,3 +895,16 @@ main > * { animation: fade-up .22s ease backwards; }
 .hl-test.err { color: #e86e8f; }
 .hl-testbtn { flex: 0 0 auto; font-size: 12px; padding: 6px 12px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border); color: var(--text); }
 .hl-testbtn:disabled { opacity: .5; }
+
+/* Discord webhook tester */
+.wh-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 15px; margin: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.wh-ok { color: #5fce8f; font-size: 13px; }
+.wh-row { display: flex; align-items: center; gap: 10px; }
+.wh-lbl { font-size: 13px; color: var(--muted); flex: 0 0 auto; }
+.wh-row .set-select { flex: 1 1 auto; min-width: 0; }
+.wh-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.wh-result { font-size: 13px; padding: 9px 11px; border-radius: 9px; margin-top: 2px; }
+.wh-result.ok { color: #5fce8f; background: color-mix(in srgb, #5fce8f 12%, transparent); }
+.wh-result.err { color: #e86e8f; background: color-mix(in srgb, #e86e8f 12%, transparent); }
+.wh-note { font-size: 12px; color: var(--muted); line-height: 1.5; padding: 4px 18px 40px; }
+.wh-note b { color: var(--text); }

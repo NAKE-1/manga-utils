@@ -99,4 +99,6 @@ data class Settings(
     /** Where the "Back up to USB" action writes (a mounted/bind-mounted drive path).
      *  Blank = use the `MU_DYNO_DIR` env var, else the default `/dyno`. */
     val usbBackupDir: String = "",
+    /** Discord webhook URL for notifications (empty = disabled). Secret — mask in the UI. */
+    val discordWebhookUrl: String = "",
 )
