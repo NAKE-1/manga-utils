@@ -242,7 +242,19 @@ export const api = {
   repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   brokenDownloads: () => getJson<BrokenReport>('/api/downloads/broken'),
   logs: (level = 'warn', limit = 200) => getJson<LogEntry[]>(`/api/logs?level=${level}&limit=${limit}`),
+  healthSources: () => getJson<HealthReport>('/api/health/sources'),
+  runHealthSweep: () => fetch('/api/health/sweep', { method: 'POST' }).then((r) => r.json() as Promise<SweepProgress>),
+  sweepProgress: () => getJson<SweepProgress>('/api/health/sweep/progress'),
 }
+
+export interface HealthSource {
+  id: string; name: string; lang: string; cfState: 'green' | 'orange' | 'red'
+  down: boolean; imagesDown: boolean; usesWebView: boolean
+  circuitApiOpen: boolean; circuitImagesOpen: boolean
+  lastOkMs: number; lastFailMs: number; lastPingMs: number
+}
+export interface HealthReport { sources: HealthSource[]; healthy: number; degraded: number; down: number }
+export interface SweepProgress { done: number; total: number; running: boolean }
 
 export interface BrokenSeries { title: string; broken: string[]; total: number }
 export interface BrokenReport { series: BrokenSeries[]; totalBroken: number }

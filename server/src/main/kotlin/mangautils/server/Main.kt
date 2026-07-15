@@ -55,6 +55,7 @@ import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.CloudflareState
 import mangautils.core.source.Diagnostics
+import mangautils.core.source.SourceCircuits
 import mangautils.core.source.SourceHealth
 import mangautils.core.source.LocalChapterReader
 import mangautils.core.source.SourceBrowser
@@ -259,6 +260,24 @@ private data class LibraryDto(
 
 // In-app error log.
 @Serializable private data class LogDto(val ts: Long, val level: String, val logger: String, val msg: String)
+
+// Source health dashboard.
+@Serializable private data class HealthSourceDto(
+    val id: String,
+    val name: String,
+    val lang: String,
+    val cfState: String,
+    val down: Boolean,
+    val imagesDown: Boolean,
+    val usesWebView: Boolean,
+    val circuitApiOpen: Boolean,
+    val circuitImagesOpen: Boolean,
+    val lastOkMs: Long,
+    val lastFailMs: Long,
+    val lastPingMs: Long,
+)
+@Serializable private data class HealthReportDto(val sources: List<HealthSourceDto>, val healthy: Int, val degraded: Int, val down: Int)
+@Serializable private data class SweepProgressDto(val done: Int, val total: Int, val running: Boolean)
 
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
@@ -708,6 +727,34 @@ fun Application.module() {
             }
             call.respond(sources)
         }
+
+        // Source health dashboard: per-source status (cf/down/images/circuit) + last-ok/fail/ping times,
+        // sorted worst-first, plus a healthy/degraded/down rollup.
+        get("/api/health/sources") {
+            val visible = SettingsStore.get().visibleLanguages
+            val report = withContext(Dispatchers.IO) {
+                val rows = InstalledStore.list().flatMap { ext ->
+                    val webview = WebViewDetect.usesWebView(ext.jarPath)
+                    ext.sources.map { s ->
+                        val rec = SourceHealth.record(s.id)
+                        HealthSourceDto(
+                            s.id.toString(), s.name, s.lang, cfState(s.id),
+                            SourceHealth.isDown(s.id), SourceHealth.areImagesDown(s.id), webview,
+                            SourceCircuits.api.isOpen(s.id), SourceCircuits.images.isOpen(s.id),
+                            rec?.lastOkMs ?: 0, rec?.lastFailMs ?: 0, rec?.lastPingMs ?: 0,
+                        )
+                    }
+                }.filter { langVisible(it.lang, visible) }
+                fun rank(h: HealthSourceDto) = if (h.down || h.cfState == "red") 2 else if (h.imagesDown || h.cfState == "orange") 1 else 0
+                val sorted = rows.sortedWith(compareByDescending<HealthSourceDto> { rank(it) }.thenBy { it.name.lowercase() })
+                val down = sorted.count { rank(it) == 2 }
+                val degraded = sorted.count { rank(it) == 1 }
+                HealthReportDto(sorted, sorted.size - down - degraded, degraded, down)
+            }
+            call.respond(report)
+        }
+        post("/api/health/sweep") { HealthSweep.start(); call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
+        get("/api/health/sweep/progress") { call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
 
         // Distinct languages across all installed sources (for the visibility picker).
         get("/api/languages") {

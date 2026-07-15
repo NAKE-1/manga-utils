@@ -13,6 +13,7 @@ import { DownloadsManager } from './screens/DownloadsManager'
 import MassDownload from './screens/MassDownload'
 import Stats from './screens/Stats'
 import Logs from './screens/Logs'
+import Health from './screens/Health'
 import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher } from './components/Toast'
 import { PullToRefresh } from './components/PullToRefresh'
@@ -48,6 +49,7 @@ export function App() {
               <Route path="/mass-download" element={<MassDownload />} />
               <Route path="/stats" element={<Stats />} />
               <Route path="/logs" element={<Logs />} />
+              <Route path="/health" element={<Health />} />
               <Route path="/manga/:sourceId" element={<Detail />} />
               <Route path="*" element={<Stub name="Not found" />} />
             </Routes>

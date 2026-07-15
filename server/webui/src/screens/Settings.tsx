@@ -625,6 +625,7 @@ export function Settings() {
         <div className="set-card">
           <div className="set-row-label">Source health</div>
           <div className="set-hint">Live from your reading — a source can serve its catalog fine while its images are down (an outage). Green = ok · orange = images failing · red = source unreachable / Cloudflare.</div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/health')}>Open health dashboard</button></div>
           {sources.length === 0 ? <div className="set-hint">No sources installed.</div> : (
             <div className="srchealth">
               {[...sources]
