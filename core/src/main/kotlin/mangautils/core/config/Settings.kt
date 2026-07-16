@@ -101,4 +101,18 @@ data class Settings(
     val usbBackupDir: String = "",
     /** Discord webhook URL for notifications (empty = disabled). Secret — mask in the UI. */
     val discordWebhookUrl: String = "",
+    /** Per-event notification toggles + cover style. */
+    val notify: NotifyConfig = NotifyConfig(),
+)
+
+@Serializable
+data class NotifyConfig(
+    val enabled: Boolean = false, // master switch
+    val libraryCheck: Boolean = true,
+    val newChapters: Boolean = true,
+    val downloadStart: Boolean = true,
+    val downloadComplete: Boolean = true,
+    val downloadFailed: Boolean = true,
+    val sourceHealth: Boolean = true,
+    val coverStyle: String = "thumbnail", // "thumbnail" | "poster"
 )

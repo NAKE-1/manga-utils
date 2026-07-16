@@ -108,6 +108,7 @@ object DownloadQueue {
     private fun run(task: Task) {
         if (Thread.currentThread().isInterrupted) { task.state = "stopped"; return }
         task.state = "running"
+        Notifier.onDownloadStart(task.sourceId, task.mangaUrl, task.mangaTitle, task.total)
         runCatching {
             val s = SettingsStore.get()
             // The web queue is headless — there's no prompt, so ASK must fall back to SKIP
@@ -161,8 +162,13 @@ object DownloadQueue {
             else { task.state = "failed"; task.error = it.message ?: it::class.simpleName ?: "failed" }
             log.debug("download task {} ended: {}", task.id, task.state)
         }
+        when (task.state) {
+            "done" -> Notifier.onDownloadComplete(task.sourceId, task.mangaUrl, task.mangaTitle, task.doneCount)
+            "failed" -> Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error)
+        }
         futures.remove(task.id)
         pump() // a slot (and this source) just freed — start the next eligible manga
+        if (activeCount() == 0 && queuedCount() == 0) Notifier.flushDownloadSession() // queue drained → session summary
     }
 
     fun tasks(): List<Task> = tasks.values.sortedBy { it.order }

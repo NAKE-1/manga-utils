@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type LibraryEntry, type WebhookResult } from '../api'
+import { api, type LibraryEntry, type WebhookResult, type NotifyConfig } from '../api'
 import { IconArrowLeft } from '../components/icons'
 
 const KINDS: { id: string; label: string }[] = [
@@ -9,24 +9,39 @@ const KINDS: { id: string; label: string }[] = [
   { id: 'download', label: 'Download complete' },
   { id: 'sourcedown', label: 'Source down' },
 ]
+const EVENTS: { key: keyof NotifyConfig; label: string }[] = [
+  { key: 'libraryCheck', label: 'Library check ran' },
+  { key: 'newChapters', label: 'New chapters found' },
+  { key: 'downloadStart', label: 'Download started' },
+  { key: 'downloadComplete', label: 'Download complete' },
+  { key: 'downloadFailed', label: 'Download failed' },
+  { key: 'sourceHealth', label: 'Source down / recovered' },
+]
 
 export default function Webhooks() {
   const nav = useNavigate()
   const [url, setUrl] = useState('')
   const [saved, setSaved] = useState('')
+  const [notify, setNotify] = useState<NotifyConfig | null>(null)
   const [lib, setLib] = useState<LibraryEntry[]>([])
   const [pick, setPick] = useState('')
   const [busy, setBusy] = useState('')
   const [result, setResult] = useState<{ kind: string; r: WebhookResult } | null>(null)
 
   useEffect(() => {
-    api.getSettings().then((s) => { setUrl(s.discordWebhookUrl || ''); setSaved(s.discordWebhookUrl || '') }).catch(() => {})
+    api.getSettings().then((s) => { setUrl(s.discordWebhookUrl || ''); setSaved(s.discordWebhookUrl || ''); setNotify(s.notify) }).catch(() => {})
     api.library().then((l) => { setLib(l); if (l[0]) setPick(l[0].sourceId + '|' + l[0].url) }).catch(() => {})
   }, [])
 
   async function save() {
     const s = await api.saveSettings({ discordWebhookUrl: url.trim() }).catch(() => null)
     if (s) setSaved(s.discordWebhookUrl || '')
+  }
+  async function patchNotify(part: Partial<NotifyConfig>) {
+    if (!notify) return
+    const n = { ...notify, ...part }
+    setNotify(n)
+    api.saveSettings({ notify: n }).catch(() => {})
   }
 
   function show(kind: string, r: WebhookResult) { setResult({ kind, r }); setBusy('') }
@@ -58,6 +73,36 @@ export default function Webhooks() {
           {configured && <span className="wh-ok">● configured</span>}
         </div>
       </div>
+
+      {notify && (
+        <div className="wh-card">
+          <button className="set-toggle" onClick={() => patchNotify({ enabled: !notify.enabled })}>
+            <div>
+              <div className="set-row-label">Notifications</div>
+              <div className="set-hint">Master switch. Turn on, then choose which events fire below.</div>
+            </div>
+            <span className={'switch' + (notify.enabled ? ' on' : '')}><span className="knob" /></span>
+          </button>
+          {notify.enabled && (
+            <>
+              <div className="wh-events">
+                {EVENTS.map((e) => (
+                  <button key={e.key} className={'wh-ev' + (notify[e.key] ? ' on' : '')} onClick={() => patchNotify({ [e.key]: !notify[e.key] } as Partial<NotifyConfig>)}>
+                    <span className="wh-ev-dot" />{e.label}
+                  </button>
+                ))}
+              </div>
+              <div className="wh-row">
+                <span className="wh-lbl">Cover</span>
+                <div className="wh-seg">
+                  <button className={notify.coverStyle !== 'poster' ? 'on' : ''} onClick={() => patchNotify({ coverStyle: 'thumbnail' })}>Thumbnail</button>
+                  <button className={notify.coverStyle === 'poster' ? 'on' : ''} onClick={() => patchNotify({ coverStyle: 'poster' })}>Poster</button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="wh-card">
         <div className="set-row-label">Send a test</div>

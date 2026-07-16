@@ -3,6 +3,7 @@ package mangautils.server
 import mangautils.core.extension.InstalledStore
 import mangautils.core.source.Diagnostics
 import mangautils.core.source.SourceHealth
+import mangautils.core.source.SourceManager
 import org.slf4j.LoggerFactory
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -33,6 +34,8 @@ object HealthSweep {
         Thread({ runSweep() }, "health-sweep").apply { isDaemon = true }.start()
     }
 
+    private fun srcName(id: Long) = runCatching { SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
+
     private fun runSweep() {
         try {
             val ids = InstalledStore.list().flatMap { it.sources }.map { it.id }.distinct()
@@ -42,14 +45,17 @@ object HealthSweep {
                 val futures = ids.map { id ->
                     pool.submit {
                         runCatching {
+                            val wasDown = SourceHealth.isDown(id)
                             val r = Diagnostics.run(id, samples = 1)
                             if (r.ok) {
                                 SourceHealth.markUp(id)
                                 SourceHealth.markImagesUp(id)
                                 SourceHealth.setPing(id, r.pingMs.toLong())
-                            } else {
+                                if (wasDown) Notifier.onSourceTransition(srcName(id), down = false) // recovered
+                            } else if (r.error?.contains("Cloudflare", ignoreCase = true) != true) {
                                 // A Cloudflare block shows via cfState, not "down"; a real failure marks down.
-                                if (r.error?.contains("Cloudflare", ignoreCase = true) != true) SourceHealth.markDown(id)
+                                SourceHealth.markDown(id)
+                                if (!wasDown) Notifier.onSourceTransition(srcName(id), down = true) // newly down
                             }
                         }.onFailure { log.debug("health probe {} failed: {}", id, it.message) }
                         doneCount.incrementAndGet()

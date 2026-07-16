@@ -282,6 +282,7 @@ private data class LibraryDto(
 // Discord webhook tester.
 @Serializable private data class WebhookResultDto(val ok: Boolean, val status: Int, val rateLimited: Boolean, val retryAfter: Double? = null, val error: String? = null)
 @Serializable private data class WebhookSampleReq(val source: String = "", val mangaUrl: String = "", val kind: String = "newchapters")
+@Serializable private data class NotifyStatusDto(val rateLimitedAtMs: Long, val retryAfter: Double)
 
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
@@ -341,6 +342,7 @@ private data class SettingsDto(
     val flareSolverrTimeoutMs: Int,
     val usbBackupDir: String,
     val discordWebhookUrl: String,
+    val notify: mangautils.core.config.NotifyConfig,
 )
 
 @Serializable
@@ -364,6 +366,7 @@ private data class SettingsPatch(
     val flareSolverrTimeoutMs: Int? = null,
     val usbBackupDir: String? = null,
     val discordWebhookUrl: String? = null,
+    val notify: mangautils.core.config.NotifyConfig? = null,
 )
 
 @Serializable
@@ -430,7 +433,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
     s.healthCheckEnabled, s.healthCheckHour,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
-    s.usbBackupDir, s.discordWebhookUrl,
+    s.usbBackupDir, s.discordWebhookUrl, s.notify,
 )
 
 @Serializable
@@ -699,7 +702,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -774,6 +777,7 @@ fun Application.module() {
             val r = withContext(Dispatchers.IO) { Notifier.sendNow(url, Notifier.Payload(content = "✅ **manga-utils** connected to this channel.")) }
             call.respond(WebhookResultDto(r.ok, r.status, r.rateLimited, r.retryAfter, r.error))
         }
+        get("/api/notify/status") { call.respond(NotifyStatusDto(Notifier.rateLimitedAtMs, Notifier.rateLimitRetryAfter)) }
         post("/api/webhooks/test/sample") {
             val body = call.receive<WebhookSampleReq>()
             val url = SettingsStore.get().discordWebhookUrl
@@ -935,6 +939,7 @@ fun Application.module() {
                     LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
                 } finally { libUpdateRunning = false }
             }
+            Notifier.onLibraryChecked(results, scheduled = false) // notify on manual checks too
             UpdateScheduler.autoDownloadNew(results) // honor the auto-download setting for manual checks too
             val titles = results.filter { it.newChapters.isNotEmpty() }
                 .sortedByDescending { it.newChapters.size }
@@ -1285,6 +1290,7 @@ fun Application.module() {
             body.flareSolverrTimeoutMs?.let { s = s.copy(flareSolverrTimeoutMs = it.coerceIn(10000, 180000)) }
             body.usbBackupDir?.let { s = s.copy(usbBackupDir = it.trim()) }
             body.discordWebhookUrl?.let { s = s.copy(discordWebhookUrl = it.trim()) }
+            body.notify?.let { s = s.copy(notify = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config

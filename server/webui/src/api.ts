@@ -178,7 +178,7 @@ export const api = {
     if (!r.ok) throw new Error('Export failed')
     return r.blob()
   },
-  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string }>): Promise<SettingsInfo> => {
+  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed')
     return r.json()
@@ -248,9 +248,11 @@ export const api = {
   webhookPing: () => fetch('/api/webhooks/test/ping', { method: 'POST' }).then((r) => r.json() as Promise<WebhookResult>),
   webhookSample: (source: string, mangaUrl: string, kind: string) =>
     fetch('/api/webhooks/test/sample', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, mangaUrl, kind }) }).then((r) => r.json() as Promise<WebhookResult>),
+  notifyStatus: () => getJson<{ rateLimitedAtMs: number; retryAfter: number }>('/api/notify/status'),
 }
 
 export interface WebhookResult { ok: boolean; status: number; rateLimited: boolean; retryAfter?: number; error?: string }
+export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; coverStyle: string }
 
 export interface HealthSource {
   id: string; name: string; lang: string; cfState: 'green' | 'orange' | 'red'
@@ -287,7 +289,7 @@ export interface Downloads { tasks: DlTask[]; active: number; queued: number; to
 export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
-export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string }
+export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig }
 export interface BackupJob { running: boolean; state: string; phase: string; filesDone: number; filesTotal: number; bytesCopied: number; blobName: string; filesSkipped: number; error: string; target: string }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
 export interface DevStats {

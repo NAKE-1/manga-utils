@@ -55,6 +55,7 @@ export function Toasts() {
 // Module-level so the poll cursor survives a DownloadWatcher remount (otherwise re-syncing swallows
 // the events we want to toast).
 let flareCursor: number | null = null
+let notifyRateAt = -1 // last-seen Discord rate-limit timestamp (-1 = not yet synced)
 
 export function DownloadWatcher() {
   const prev = useRef<Record<string, string>>({})
@@ -101,6 +102,15 @@ export function DownloadWatcher() {
         const u = await api.updateProgress()
         if (u.running) { toast(`Scanning for updates ${u.total > 0 ? Math.round((u.done / u.total) * 100) : 0}%`, 'info', 5000, 'lib-scan'); wasScanning.current = true }
         else if (wasScanning.current) { toast('Library scan complete', 'success', 3000, 'lib-scan'); wasScanning.current = false }
+      } catch { /* ignore */ }
+      // Discord webhook hit a rate limit → let the user know it's throttling (auto-retries server-side).
+      try {
+        const n = await api.notifyStatus()
+        if (notifyRateAt < 0) notifyRateAt = n.rateLimitedAtMs
+        else if (n.rateLimitedAtMs > notifyRateAt) {
+          notifyRateAt = n.rateLimitedAtMs
+          toast(`Discord rate-limited — retrying in ${Math.ceil(n.retryAfter)}s`, 'info', 6000, 'discord-rl')
+        }
       } catch { /* ignore */ }
     }
     const iv = window.setInterval(() => { if (alive) tick() }, 3500)

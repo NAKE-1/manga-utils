@@ -54,6 +54,7 @@ object UpdateScheduler {
         lastRunAt = System.currentTimeMillis()
         val newCount = results.sumOf { it.newChapters.size }
         log.info("scheduled update: {} new chapter(s) across {} title(s)", newCount, results.count { it.newChapters.isNotEmpty() })
+        Notifier.onLibraryChecked(results, scheduled = true)
         autoDownloadNew(results)
         return results
     }
