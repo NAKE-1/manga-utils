@@ -647,7 +647,7 @@ export function Settings() {
         <div className="set-card">
           <div className="set-row-label">Discord notifications</div>
           <div className="set-hint">Send notifications (new chapters, downloads, source outages) to a Discord channel. Set up and test the webhook here.</div>
-          <div className="set-actions"><button className="btn primary" onClick={() => nav('/webhooks')}>Open webhook tester</button></div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/webhooks')}>Open webhook options</button></div>
         </div>
       </section>
 

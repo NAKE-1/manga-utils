@@ -61,7 +61,7 @@ export default function Webhooks() {
     <div className="ext-page">
       <div className="ext-top">
         <button className="iconbtn" onClick={() => nav('/settings')} aria-label="Back"><IconArrowLeft /></button>
-        <span className="ext-title">Discord webhook tester</span>
+        <span className="ext-title">Webhook options</span>
       </div>
 
       <div className="wh-card">
@@ -78,8 +78,8 @@ export default function Webhooks() {
         <div className="wh-card">
           <button className="set-toggle" onClick={() => patchNotify({ enabled: !notify.enabled })}>
             <div>
-              <div className="set-row-label">Notifications</div>
-              <div className="set-hint">Master switch. Turn on, then choose which events fire below.</div>
+              <div className="set-row-label">Webhook enabled</div>
+              <div className="set-hint">Turn the whole webhook on or off — stops all sending but keeps your URL and event choices.</div>
             </div>
             <span className={'switch' + (notify.enabled ? ' on' : '')}><span className="knob" /></span>
           </button>
