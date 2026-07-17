@@ -319,7 +319,7 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
     val id: String, val mangaKey: String, val mangaTitle: String, val state: String,
     val total: Int, val done: Int, val failed: Int,
     val currentChapter: String, val currentChapterUrl: String, val pagesDone: Int, val pagesTotal: Int,
-    val kbps: Double, val error: String, val failedChapters: List<DlChapterReq>,
+    val kbps: Double, val error: String, val failedChapters: List<DlChapterReq>, val tag: String = "",
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 @Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
@@ -626,7 +626,7 @@ private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
             it.id, "${it.sourceId}|${it.mangaUrl}", it.mangaTitle, it.state,
             it.total, it.doneCount, it.failedCount,
             it.currentChapter, it.currentChapterUrl, it.pagesDone, it.pagesTotal,
-            it.bytesPerSec / 1024.0, it.error, it.failed.map { c -> DlChapterReq(c.url, c.name) },
+            it.bytesPerSec / 1024.0, it.error, it.failed.map { c -> DlChapterReq(c.url, c.name) }, it.tag,
         )
     },
     DownloadQueue.activeCount(),
@@ -688,6 +688,8 @@ fun main() {
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
     // Warm the download-manager series cache in the background so its first open is instant, not a ~3s scan.
     Thread { runCatching { mangautils.core.download.DownloadStore.listSeries() } }.apply { isDaemon = true; name = "dl-warm" }.start()
+    // Restore + resume the download queue from disk (survives a crash/restart).
+    Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
     HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080

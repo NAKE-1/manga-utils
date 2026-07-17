@@ -129,7 +129,7 @@ object MigrationJob {
                 if (reDownload && n > 0) {
                     val dlNumbers = fromEntry.knownChapters.filter { DownloadManager.sanitize(it.name) in dlNames && it.number >= 0 }.map { it.number }.toSet()
                     val bDl = plan.toChapters.filter { it.chapter_number in dlNumbers }.map { DownloadQueue.Chapter(it.url, it.name) }
-                    if (bDl.isNotEmpty()) { DownloadQueue.enqueue(toSource, toUrl, plan.toTitle, bDl); step("Queued ${bDl.size} chapter(s) to re-download from the new source — see Downloads.") }
+                    if (bDl.isNotEmpty()) { DownloadQueue.enqueue(toSource, toUrl, plan.toTitle, bDl, tag = "migration"); step("Queued ${bDl.size} chapter(s) to re-download from the new source — see Downloads.") }
                 }
             } else {
                 step("Kept the old source's downloads on disk (they were downloaded from the old source).")

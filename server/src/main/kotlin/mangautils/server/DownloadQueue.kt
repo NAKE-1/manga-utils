@@ -5,16 +5,26 @@
  */
 package mangautils.server
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.ChapterSelect
 import mangautils.core.download.DownloadManager
+import mangautils.core.download.DownloadStore
 import mangautils.core.download.ExistingPolicy
 import mangautils.core.download.SourceRef
+import mangautils.core.source.SourceManager
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import kotlin.io.path.createParentDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
 
 /**
  * Web download queue. Each task is ONE manga (a set of chapters), downloaded with a single
@@ -37,6 +47,7 @@ object DownloadQueue {
     ) {
         val total = chapters.size
         @Volatile var order = 0 // sort key for the queue; lower runs first (reorderable while queued)
+        @Volatile var tag = "" // "" for a normal download, "migration" for one queued by a migration
         @Volatile var state = "queued" // queued | running | done | failed | stopped
         @Volatile var doneCount = 0
         @Volatile var failedCount = 0
@@ -73,12 +84,13 @@ object DownloadQueue {
 
     /** Enqueue a manga's chapters as a single task (one resolve, sequential chapters). */
     @Synchronized
-    fun enqueue(sourceId: Long, mangaUrl: String, mangaTitle: String, chapters: List<Chapter>) {
+    fun enqueue(sourceId: Long, mangaUrl: String, mangaTitle: String, chapters: List<Chapter>, tag: String = "") {
         if (chapters.isEmpty()) return
         val n = seq++
         val id = "dl-$n-${System.nanoTime().toString(36).takeLast(4)}"
-        tasks[id] = Task(id, sourceId, mangaUrl, mangaTitle, chapters).apply { order = n.toInt() }
+        tasks[id] = Task(id, sourceId, mangaUrl, mangaTitle, chapters).apply { order = n.toInt(); this.tag = tag }
         pump()
+        persist()
     }
 
     /**
@@ -168,6 +180,7 @@ object DownloadQueue {
         }
         futures.remove(task.id)
         pump() // a slot (and this source) just freed — start the next eligible manga
+        persist() // capture the finished state + any newly-running task
         if (activeCount() == 0 && queuedCount() == 0) Notifier.flushDownloadSession() // queue drained → session summary
     }
 
@@ -185,6 +198,7 @@ object DownloadQueue {
         if (idx < 0 || swapIdx !in queued.indices) return
         val other = queued[swapIdx]
         val tmp = t.order; t.order = other.order; other.order = tmp
+        persist()
     }
     fun queuedCount(): Int = tasks.values.count { it.state == "queued" }
     fun activeCount(): Int = tasks.values.count { it.active }
@@ -194,13 +208,71 @@ object DownloadQueue {
         tasks[id]?.let { if (it.active) it.state = "stopped" } // set the flag FIRST so the running loop aborts
         futures[id]?.cancel(true)
         pump()
+        persist()
     }
     fun stopAll() {
         tasks.values.forEach { if (it.active) it.state = "stopped" }
         futures.values.forEach { it.cancel(true) }
+        persist()
     }
-    fun clearFinished() { tasks.entries.removeIf { !it.value.active } }
+    fun clearFinished() { tasks.entries.removeIf { !it.value.active }; persist() }
 
     /** Remove ONE finished/failed/stopped task row (no-op while it's still active). */
-    fun remove(id: String) { tasks[id]?.let { if (!it.active) tasks.remove(id) } }
+    fun remove(id: String) { tasks[id]?.let { if (!it.active) tasks.remove(id) }; persist() }
+
+    // ---- persistence: survive a restart (Part B) ------------------------------------------------
+    @Serializable private data class PChap(val url: String, val name: String)
+    @Serializable private data class PTask(
+        val id: String, val sourceId: Long, val mangaUrl: String, val title: String, val source: String,
+        val order: Int, val tag: String, val state: String,
+        val chapters: List<PChap>, val done: List<String>, val failed: List<String>, val error: String,
+    )
+    @Serializable private data class PFile(val version: Int = 1, val savedAt: Long, val tasks: List<PTask>)
+
+    private val pjson = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
+    private val queueFile get() = AppConfig.dataDir.resolve("downloadqueue.json")
+    private fun srcName(id: Long) = runCatching { SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
+
+    @Synchronized
+    private fun persist() {
+        runCatching {
+            val list = tasks.values.sortedBy { it.order }.map { t ->
+                PTask(t.id, t.sourceId, t.mangaUrl, t.mangaTitle, srcName(t.sourceId), t.order, t.tag, t.state,
+                    t.chapters.map { PChap(it.url, it.name) }, t.finishedNames.toList(), t.failed.map { it.name }, t.error)
+            }
+            queueFile.createParentDirectories()
+            queueFile.writeText(pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
+        }.onFailure { log.debug("queue persist failed: {}", it.message) }
+    }
+
+    /** Restore the queue from disk on startup: resume active tasks (auto-discarding any half-written
+     *  chapter so it re-downloads fresh) and keep finished ones as history. */
+    @Synchronized
+    fun loadAndResume() {
+        val pf = runCatching { if (queueFile.exists()) pjson.decodeFromString<PFile>(queueFile.readText()) else null }.getOrNull() ?: return
+        if (pf.tasks.isEmpty()) return
+        var resumed = 0; var kept = 0
+        for (pt in pf.tasks) {
+            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag }
+            if (pt.state == "queued" || pt.state == "running") {
+                // Discard any incomplete (no-ComicInfo) chapters so a half-written one re-downloads fresh.
+                runCatching { DownloadStore.listChapters(pt.title).filterNot { it.complete }.forEach { DownloadStore.deleteChapter(pt.title, it.name) } }
+                task.state = "queued"; resumed++
+            } else {
+                task.state = pt.state
+                pt.done.forEach { task.finishedNames.add(it) }
+                task.doneCount = pt.done.size
+                val byName = pt.chapters.associateBy { it.name }
+                task.failed.addAll(pt.failed.mapNotNull { n -> byName[n]?.let { Chapter(it.url, it.name) } })
+                task.failedCount = task.failed.size
+                task.error = pt.error
+                kept++
+            }
+            tasks[task.id] = task
+        }
+        seq = (pf.tasks.maxOfOrNull { it.order.toLong() } ?: -1L) + 1 // don't collide new ids/order with restored
+        log.info("download queue restored: {} resumed, {} finished kept", resumed, kept)
+        if (resumed > 0) pump()
+        persist()
+    }
 }
