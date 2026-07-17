@@ -179,6 +179,15 @@ export function Detail() {
     try { setData(await api.detail(sourceId, url, true)) } finally { setChecking(false) }
   }
 
+  function migrate() {
+    setConfirm({
+      title: 'Enter migration mode?',
+      message: `Move “${title()}” to another source, carrying your read progress, bookmarks and continue-reading?`,
+      confirmLabel: 'Enter migration', danger: true, onCancel: close,
+      onConfirm: () => { close(); nav(`/migrate?source=${sourceId}&url=${encodeURIComponent(url)}&title=${encodeURIComponent(title())}`) },
+    })
+  }
+
   function openContinue() {
     if (!data) return
     const ordered = readingOrder(data.chapters)
@@ -381,6 +390,7 @@ export function Detail() {
         <button className={'bb-icon' + (state.inLibrary ? ' on' : '')} onClick={toggleLibrary} disabled={busy} aria-label="Bookmark / library">
           <IconBookmarkSm filled={state.inLibrary} />
         </button>
+        {state.inLibrary && <button className="bb-mig" onClick={migrate} aria-label="Migrate to another source" title="Migrate to another source">M</button>}
         <div style={{ flex: 1 }} />
         <button className="bb-book" onClick={openContinue} aria-label="Read"><IconBookOpen /></button>
       </div>
