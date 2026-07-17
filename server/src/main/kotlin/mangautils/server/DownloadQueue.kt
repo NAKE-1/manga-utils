@@ -175,8 +175,15 @@ object DownloadQueue {
             log.debug("download task {} ended: {}", task.id, task.state)
         }
         when (task.state) {
-            "done" -> Notifier.onDownloadComplete(task.sourceId, task.mangaUrl, task.mangaTitle, task.doneCount)
-            "failed" -> Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error)
+            "done" -> {
+                log.info("DOWNLOAD COMPLETE - '{}' ({}/{} chapters)", task.mangaTitle, task.doneCount, task.total)
+                Notifier.onDownloadComplete(task.sourceId, task.mangaUrl, task.mangaTitle, task.doneCount)
+            }
+            "failed" -> {
+                log.info("DOWNLOAD FAILED - '{}' ({}/{} done, {} failed)", task.mangaTitle, task.doneCount, task.total, task.failedCount)
+                Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error)
+            }
+            "stopped" -> log.info("DOWNLOAD STOPPED - '{}' ({}/{} chapters kept)", task.mangaTitle, task.doneCount, task.total)
         }
         futures.remove(task.id)
         pump() // a slot (and this source) just freed — start the next eligible manga
