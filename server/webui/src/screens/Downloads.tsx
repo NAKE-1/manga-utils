@@ -106,7 +106,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t:
   return (
     <div className="dlc">
       <div className="dlc-top">
-        <div className="dlc-title">{t.mangaTitle}{t.tag === 'migration' && <span className="dlc-tag">MIGRATION</span>}</div>
+        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.mangaTitle}</div>
         <div className="dlc-actions">
           {queued && (
             <span className="dlc-reorder">

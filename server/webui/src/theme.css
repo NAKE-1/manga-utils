@@ -978,8 +978,8 @@ main > * { animation: fade-up .22s ease backwards; }
 .mig-log-line.err { color: #e86e8f; }
 .mig-log-line.running { color: var(--accent); }
 
-/* Migration-download chip in the Downloads list */
-.dlc-tag { display: inline-block; margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: .06em; color: #fff; background: #d63b52; padding: 2px 6px; border-radius: 5px; vertical-align: middle; }
+/* Migration-download marker — a compact red "M" before the title (visible on mobile) */
+.dlc-m { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-right: 7px; font-size: 11px; font-weight: 800; color: #fff; background: #d63b52; border-radius: 5px; vertical-align: middle; flex: 0 0 auto; }
 
 /* Resume (interrupted) download */
 .dl-link.dl-resume { color: #e3ba55; font-weight: 700; }
