@@ -25,7 +25,13 @@ export default function Migrate() {
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    api.sources().then((s) => { const o = s.filter((x) => x.id !== fromSource); setSources(o); if (o[0]) setToSource(o[0].id) }).catch(() => {})
+    api.sources().then((s) => {
+      const o = s.filter((x) => x.id !== fromSource)
+      setSources(o)
+      // Default to the same source the normal search uses (last-used), if it's a valid target.
+      const pref = localStorage.getItem('browse.source') || ''
+      setToSource(o.find((x) => x.id === pref)?.id || o[0]?.id || '')
+    }).catch(() => {})
   }, [fromSource])
 
   async function search() {
