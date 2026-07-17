@@ -40,8 +40,14 @@ restarts from page 1 — see Part C for true mid-chapter resume.)
 
 ### Resume (`server/.../Main.kt` startup)
 - On boot, `DownloadQueue.loadAndResume()`: read the file, re-add each task as **`queued`**, then `pump()`.
-- Because `DownloadManager` skips existing-complete chapters, a resumed task fast-forwards past what's done
-  and downloads the rest. A mid-download partial (no ComicInfo) re-downloads from scratch — acceptable v1.
+- **Auto-repair partials on resume (important):** pages download in memory and the chapter is written to
+  disk only at the end (ComicInfo last), so a crash *while downloading* leaves NOTHING on disk → that
+  chapter re-downloads fresh. But a crash during the final *write* can leave a partial folder without
+  ComicInfo, and the "already exists → skip" check only tests existence (SKIP policy), so it would SKIP
+  the partial. So before re-queueing each resumed task, **delete its incomplete chapters** (no ComicInfo —
+  reuse `DownloadStore.listChapters(title).filterNot { complete }` + `deleteChapter`). This guarantees any
+  half-written chapter is discarded and re-downloaded fresh (no broken/corrupt pages); complete chapters
+  are skipped.
 - Wire it right after `LogBuffer.install()` / before the banner, on a daemon thread so startup isn't
   blocked by a resolve.
 
