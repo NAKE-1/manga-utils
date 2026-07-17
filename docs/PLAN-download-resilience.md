@@ -59,13 +59,14 @@ restarts from page 1 — see Part C for true mid-chapter resume.)
 
 ---
 
-## Part C — Later / optional (not v1)
-- **Mid-chapter resume (gap #2):** track per-page completion so repairing a 80%-done chapter continues
-  from page 80 instead of page 1. Needs a partial-page manifest per chapter; meaningfully more work.
-  Deferred — Part B already covers the common "resume the queue" case.
-- **Migration in-progress marker (gap #3):** write `data/migrating.json` at migration start, clear on
-  success; on boot, if present, log/notify "a migration was interrupted" (the ordering already prevents
-  data loss — worst case is a duplicate entry). Small, optional.
+## Part C — DROPPED (per user, 2026-07-16)
+- **Mid-chapter resume (gap #2): WON'T DO.** It would require streaming pages to disk incrementally (a
+  per-page manifest) instead of the current atomic "all pages → write the whole chapter at the end,
+  ComicInfo last" design. That atomic write is exactly what guarantees a chapter on disk is never
+  partial/corrupt. User's call: **prefer re-downloading a whole interrupted chapter over ANY risk of a
+  randomly corrupt chapter.** Keep the atomic write; a resumed chapter re-downloads from scratch.
+- **Migration in-progress marker (gap #3):** parked with Part C. (Trivial detection-only; the migration
+  ordering already prevents data loss. Can revisit standalone if ever wanted.)
 
 ---
 
