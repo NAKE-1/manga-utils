@@ -57,6 +57,8 @@ export function Downloads() {
   }
 
   async function move(t: DlTask, dir: 'up' | 'down') { setData(await api.moveDownload(t.id, dir).then((r) => r.json()).catch(() => data)) }
+  async function resume(t: DlTask) { setData(await api.resumeDownload(t.id).then((r) => r.json()).catch(() => data)) }
+  async function resumeAll() { setData(await api.resumeAllDownloads().then((r) => r.json()).catch(() => data)) }
 
   if (!data) return <div className="spinner" />
   const tasks = data.tasks
@@ -67,6 +69,7 @@ export function Downloads() {
       <div className="list-head">
         <span className="list-title">Downloads{data.active > 0 ? ` · ${data.active} active` : ''}</span>
         <div className="dl-head-actions">
+          {tasks.some((t) => t.state === 'interrupted') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
           {data.active > 0 && <button className="dl-link" onClick={stopAll}>Stop all</button>}
           {tasks.some((t) => t.state === 'done' || t.state === 'failed' || t.state === 'stopped') && <button className="dl-link" onClick={clearFinished}>Clear finished</button>}
         </div>
@@ -80,7 +83,7 @@ export function Downloads() {
       ) : (
         <div className="dl-list">{tasks.map((t) => {
           const qi = queuedIds.indexOf(t.id)
-          return <TaskCard key={t.id} t={t} onStop={() => stop(t)} onRetry={() => retry(t)}
+          return <TaskCard key={t.id} t={t} onStop={() => stop(t)} onRetry={() => retry(t)} onResume={() => resume(t)}
             onMove={(dir) => move(t, dir)} canUp={qi > 0} canDown={qi >= 0 && qi < queuedIds.length - 1} />
         })}</div>
       )}
@@ -88,10 +91,11 @@ export function Downloads() {
   )
 }
 
-function TaskCard({ t, onStop, onRetry, onMove, canUp, canDown }: { t: DlTask; onStop: () => void; onRetry: () => void; onMove: (dir: 'up' | 'down') => void; canUp: boolean; canDown: boolean }) {
+function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t: DlTask; onStop: () => void; onRetry: () => void; onResume: () => void; onMove: (dir: 'up' | 'down') => void; canUp: boolean; canDown: boolean }) {
   const running = t.state === 'running' || t.state === 'queued'
   const queued = t.state === 'queued'
   const failed = t.state === 'failed'
+  const interrupted = t.state === 'interrupted'
   // Bar = finished chapters + the fraction of the chapter in progress.
   const cur = t.pagesTotal > 0 ? t.pagesDone / t.pagesTotal : 0
   const pct = t.total > 0 ? Math.round(((t.done + (running ? cur : 0)) / t.total) * 100) : 0
@@ -112,14 +116,16 @@ function TaskCard({ t, onStop, onRetry, onMove, canUp, canDown }: { t: DlTask; o
           )}
           {running
             ? <button className="dl-link" onClick={onStop}>Stop</button>
-            : failed && t.failedChapters.length
-              ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
-              : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
+            : interrupted
+              ? <button className="dl-link dl-resume" onClick={onResume}>Resume</button>
+              : failed && t.failedChapters.length
+                ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
+                : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
         </div>
       </div>
       <div className="dlc-sub">
         <span>
-          {queued ? 'Queued' : running
+          {interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : queued ? 'Queued' : running
             ? `Chapter ${chapterNo} of ${t.total}${t.currentChapter ? ` · ${t.currentChapter}` : ''}`
             : `${t.done}/${t.total} chapter${t.total === 1 ? '' : 's'}${failed ? (t.failed > 0 ? ` · ${t.failed} failed` : ' · failed') : ' done'}`}
         </span>

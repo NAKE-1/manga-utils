@@ -1082,6 +1082,11 @@ fun Application.module() {
             val up = call.queryParam("dir") != "down"
             DownloadQueue.move(id, up); call.respond(downloadsSnapshot())
         }
+        post("/api/downloads/resume") {
+            val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            DownloadQueue.resume(id); call.respond(downloadsSnapshot())
+        }
+        post("/api/downloads/resume-all") { DownloadQueue.resumeAll(); call.respond(downloadsSnapshot()) }
 
         // ---- Download manager (browse / delete on-disk content) ----
         // Broken-download detection: every series with interrupted/incomplete chapters (missing the

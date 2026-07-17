@@ -48,7 +48,7 @@ object DownloadQueue {
         val total = chapters.size
         @Volatile var order = 0 // sort key for the queue; lower runs first (reorderable while queued)
         @Volatile var tag = "" // "" for a normal download, "migration" for one queued by a migration
-        @Volatile var state = "queued" // queued | running | done | failed | stopped
+        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted
         @Volatile var doneCount = 0
         @Volatile var failedCount = 0
         @Volatile var currentChapter = ""
@@ -215,7 +215,8 @@ object DownloadQueue {
         futures.values.forEach { it.cancel(true) }
         persist()
     }
-    fun clearFinished() { tasks.entries.removeIf { !it.value.active }; persist() }
+    // Clears done/failed/stopped rows — but NOT interrupted ones (those wait for a manual Resume).
+    fun clearFinished() { tasks.entries.removeIf { it.value.state == "done" || it.value.state == "failed" || it.value.state == "stopped" }; persist() }
 
     /** Remove ONE finished/failed/stopped task row (no-op while it's still active). */
     fun remove(id: String) { tasks[id]?.let { if (!it.active) tasks.remove(id) }; persist() }
@@ -245,34 +246,54 @@ object DownloadQueue {
         }.onFailure { log.debug("queue persist failed: {}", it.message) }
     }
 
-    /** Restore the queue from disk on startup: resume active tasks (auto-discarding any half-written
-     *  chapter so it re-downloads fresh) and keep finished ones as history. */
+    /** Restore the queue from disk on startup. Active tasks become "interrupted" and wait for a manual
+     *  Resume (they do NOT auto-start); finished ones are kept as history. */
     @Synchronized
     fun loadAndResume() {
         val pf = runCatching { if (queueFile.exists()) pjson.decodeFromString<PFile>(queueFile.readText()) else null }.getOrNull() ?: return
         if (pf.tasks.isEmpty()) return
-        var resumed = 0; var kept = 0
+        var interrupted = 0; var kept = 0
         for (pt in pf.tasks) {
             val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag }
-            if (pt.state == "queued" || pt.state == "running") {
-                // Discard any incomplete (no-ComicInfo) chapters so a half-written one re-downloads fresh.
-                runCatching { DownloadStore.listChapters(pt.title).filterNot { it.complete }.forEach { DownloadStore.deleteChapter(pt.title, it.name) } }
-                task.state = "queued"; resumed++
-            } else {
-                task.state = pt.state
-                pt.done.forEach { task.finishedNames.add(it) }
-                task.doneCount = pt.done.size
-                val byName = pt.chapters.associateBy { it.name }
-                task.failed.addAll(pt.failed.mapNotNull { n -> byName[n]?.let { Chapter(it.url, it.name) } })
-                task.failedCount = task.failed.size
-                task.error = pt.error
-                kept++
+            pt.done.forEach { task.finishedNames.add(it) }
+            task.doneCount = pt.done.size
+            when (pt.state) {
+                "queued", "running", "interrupted" -> { task.state = "interrupted"; interrupted++ }
+                else -> {
+                    task.state = pt.state
+                    val byName = pt.chapters.associateBy { it.name }
+                    task.failed.addAll(pt.failed.mapNotNull { n -> byName[n]?.let { Chapter(it.url, it.name) } })
+                    task.failedCount = task.failed.size
+                    task.error = pt.error
+                    kept++
+                }
             }
             tasks[task.id] = task
         }
         seq = (pf.tasks.maxOfOrNull { it.order.toLong() } ?: -1L) + 1 // don't collide new ids/order with restored
-        log.info("download queue restored: {} resumed, {} finished kept", resumed, kept)
-        if (resumed > 0) pump()
+        log.info("download queue restored: {} interrupted (tap Resume), {} finished kept", interrupted, kept)
         persist()
     }
+
+    private fun repairFor(t: Task) {
+        // Discard any incomplete (no-ComicInfo) chapters so a half-written one re-downloads fresh.
+        runCatching { DownloadStore.listChapters(t.mangaTitle).filterNot { it.complete }.forEach { DownloadStore.deleteChapter(t.mangaTitle, it.name) } }
+    }
+
+    /** Resume one interrupted task (re-queue after discarding any half-written chapters). */
+    @Synchronized
+    fun resume(id: String) {
+        val t = tasks[id] ?: return
+        if (t.state != "interrupted") return
+        repairFor(t); t.state = "queued"; pump(); persist()
+    }
+
+    /** Resume every interrupted task. */
+    @Synchronized
+    fun resumeAll() {
+        tasks.values.filter { it.state == "interrupted" }.forEach { repairFor(it); it.state = "queued" }
+        pump(); persist()
+    }
+
+    fun interruptedCount(): Int = tasks.values.count { it.state == "interrupted" }
 }

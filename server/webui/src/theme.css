@@ -980,3 +980,6 @@ main > * { animation: fade-up .22s ease backwards; }
 
 /* Migration-download chip in the Downloads list */
 .dlc-tag { display: inline-block; margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: .06em; color: #fff; background: #d63b52; padding: 2px 6px; border-radius: 5px; vertical-align: middle; }
+
+/* Resume (interrupted) download */
+.dl-link.dl-resume { color: #e3ba55; font-weight: 700; }
