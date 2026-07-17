@@ -811,10 +811,10 @@ fun Application.module() {
                     val p = MigrationJob.compute(fromSource, fromUrl, toSource, toUrl)
                     MigratePreviewDto(
                         from = MigrateSideDto(sourceDisplayName(fromSource), p.fromTitle, fromEntry.thumbnailUrl, p.fromTotal, p.readNumbers.size, migFmt(p.readUpTo), p.bookmarkNumbers.size, p.fromDownloaded),
-                        to = MigrateSideDto(sourceDisplayName(toSource), p.toTitle, p.toCover, p.toChapters.size, p.matchedRead, migFmt(p.lastReadB?.chapter_number ?: -1f), p.matchedBookmarks, 0),
+                        to = MigrateSideDto(sourceDisplayName(toSource), p.toTitle, p.toCover, p.toTotal, p.matchedRead, migFmt(p.lastReadB?.chapter_number ?: -1f), p.matchedBookmarks, 0),
                         willCarryRead = p.matchedRead, unmatchedRead = p.unmatchedRead,
                         willCarryBookmarks = p.matchedBookmarks, unmatchedBookmarks = p.unmatchedBookmarks,
-                        chapterDiff = p.toChapters.size - p.fromTotal, unnumbered = p.unnumbered,
+                        chapterDiff = p.toTotal - p.fromTotal, unnumbered = p.unnumbered,
                     )
                 }
             }

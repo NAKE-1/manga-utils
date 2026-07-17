@@ -35,6 +35,7 @@ object MigrationJob {
         val toCover: String?,
         val fromTitle: String,
         val fromTotal: Int,
+        val toTotal: Int,
         val readNumbers: Set<Float>,
         val bookmarkNumbers: Set<Float>,
         val bReadUrls: List<String>,
@@ -54,11 +55,21 @@ object MigrationJob {
         val fromEntry = LibraryStore.find(fromSource, fromUrl) ?: error("The source manga isn't in your library.")
         val readSet = ReadStore.readUrls(fromSource, fromUrl)
         val bmSet = BookmarkStore.bookmarks(fromSource, fromUrl)
+        val dlNames = runCatching { DownloadManager.downloadedChapterNames(fromEntry.title) }.getOrDefault(emptySet())
+
+        // Count UNIQUE chapters (grouped by number, else name) — the same grouping the detail page and
+        // library badge use — so a multi-scanlator source shows 95 chapters, not 277 raw entries.
+        fun key(number: Float, name: String) = if (number > 0) "n$number" else "t${name.trim().lowercase()}"
+        val fromGroups = fromEntry.knownChapters.groupBy { key(it.number, it.name) }
+        val fromTotal = fromGroups.size
+        val fromDownloaded = fromGroups.count { (_, vs) -> vs.any { DownloadManager.sanitize(it.name) in dlNames } }
+
         val readNumbers = fromEntry.knownChapters.filter { it.url in readSet && it.number >= 0 }.map { it.number }.toSet()
         val bmNumbers = fromEntry.knownChapters.filter { it.url in bmSet && it.number >= 0 }.map { it.number }.toSet()
         val unnumbered = fromEntry.knownChapters.count { it.url in readSet && it.number < 0 }
 
         val d = runBlocking { SourceBrowser.detailsAsync(toSource, toUrl) }
+        val toTotal = d.chapters.groupBy { key(it.chapter_number, it.name) }.size
         val bByNum = d.chapters.filter { it.chapter_number >= 0 }.groupBy { it.chapter_number }
         val bReadUrls = readNumbers.flatMap { bByNum[it].orEmpty() }.map { it.url }
         val bBmUrls = bmNumbers.flatMap { bByNum[it].orEmpty() }.map { it.url }
@@ -66,11 +77,10 @@ object MigrationJob {
         val matchedBm = bmNumbers.count { bByNum.containsKey(it) }
         val readUpTo = readNumbers.maxOrNull() ?: -1f
         val lastReadB = readNumbers.filter { bByNum.containsKey(it) }.maxOrNull()?.let { bByNum[it]?.firstOrNull() }
-        val fromDownloaded = runCatching { DownloadManager.downloadedChapterNames(fromEntry.title).size }.getOrDefault(0)
 
         return Plan(
             d.manga, d.chapters, d.manga.title.ifBlank { fromEntry.title }, runCatching { d.manga.thumbnail_url }.getOrNull(),
-            fromEntry.title, fromEntry.knownChapters.size, readNumbers, bmNumbers, bReadUrls, bBmUrls,
+            fromEntry.title, fromTotal, toTotal, readNumbers, bmNumbers, bReadUrls, bBmUrls,
             matchedRead, readNumbers.size - matchedRead, matchedBm, bmNumbers.size - matchedBm,
             unnumbered, readUpTo, lastReadB, fromDownloaded,
         )
@@ -89,7 +99,7 @@ object MigrationJob {
             val fromEntry = LibraryStore.find(fromSource, fromUrl) ?: error("The source manga isn't in your library.")
             phase = "fetching"; step("Fetching chapters from the new source…")
             val plan = compute(fromSource, fromUrl, toSource, toUrl)
-            step("New source has ${plan.toChapters.size} chapters (old had ${plan.fromTotal}).")
+            step("New source has ${plan.toTotal} chapters (old had ${plan.fromTotal}).")
 
             phase = "carrying"; step("Matching chapters by number…")
             step("Carrying ${plan.matchedRead} read chapter(s)" +
