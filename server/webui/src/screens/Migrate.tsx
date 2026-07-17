@@ -84,9 +84,9 @@ export default function Migrate() {
           /* ---- Stage 2: comparison ---- */
           <div className="mig-compare-wrap">
             <div className="mig-compare">
-              <Side label="FROM" side={preview.from} tone="old" />
+              <Side label="FROM" side={preview.from} tone="old" sourceId={fromSource} />
               <div className="mig-arrow">→</div>
-              <Side label="TO" side={preview.to} tone="new" />
+              <Side label="TO" side={preview.to} tone="new" sourceId={target?.source || ''} />
             </div>
             <div className="mig-diffs">
               <Diff label="Chapters" v={diffStr(preview.chapterDiff)} tone={preview.chapterDiff < 0 ? 'warn' : 'good'} />
@@ -155,17 +155,18 @@ export default function Migrate() {
   )
 }
 
-function Side({ label, side, tone }: { label: string; side: MigrateSide; tone: 'old' | 'new' }) {
+function Side({ label, side, tone, sourceId }: { label: string; side: MigrateSide; tone: 'old' | 'new'; sourceId: string }) {
   return (
     <div className={'mig-side ' + tone}>
       <div className="mig-side-lbl">{label}</div>
+      {side.cover && <img className="mig-side-cover" src={coverUrl(sourceId, side.cover, side.title)} alt="" loading="lazy" />}
       <div className="mig-side-src">{side.sourceName}</div>
       <div className="mig-side-title">{side.title}</div>
       <div className="mig-side-rows">
         <div><span>Chapters</span><b>{side.total}</b></div>
-        <div><span>Read</span><b>{side.readCount}{side.readUpTo !== '—' ? ` · to ${side.readUpTo}` : ''}</b></div>
+        <div><span>Read</span><b>{side.readCount}/{side.total}{side.readUpTo !== '—' ? ` · to ${side.readUpTo}` : ''}</b></div>
+        <div><span>Downloaded</span><b>{side.downloaded}/{side.total}</b></div>
         <div><span>Bookmarks</span><b>{side.bookmarks}</b></div>
-        <div><span>Downloaded</span><b>{side.downloaded}</b></div>
       </div>
     </div>
   )

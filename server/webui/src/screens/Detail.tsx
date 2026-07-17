@@ -365,6 +365,10 @@ export function Detail() {
             <div className="ch-menu-sep" />
             <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), true); setMenuOpen(false) }}>Mark all read</button>
             <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), false); setMenuOpen(false) }}>Mark all unread</button>
+            {state.inLibrary && <>
+              <div className="ch-menu-sep" />
+              <button className="ch-menu-mig" onClick={() => { setMenuOpen(false); migrate() }}>Migrate to another source</button>
+            </>}
           </div>
         </div>
       )}
@@ -390,7 +394,6 @@ export function Detail() {
         <button className={'bb-icon' + (state.inLibrary ? ' on' : '')} onClick={toggleLibrary} disabled={busy} aria-label="Bookmark / library">
           <IconBookmarkSm filled={state.inLibrary} />
         </button>
-        {state.inLibrary && <button className="bb-mig" onClick={migrate} aria-label="Migrate to another source" title="Migrate to another source">M</button>}
         <div style={{ flex: 1 }} />
         <button className="bb-book" onClick={openContinue} aria-label="Read"><IconBookOpen /></button>
       </div>
