@@ -284,6 +284,24 @@ private data class LibraryDto(
 @Serializable private data class WebhookSampleReq(val source: String = "", val mangaUrl: String = "", val kind: String = "newchapters")
 @Serializable private data class NotifyStatusDto(val rateLimitedAtMs: Long, val retryAfter: Double)
 
+// Source migration.
+@Serializable private data class MigrateSideDto(val sourceName: String, val title: String, val cover: String? = null, val total: Int, val readCount: Int, val readUpTo: String, val bookmarks: Int, val downloaded: Int)
+@Serializable private data class MigratePreviewDto(
+    val from: MigrateSideDto,
+    val to: MigrateSideDto,
+    val willCarryRead: Int,
+    val unmatchedRead: Int,
+    val willCarryBookmarks: Int,
+    val unmatchedBookmarks: Int,
+    val chapterDiff: Int,
+    val unnumbered: Int,
+)
+@Serializable private data class MigrateReq(val fromSource: String, val fromUrl: String, val toSource: String, val toUrl: String, val deleteOldDownloads: Boolean = false, val reDownload: Boolean = false)
+@Serializable private data class MigrateProgressDto(val running: Boolean, val finished: Boolean, val phase: String, val error: String, val steps: List<String>)
+
+private fun migFmt(n: Float) = if (n < 0) "—" else if (n == n.toInt().toFloat()) n.toInt().toString() else n.toString()
+private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
+
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
@@ -778,6 +796,43 @@ fun Application.module() {
             call.respond(WebhookResultDto(r.ok, r.status, r.rateLimited, r.retryAfter, r.error))
         }
         get("/api/notify/status") { call.respond(NotifyStatusDto(Notifier.rateLimitedAtMs, Notifier.rateLimitRetryAfter)) }
+
+        // ---- Source migration ----
+        get("/api/migrate/preview") {
+            val fromSource = call.queryParam("fromSource")?.toLongOrNull()
+            val fromUrl = call.queryParam("fromUrl")
+            val toSource = call.queryParam("toSource")?.toLongOrNull()
+            val toUrl = call.queryParam("toUrl")
+            if (fromSource == null || fromUrl == null || toSource == null || toUrl == null) return@get call.respond(HttpStatusCode.BadRequest)
+            if (fromSource == toSource && fromUrl == toUrl) return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("That's the same manga on the same source."))
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val fromEntry = LibraryStore.find(fromSource, fromUrl) ?: error("The source manga isn't in your library.")
+                    val p = MigrationJob.compute(fromSource, fromUrl, toSource, toUrl)
+                    MigratePreviewDto(
+                        from = MigrateSideDto(sourceDisplayName(fromSource), p.fromTitle, fromEntry.thumbnailUrl, p.fromTotal, p.readNumbers.size, migFmt(p.readUpTo), p.bookmarkNumbers.size, p.fromDownloaded),
+                        to = MigrateSideDto(sourceDisplayName(toSource), p.toTitle, p.toCover, p.toChapters.size, p.matchedRead, migFmt(p.lastReadB?.chapter_number ?: -1f), p.matchedBookmarks, 0),
+                        willCarryRead = p.matchedRead, unmatchedRead = p.unmatchedRead,
+                        willCarryBookmarks = p.matchedBookmarks, unmatchedBookmarks = p.unmatchedBookmarks,
+                        chapterDiff = p.toChapters.size - p.fromTotal, unnumbered = p.unnumbered,
+                    )
+                }
+            }
+            result.fold(
+                onSuccess = { call.respond(it) },
+                onFailure = { call.respond(HttpStatusCode.BadGateway, ErrorDto(sourceErrorMessage(it))) },
+            )
+        }
+        post("/api/migrate") {
+            val b = call.receive<MigrateReq>()
+            val fs = b.fromSource.toLongOrNull(); val ts = b.toSource.toLongOrNull()
+            if (fs == null || ts == null) return@post call.respond(HttpStatusCode.BadRequest)
+            MigrationJob.start(fs, b.fromUrl, ts, b.toUrl, b.deleteOldDownloads, b.reDownload)
+            call.respond(MigrateProgressDto(MigrationJob.running, MigrationJob.finished, MigrationJob.phase, MigrationJob.error, MigrationJob.steps.toList()))
+        }
+        get("/api/migrate/progress") {
+            call.respond(MigrateProgressDto(MigrationJob.running, MigrationJob.finished, MigrationJob.phase, MigrationJob.error, MigrationJob.steps.toList()))
+        }
         post("/api/webhooks/test/sample") {
             val body = call.receive<WebhookSampleReq>()
             val url = SettingsStore.get().discordWebhookUrl

@@ -249,7 +249,16 @@ export const api = {
   webhookSample: (source: string, mangaUrl: string, kind: string) =>
     fetch('/api/webhooks/test/sample', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, mangaUrl, kind }) }).then((r) => r.json() as Promise<WebhookResult>),
   notifyStatus: () => getJson<{ rateLimitedAtMs: number; retryAfter: number }>('/api/notify/status'),
+  migratePreview: (fromSource: string, fromUrl: string, toSource: string, toUrl: string) =>
+    getJson<MigratePreview>(`/api/migrate/preview?fromSource=${fromSource}&fromUrl=${encodeURIComponent(fromUrl)}&toSource=${toSource}&toUrl=${encodeURIComponent(toUrl)}`, 1, 25000),
+  migrateStart: (body: { fromSource: string; fromUrl: string; toSource: string; toUrl: string; deleteOldDownloads: boolean; reDownload: boolean }) =>
+    fetch('/api/migrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json() as Promise<MigrateProgress>),
+  migrateProgress: () => getJson<MigrateProgress>('/api/migrate/progress'),
 }
+
+export interface MigrateSide { sourceName: string; title: string; cover?: string | null; total: number; readCount: number; readUpTo: string; bookmarks: number; downloaded: number }
+export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryRead: number; unmatchedRead: number; willCarryBookmarks: number; unmatchedBookmarks: number; chapterDiff: number; unnumbered: number }
+export interface MigrateProgress { running: boolean; finished: boolean; phase: string; error: string; steps: string[] }
 
 export interface WebhookResult { ok: boolean; status: number; rateLimited: boolean; retryAfter?: number; error?: string }
 export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; coverStyle: string }
