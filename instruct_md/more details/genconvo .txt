@@ -1,0 +1,608 @@
+
+
+
+
+
+Pasted text.txt
+Document
+
+Yes, this is actually a very strong lead, but it doesn't prove it's the cause by itself.
+
+Here's why.
+
+Why this PR is suspicious
+The timeline matches almost perfectly:
+
+✅ Your extension system worked ~1–2 weeks ago.
+
+✅ Keiyoushi merged a massive refactor (Cleanup gradle/build-logic) last week.
+
+✅ Immediately after, newly published extensions began using the new build system.
+
+✅ Your application now fails to load newly built extensions with JVM verification errors.
+
+The important part is not that the PR changed source code for manga sites. It changed the entire build infrastructure used to produce every extension APK.
+
+That means newly built APKs may now differ in ways such as:
+
+Kotlin compiler version
+
+AGP (Android Gradle Plugin) version
+
+R8/D8 version
+
+JVM target version
+
+Kotlin metadata version
+
+bytecode optimization
+
+desugaring
+
+synthetic lambda generation
+
+StackMapFrame generation
+
+invokedynamic usage
+
+compiler flags
+
+generated class hierarchy
+
+Even if the Java/Kotlin source code inside an extension didn't change, the compiled bytecode absolutely could have.
+
+Why this fits your VerifyError
+Your crash isn't:
+
+ClassNotFoundException
+or
+
+NoSuchMethodError
+It's
+
+VerifyError
+A VerifyError almost always indicates one of:
+
+invalid bytecode
+
+incorrect bytecode transformation
+
+outdated bytecode rewriter
+
+runtime/compiler mismatch
+
+StackMapFrame issues
+
+incorrect lambda rewriting
+
+Those are exactly the kinds of things that can surface after a toolchain upgrade.
+
+What Claude should investigate
+I'd add a new section to your investigation like this:
+
+HIGH PRIORITY — Investigate Recent Keiyoushi Build System Changes
+The extension system reportedly stopped working around the same time Keiyoushi merged the large Cleanup gradle/build-logic pull request (~last week).
+
+This is a major suspect.
+
+Do not assume the extension translator is solely at fault until this has been investigated.
+
+The objective is to determine whether newly built extensions are fundamentally different from extensions built before this PR.
+
+Pull the following history
+Inspect:
+
+PR #17529
+
+commit 89779f6
+
+commits:
+
+9231b57
+
+c5b9843
+
+2d6b5d8
+
+d1a5fa7
+
+377b596
+
+Read every changed Gradle convention plugin.
+
+Determine whether the build output changed
+Specifically compare an extension APK built:
+
+Before
+
+vs
+
+After
+
+the Gradle cleanup.
+
+Check for changes in:
+
+Kotlin compiler version
+
+AGP version
+
+Gradle version
+
+JVM target
+
+bytecode version
+
+Kotlin metadata version
+
+R8 version
+
+D8 version
+
+desugaring
+
+synthetic lambda generation
+
+invoke-dynamic usage
+
+StackMapFrames
+
+access flags
+
+synthetic methods
+
+generated singleton objects
+
+generated companion objects
+
+generated anonymous classes
+
+constant pool layout
+
+Binary comparison
+Choose one extension that existed before the PR.
+
+Build it:
+
+using the commit immediately before the Gradle cleanup
+
+using the commit immediately after
+
+Diff the APKs.
+
+Diff the resulting DEX files.
+
+Diff the translated JARs.
+
+Determine exactly what changed.
+
+Determine whether our translator assumes the old output
+Our translator may contain assumptions that were valid for older extension builds.
+
+Examples:
+
+expected Kotlin metadata version
+
+expected DEX layout
+
+expected synthetic class naming
+
+expected lambda implementation
+
+expected StackMapFrame layout
+
+Verify whether these assumptions became invalid after the build-system cleanup.
+
+Compare against Suwayomi
+Determine whether Suwayomi required any code changes after PR #17529 to continue loading newly built extensions.
+
+If Suwayomi made loader, parser, translator, compatibility, or runtime changes around the same time, identify every relevant commit and explain why those changes were necessary.
+
+Regression test
+Produce two APKs:
+
+one built before PR #17529
+
+one built after PR #17529
+
+Attempt to install both.
+
+Expected outcomes:
+
+APK	Expected
+Before PR	Works (if translator is compatible)
+After PR	Fails (if build output changed)
+If only the newer APK fails, determine the exact bytecode difference responsible.
+
+I would make this one of Claude's highest-priority investigations. The coincidence between the timing of the Keiyoushi build-system overhaul and the appearance of JVM VerifyError/StackMapFrame-style failures is strong enough that it deserves a full regression analysis before making invasive changes to your loader. It may turn out the translator simply needs to be updated for the newer compiler output, rather than there being a fundamental flaw in your extension architecture.
+
+
+make a md to have claude investivage this another poissible thing to invesitgate is to have claude ask me for extensions to check then it revierws the differneces in code between version and such make a md for it 
+
+# Investigation Plan: Compare Old vs New Extension Builds
+
+## Purpose
+
+Determine whether the recent extension failures are caused by changes in the **extensions themselves** (compiler output, Gradle, Kotlin, R8/D8, metadata, bytecode, etc.) rather than a bug in manga-utils.
+
+This investigation is separate from the Suwayomi codebase comparison and should focus on **binary and source differences between extension versions**.
+
+---
+
+# Goal
+
+Find the exact point where extensions became incompatible with manga-utils.
+
+Rather than assuming the application is wrong, determine **what changed in the generated extension APKs** and whether our translator or loader no longer supports those changes.
+
+---
+
+# IMPORTANT
+
+Do **not** assume every extension is affected equally.
+
+Different extensions may expose different compiler features or bytecode patterns.
+
+Use multiple extensions from different dates.
+
+---
+
+# Ask Me for Test Extensions
+
+Before beginning the investigation, ask me to provide one or more of the following:
+
+- Older APK versions that previously worked
+- Newer APK versions that now fail
+- Git commits or tags
+- GitHub release links
+- Extension names
+- APK files
+
+Prefer comparing the **same extension** across multiple versions.
+
+Example:
+
+```
+Extension:
+MangaReadOrg
+
+Version A:
+Known working
+
+↓
+
+Version B:
+First failing version
+
+↓
+
+Version C:
+Latest version
+```
+
+Using the same extension removes unrelated variables.
+
+---
+
+# Build a Timeline
+
+For every extension collected:
+
+Record:
+
+- Extension version
+- Version code
+- Release date
+- Commit hash
+- Repository commit
+- Kotlin version (if detectable)
+- AGP version (if detectable)
+- Build timestamp
+- APK size
+- DEX version
+- Metadata version
+
+Build a chronological timeline.
+
+---
+
+# Source Code Comparison
+
+If source is available:
+
+Diff every version.
+
+Determine:
+
+- What actually changed?
+- Was it only website parsing?
+- Or were Gradle/build files modified?
+- Were dependencies updated?
+- Were compiler settings changed?
+- Were plugins changed?
+- Was Kotlin updated?
+- Was AGP updated?
+- Was JVM target updated?
+
+Most website parsing changes should NOT break the JVM.
+
+Compiler/toolchain changes might.
+
+---
+
+# APK Comparison
+
+Compare every APK.
+
+Inspect:
+
+AndroidManifest.xml
+
+classes.dex
+
+resources
+
+assets
+
+META-INF
+
+signatures
+
+kotlin metadata
+
+version metadata
+
+compiler metadata
+
+---
+
+# DEX Comparison
+
+Compare:
+
+- Class count
+- Method count
+- Field count
+- Package layout
+- Synthetic classes
+- Lambda classes
+- Anonymous classes
+- Companion objects
+- Object declarations
+
+Look for structural differences.
+
+---
+
+# Bytecode Comparison
+
+After translating both APKs into JARs:
+
+Compare:
+
+Superclasses
+
+Interfaces
+
+Method descriptors
+
+Generic signatures
+
+Access flags
+
+Bridge methods
+
+Synthetic methods
+
+Annotations
+
+StackMapFrames
+
+Bootstrap methods
+
+InvokeDynamic
+
+Constant pool
+
+Inner classes
+
+Nest members
+
+Verify whether our translator generates different output.
+
+---
+
+# Kotlin Investigation
+
+Compare:
+
+Kotlin metadata version
+
+stdlib version
+
+reflect usage
+
+serialization
+
+compiler version
+
+IR output
+
+Lambda implementation
+
+Object implementation
+
+Companion implementation
+
+Synthetic accessors
+
+Suspend functions
+
+Coroutines
+
+---
+
+# StackMapFrame Investigation
+
+Specifically determine whether newer builds contain:
+
+Different frame generation
+
+Different verification expectations
+
+Different bytecode layout
+
+Additional frame information
+
+Frame recomputation differences
+
+---
+
+# Lambda Investigation
+
+Our VerifyError currently references:
+
+```
+kotlin.jvm.internal.Lambda
+```
+
+Determine whether newer extensions:
+
+Generate different lambda classes
+
+Generate different singleton objects
+
+Generate different synthetic objects
+
+Generate different invoke patterns
+
+Generate different object initialization
+
+---
+
+# Translator Compatibility
+
+Determine whether the translator assumes:
+
+Old Kotlin compiler output
+
+Old DEX layout
+
+Old metadata
+
+Old synthetic naming
+
+Old StackMapFrames
+
+Old lambda generation
+
+If so, document every assumption.
+
+---
+
+# Runtime Compatibility
+
+Determine whether newer extensions require:
+
+New Kotlin runtime
+
+New stdlib
+
+New reflection library
+
+New metadata parser
+
+New JVM target
+
+Different class loader behavior
+
+---
+
+# Regression Analysis
+
+Identify the earliest version that:
+
+Works
+
+and
+
+The first version that fails.
+
+This is the regression point.
+
+Determine exactly what changed between those two releases.
+
+---
+
+# Automated Comparison
+
+If possible, build tooling that automatically compares:
+
+Old APK
+
+↓
+
+New APK
+
+Generate reports showing:
+
+Added classes
+
+Removed classes
+
+Changed methods
+
+Changed descriptors
+
+Changed metadata
+
+Changed compiler information
+
+Changed bytecode
+
+Changed StackMapFrames
+
+Changed Kotlin metadata
+
+Changed synthetic classes
+
+---
+
+# Cross-Reference with Suwayomi
+
+After identifying differences, determine:
+
+- Does Suwayomi explicitly support these newer bytecode patterns?
+- Did Suwayomi update its loader or compatibility layer?
+- Does manga-utils need equivalent support?
+
+---
+
+# Deliverables
+
+Produce:
+
+1. Timeline of extension versions.
+2. Timeline of build/toolchain changes.
+3. Binary comparison report.
+4. Source comparison report.
+5. Bytecode comparison report.
+6. Kotlin metadata comparison.
+7. StackMapFrame comparison.
+8. Lambda generation comparison.
+9. Regression point identification.
+10. Exact explanation of why older versions work and newer versions fail.
+11. List of code changes required in manga-utils.
+12. Recommended compatibility strategy for supporting both old and new extension builds.
+
+---
+
+# Success Criteria
+
+This investigation is complete only when:
+
+- A known working extension has been compared to a failing version.
+- The exact compatibility-breaking change has been identified (or confidently ruled out).
+- The findings explain why manga-utils fails while Suwayomi continues to load the same extension.
+- A concrete implementation plan is produced to restore compatibility with both older and newer extension builds.
+

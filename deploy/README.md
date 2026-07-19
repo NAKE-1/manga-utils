@@ -90,7 +90,43 @@ auth (just confirm **Settings → Actions → Workflow permissions = Read and wr
 
 ---
 
-## 3. Notes / gotchas
+## 3. Back up to a USB drive (DYNO Phase 0)
+
+The "Back up to USB" button in **Settings** writes a full metadata backup (library + read marks +
+bookmarks, the same gz-protobuf `.tachibk` as Export) **plus a copy of every downloaded chapter/cover**
+to a mounted drive. It's **additive** — it never deletes anything on the drive and skips files already
+copied, so repeat runs only transfer what changed.
+
+The container is non-root and unprivileged, so it does **not** mount the raw device itself — mount the
+USB on the **host** and bind-mount its path in:
+
+1. **Mount on the host.** exFAT is the safe cross-platform choice. Make it writable by the container
+   user (UID 1000), either at mount time or with `chown`:
+   ```bash
+   sudo mkdir -p /mnt/usb
+   sudo mount -o uid=1000,gid=1000 /dev/sdX1 /mnt/usb    # exFAT/vfat; or plain mount + chown below
+   # ext4/other: sudo mount /dev/sdX1 /mnt/usb && sudo chown -R 1000:1000 /mnt/usb
+   ```
+2. **Bind-mount + point the app at it.** In `docker-compose.yml`, uncomment under `manga-utils`:
+   ```yaml
+   volumes:
+     - /mnt/usb:/dyno
+   environment:
+     - MU_DYNO_DIR=/dyno
+   ```
+   (`MU_DYNO_DIR` is already set in the shipped compose; the Settings field overrides it if non-blank,
+   else it falls back to `/dyno`.)
+3. `docker compose up -d`, then hit **Settings → Back up to USB**. Results land on the drive as
+   `Backups/backup-<ts>.tachibk.gz`, `Library/<series>/<chapter>.cbz` (+ covers), and a
+   `.dyno-backup.log`. Restore a blob later via **Settings → Choose backup to restore**.
+
+If the drive isn't mounted/writable the button returns a clear error and nothing is written. Note the
+metadata blob carries read/bookmark state but **not** continue-reading/resume position (no such model
+yet) — a known Phase 0 limitation.
+
+---
+
+## 4. Notes / gotchas
 
 - **Architecture:** the Dockerfile builds for the host's architecture. Proxmox is x86-64, so build
   on an x86-64 machine (or add `platforms: linux/amd64` + QEMU in CI for cross-build).

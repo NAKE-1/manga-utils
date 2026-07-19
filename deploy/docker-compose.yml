@@ -23,13 +23,20 @@ services:
     #   default, so bind-mounting the extra drive there redirects just the big stuff — no app
     #   setting to change. IMPORTANT: chown the host dir to the container user first:
     #       sudo chown -R 1000:1000 /mnt/manga-downloads
+    # --- DYNO Phase 0: back up library + downloads to a USB drive ------------------------------
+    #   Mount the USB on the HOST (fstab/udev), then bind-mount it in at /dyno. The container stays
+    #   non-root & unprivileged — it only writes files. The host dir must be writable by UID 1000:
+    #       sudo mount -o uid=1000,gid=1000 /dev/sdX1 /mnt/usb     # or chown -R 1000:1000 /mnt/usb
+    #   exFAT is the safe cross-platform choice. Then hit "Back up to USB" in Settings.
     volumes:
       - mu-data:/data
       # - /mnt/manga-downloads:/data/downloads   # <- uncomment on Proxmox; point at the extra drive's mount
+      # - /mnt/usb:/dyno                          # <- uncomment to enable USB backup; host mount of the drive
     shm_size: "1gb"                            # Chromium (JCEF) needs a roomy /dev/shm
     environment:
       - MANGA_WEB_PORT=8080
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
+      - MU_DYNO_DIR=/dyno                              # where "Back up to USB" writes (matches the bind mount above)
     depends_on:
       - flaresolverr
     restart: unless-stopped
