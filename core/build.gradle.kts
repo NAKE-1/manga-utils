@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.dex2jar.translator)
     implementation(libs.dex2jar.tools)
     implementation(libs.asm) // BytecodeEditor rewrites SimpleDateFormat references
+    implementation(libs.serialization.protobuf) // repo index_v2 (index.pb) is gzipped protobuf
 
     testImplementation(kotlin("test"))
 }

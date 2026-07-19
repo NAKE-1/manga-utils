@@ -22,6 +22,13 @@ data class ExtensionRepoEntry(
     val version: String = "",
     /** 1 = contains NSFW sources */
     val nsfw: Int = 0,
+    /**
+     * Absolute URL of a prebuilt jar, when the repo publishes one (v2 index only). Present means we
+     * can install without translating any DEX.
+     */
+    val jar: String? = null,
+    /** extensions-lib version this was built against, e.g. "1.6". Empty on a legacy index. */
+    val extensionLib: String = "",
     val sources: List<RepoSource> = emptyList(),
 ) {
     val isNsfw: Boolean get() = nsfw == 1
@@ -41,22 +48,30 @@ data class RepoSource(
  * Resolves the absolute download URL of an extension's APK. In a Tachiyomi repo the
  * index sits at `<base>/index.min.json` and apks live under `<base>/apk/<apk>`.
  */
-fun ExtensionRepoEntry.apkUrl(indexUrl: String): String {
-    val base = indexUrl.substringBeforeLast('/', missingDelimiterValue = indexUrl)
-    return "$base/apk/$apk"
-}
+fun ExtensionRepoEntry.apkUrl(indexUrl: String): String = resolve(apk, indexUrl, "apk")
 
 /**
- * The prebuilt jar some repos publish alongside the apk, at `<base>/jar/<name>.jar`. Installing that
- * directly skips DEX translation, which is what makes an extension immune to dex2jar's mistranslation
- * of newer (DEX 038 / minSdk >= 26) builds.
+ * The prebuilt jar a repo publishes alongside the apk. Installing that directly skips DEX
+ * translation, which is what makes an extension immune to dex2jar's mistranslation of newer
+ * (DEX 038 / minSdk >= 26) builds.
  *
- * ponytail: the name is derived from the apk's because `index.min.json` doesn't advertise it. The
- * authoritative source is the newer `repo.json` -> `index.pb` index, whose `resources.jarUrl` is an
- * absolute URL; switch to that when the new index format lands. Callers must treat a failed download
- * as "this repo publishes no prebuilt jar" and fall back to the apk.
+ * A v2 index states the URL outright. A legacy `index.min.json` doesn't mention jars at all, so it's
+ * derived from the apk's name — verified against all 1367 entries of the Keiyoushi index, but still
+ * a convention we don't control, so callers must treat a failed download as "no prebuilt jar here"
+ * and fall back to the apk.
  */
-fun ExtensionRepoEntry.jarUrl(indexUrl: String): String {
-    val base = indexUrl.substringBeforeLast('/', missingDelimiterValue = indexUrl)
-    return "$base/jar/${apk.removeSuffix(".apk")}.jar"
-}
+fun ExtensionRepoEntry.jarUrl(indexUrl: String): String =
+    jar?.takeIf { it.isNotBlank() }
+        ?: resolve("${apk.substringAfterLast('/').removeSuffix(".apk")}.jar", indexUrl, "jar")
+
+/** v2 entries carry absolute URLs; legacy ones are a bare filename under `<base>/<dir>/`. */
+private fun resolve(
+    value: String,
+    indexUrl: String,
+    dir: String,
+): String =
+    if (value.startsWith("http://") || value.startsWith("https://")) {
+        value
+    } else {
+        "${indexUrl.substringBeforeLast('/', missingDelimiterValue = indexUrl)}/$dir/$value"
+    }

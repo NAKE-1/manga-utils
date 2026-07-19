@@ -7,6 +7,7 @@ package mangautils.core.extension
 
 import mangautils.core.config.AppConfig
 import mangautils.core.extension.internal.ExtensionLoader
+import mangautils.core.extension.internal.ExtensionSignature
 import mangautils.core.extension.internal.ExtensionVerifier
 import mangautils.core.runtime.ExtensionRuntime
 import mangautils.core.source.SourceManager
@@ -60,6 +61,19 @@ class ExtensionInstaller(
         ExtensionRuntime.ensureStarted()
         AppConfig.ensureLayout()
 
+        // A v2 index states which extensions-lib an extension was built against. Rejecting an
+        // unsupported one here gives a clear reason, instead of it installing fine and then dying on
+        // a missing method the first time you use it — which is how ext-lib 1.6 first showed up.
+        entry.extensionLib.toDoubleOrNull()?.let { lib ->
+            check(lib <= ExtensionLoader.LIB_VERSION_MAX) {
+                "${entry.name} needs extensions-lib $lib, but this build supports up to " +
+                    "${ExtensionLoader.LIB_VERSION_MAX}. Update manga-utils."
+            }
+            if (lib < ExtensionLoader.LIB_VERSION_MIN) {
+                log.warn("{} targets extensions-lib {} (older than {})", entry.pkg, lib, ExtensionLoader.LIB_VERSION_MIN)
+            }
+        }
+
         val apkPath = AppConfig.extensionsDir.resolve("${entry.pkg}.apk")
         val jarPath = AppConfig.extensionsDir.resolve("${entry.pkg}.jar")
 
@@ -68,11 +82,14 @@ class ExtensionInstaller(
         ExtensionLoader.releaseJar(jarPath.toString())
         val before = stampOf(jarPath)
 
+        // Published by a v2 index; null for a legacy repo, which simply can't be checked.
+        val signingKey = runCatching { repoClient.signingKey(indexUrl) }.getOrNull()
+
         // Prefer the repo's prebuilt jar. It needs no DEX translation, which sidesteps a dex2jar bug
         // that turns DEX 038 (minSdk >= 26) builds into bytecode the JVM verifier rejects.
         val pkg =
-            fetchPrebuiltJar(entry, indexUrl, jarPath.toString())
-                ?: translateApk(entry, indexUrl, apkPath.toString(), jarPath.toString())
+            fetchPrebuiltJar(entry, indexUrl, jarPath.toString(), signingKey)
+                ?: translateApk(entry, indexUrl, apkPath.toString(), jarPath.toString(), signingKey)
 
         // An "update" that silently left the old jar in place is the worst outcome, because the
         // version bump gets recorded and the extension keeps running the code it always did. One
@@ -154,6 +171,7 @@ class ExtensionInstaller(
         entry: ExtensionRepoEntry,
         indexUrl: String,
         jarPath: String,
+        signingKey: String?,
     ): Pkg? {
         val url = entry.jarUrl(indexUrl)
         val manifest =
@@ -168,6 +186,9 @@ class ExtensionInstaller(
             log.info("{} has no prebuilt jar in this repo; translating the APK instead", entry.pkg)
             return null
         }
+        // Prove it came from the repo that advertised it before anything gets loaded. Prebuilt jars
+        // use ordinary jar signing, so a missing signature here is a real problem.
+        ExtensionSignature.require(jarPath, signingKey, entry.name, mustBeSigned = true)
         log.info("Installed prebuilt jar {} -> {} (no DEX translation needed)", url, jarPath)
         return Pkg(
             packageName = manifest.packageName.ifEmpty { entry.pkg },
@@ -184,10 +205,14 @@ class ExtensionInstaller(
         indexUrl: String,
         apkPath: String,
         jarPath: String,
+        signingKey: String?,
     ): Pkg {
         val apkUrl = entry.apkUrl(indexUrl)
         log.info("Downloading {} -> {}", apkUrl, apkPath)
         download(apkUrl, apkPath)
+
+        // Verify before translating, so we never feed dex2jar bytes we don't trust.
+        ExtensionSignature.require(apkPath, signingKey, entry.name, mustBeSigned = false)
 
         val info = ExtensionLoader.getPackageInfo(apkPath)
         val meta = info.applicationInfo.metaData
