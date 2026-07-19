@@ -1507,7 +1507,15 @@ fun Application.module() {
                 onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
                 onFailure = {
                     log.warn("extension install/update failed for {}: {}", pkg, it.message, it) // log the real cause
-                    call.respond(HttpStatusCode.BadGateway, ErrorDto(it.message ?: "Install failed"))
+                    // Truthful status: the old .jar being locked by the running JVM is a local conflict
+                    // (Windows-only), not an upstream gateway failure; everything else is an internal error.
+                    val locked = it is java.nio.file.FileSystemException ||
+                        it.message?.contains("used by another process", ignoreCase = true) == true
+                    if (locked) {
+                        call.respond(HttpStatusCode.Conflict, ErrorDto("That extension is loaded and its file is locked — a Windows-only limitation. In-place updates work on the Linux deploy."))
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, ErrorDto(it.message ?: "Install failed"))
+                    }
                 },
             )
         }
