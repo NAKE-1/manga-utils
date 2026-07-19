@@ -132,7 +132,9 @@ export function Extensions() {
                 <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}{!e.loaded && <span className="ext-badge" style={{ background: 'var(--muted-2)' }}>UNLOADED</span>}</div>
                 <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
               </div>
-              {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>}
+              {updates.has(e.pkg)
+                ? <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>
+                : <button className="btn sm" disabled={!!busy[e.pkg]} title="Re-download this extension at its current version — repairs a bad install" onClick={() => install(e.pkg, 'Reinstalling…')}>{busy[e.pkg] || 'Reinstall'}</button>}
               <button className="btn sm" disabled={!!busy[e.pkg]} title={e.loaded ? 'Free the .jar so it can be updated on Windows' : 'Re-enable this extension'} onClick={() => toggleLoad(e)}>{busy[e.pkg] || (e.loaded ? 'Unload' : 'Load')}</button>
               <button className="btn sm danger" disabled={!!busy[e.pkg]} onClick={() => uninstall(e.pkg)}>{busy[e.pkg] === 'Removing…' ? '…' : 'Remove'}</button>
             </div>
