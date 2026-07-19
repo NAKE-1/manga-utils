@@ -35,6 +35,7 @@ object Notifier {
     const val ACCENT = 0x8a7cf0
     const val RED = 0xe86e8f
     const val GREEN = 0x5fce8f
+    const val AMBER = 0xe0a458
     private const val MIN_GAP_MS = 2100L // pace: keeps us under 30 msg/min per channel
 
     // ---- embed model ----
@@ -148,6 +149,74 @@ object Notifier {
                     description = if (down) "The source stopped responding during a health check." else "The source is responding again.",
                     color = if (down) RED else GREEN,
                 ))))
+            }
+        }
+    }
+
+    /**
+     * The server finished binding. [flare] describes the Cloudflare bypass at boot: null when it's
+     * switched off, otherwise whether it answered — so a FlareSolverr that died while the server was
+     * down is visible immediately rather than at the next solve.
+     */
+    fun onServerOnline(
+        port: Int,
+        flare: Pair<Boolean, String?>?,
+    ) {
+        if (!active() || cfg()?.serviceHealth != true) return
+        bg.submit {
+            runCatching {
+                val bypass =
+                    when {
+                        flare == null -> "Cloudflare bypass: off"
+                        flare.first -> "Cloudflare bypass: online"
+                        else -> "Cloudflare bypass: **unreachable**${flare.second?.let { " — $it" } ?: ""}"
+                    }
+                enqueue(
+                    Payload(
+                        embeds =
+                            listOf(
+                                Embed(
+                                    title = "🟢 Server online",
+                                    description = "Listening on port $port.\n$bypass",
+                                    color = if (flare?.first == false) AMBER else GREEN,
+                                ),
+                            ),
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * A background service changed state. Called only on a transition, so a crash produces one
+     * message rather than one per failed request.
+     */
+    fun onServiceTransition(
+        name: String,
+        down: Boolean,
+        detail: String? = null,
+    ) {
+        if (!active() || cfg()?.serviceHealth != true) return
+        bg.submit {
+            runCatching {
+                enqueue(
+                    Payload(
+                        embeds =
+                            listOf(
+                                Embed(
+                                    title = if (down) "🔴 $name is unreachable" else "🟢 $name recovered",
+                                    description =
+                                        if (down) {
+                                            "Requests needing it will fail until it's back." +
+                                                (detail?.let { "\n`$it`" } ?: "")
+                                        } else {
+                                            "It's responding again."
+                                        },
+                                    color = if (down) RED else GREEN,
+                                ),
+                            ),
+                    ),
+                )
             }
         }
     }

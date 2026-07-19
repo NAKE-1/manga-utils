@@ -182,9 +182,24 @@ class FlareSolverrInterceptor(
                 .post(json.encodeToString(FsReq.serializer(), payload).toRequestBody(JSON_MEDIA))
                 .build()
 
-        client.newCall(req).execute().use { resp ->
-            val text = resp.body?.string().orEmpty()
-            if (text.isBlank()) throw IOException("empty response from FlareSolverr (HTTP ${resp.code})")
+        val resp =
+            try {
+                client.newCall(req).execute()
+            } catch (e: IOException) {
+                // Couldn't reach FlareSolverr at all — it crashed, was stopped, or the URL is wrong.
+                // This is the only signal we get that it died, since nothing polls it between solves.
+                FlareSolverrConfig.reportReachable(false, e.message)
+                throw e
+            }
+        resp.use {
+            val text = it.body?.string().orEmpty()
+            if (text.isBlank()) {
+                FlareSolverrConfig.reportReachable(false, "empty response (HTTP ${it.code})")
+                throw IOException("empty response from FlareSolverr (HTTP ${it.code})")
+            }
+            // It answered, so it's alive. A challenge it couldn't solve is the site's doing, not a
+            // FlareSolverr outage, so that stays "reachable" and only throws below.
+            FlareSolverrConfig.reportReachable(true)
             val parsed = json.decodeFromString(FsResp.serializer(), text)
             if (!parsed.status.equals("ok", ignoreCase = true)) {
                 throw IOException(parsed.message.ifBlank { "status=${parsed.status}" })

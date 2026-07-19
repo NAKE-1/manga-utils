@@ -110,6 +110,9 @@ async function getJson<T>(url: string, retries = 2, timeoutMs = 15000, signal?: 
   throw lastErr
 }
 
+/** Result of probing FlareSolverr. `url` is set when auto-discovery found a working endpoint. */
+export interface FlareTest { ok: boolean; version?: string; error?: string; url?: string }
+
 export const api = {
   sources: () => getJson<Source[]>('/api/sources'),
   sourcePrefs: (id: string) => getJson<SourcePref[]>(`/api/sources/${id}/preferences`),
@@ -158,7 +161,7 @@ export const api = {
     fetch(`/api/bookmarks?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&on=${on}`, { method: 'POST' }),
 
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
-  flaresolverrTest: (url?: string) => getJson<{ ok: boolean; version?: string; error?: string; url?: string }>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
+  flaresolverrTest: (url?: string) => getJson<FlareTest>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
   backupPreview: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/preview', { method: 'POST', body: data })
@@ -222,8 +225,6 @@ export const api = {
     return r.json()
   },
   extUninstall: (pkg: string) => fetch(`/api/extensions?pkg=${encodeURIComponent(pkg)}`, { method: 'DELETE' }),
-  extUnload: (pkg: string) => fetch('/api/extensions/unload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) }),
-  extLoad: (pkg: string) => fetch('/api/extensions/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) }),
   repos: () => getJson<string[]>('/api/repos'),
   repoStats: () => getJson<{ url: string; extensions: number; sources: number }[]>('/api/repos/stats'),
   addRepo: async (url: string): Promise<string[]> => {
@@ -280,7 +281,7 @@ export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryR
 export interface MigrateProgress { running: boolean; finished: boolean; phase: string; error: string; steps: string[] }
 
 export interface WebhookResult { ok: boolean; status: number; rateLimited: boolean; retryAfter?: number; error?: string }
-export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; coverStyle: string }
+export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; serviceHealth: boolean; coverStyle: string }
 
 export interface HealthSource {
   id: string; name: string; lang: string; cfState: 'green' | 'orange' | 'red'
@@ -314,7 +315,7 @@ export interface DlTask {
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 
-export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean; loaded: boolean }
+export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig }

@@ -25,34 +25,9 @@ object SourceManager {
     fun listInstalledSources(): List<InstalledSource> =
         InstalledStore.list().flatMap { it.sources }.sortedBy { it.name.lowercase() }
 
-    /** Packages the user manually **unloaded** (to free the .jar so it can be updated on Windows).
-     *  In-memory only — a restart loads everything normally. */
-    private val unloadedPkgs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
-    fun isLoaded(pkg: String): Boolean = pkg !in unloadedPkgs
-
-    /**
-     * Unload an extension: close+evict its class loader (releasing the Windows lock on its .jar so an
-     * update can overwrite it) and stop instantiating its sources until [load] is called — otherwise the
-     * next browse/search would re-open the jar and re-lock it. A GC nudge helps Windows free the handle.
-     */
-    fun unload(pkg: String) {
-        val ext = InstalledStore.list().find { it.pkg == pkg } ?: return
-        unloadedPkgs.add(pkg)
-        runCatching { ExtensionLoader.releaseJar(ext.jarPath) }
-        System.gc() // hint: collect the closed loader so Windows releases the .jar handle for the update
-        log.info("unloaded extension {} — jar released for update", pkg)
-    }
-
-    /** Re-enable an unloaded extension; its sources instantiate again on next use. */
-    fun load(pkg: String) {
-        if (unloadedPkgs.remove(pkg)) log.info("loaded extension {}", pkg)
-    }
-
-    /** Instantiate and return the live [Source] with [sourceId], or null if not installed / unloaded. */
+    /** Instantiate and return the live [Source] with [sourceId], or null if not installed. */
     fun loadSource(sourceId: Long): Source? {
         val ext = InstalledStore.findExtensionForSource(sourceId) ?: return null
-        if (ext.pkg in unloadedPkgs) return null // unloaded for maintenance — don't re-instantiate (would re-lock the jar)
         return loadSourcesOf(ext).firstOrNull { it.id == sourceId }
     }
 

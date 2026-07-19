@@ -114,5 +114,7 @@ data class NotifyConfig(
     val downloadComplete: Boolean = true,
     val downloadFailed: Boolean = true,
     val sourceHealth: Boolean = true,
+    /** Server started, and FlareSolverr going down or coming back. */
+    val serviceHealth: Boolean = true,
     val coverStyle: String = "thumbnail", // "thumbnail" | "poster"
 )

@@ -307,9 +307,8 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 @Volatile private var libUpdateTotal = 0
 @Volatile private var libUpdateRunning = false
 
-@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false, val loaded: Boolean = true)
+@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false)
 
-@Serializable private data class LoadedDto(val loaded: Boolean)
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
 @Serializable private data class RepoReq(val url: String)
@@ -687,6 +686,32 @@ private fun sniffImageType(b: ByteArray): ContentType = when {
 }
 
 /**
+ * Announce the server on Discord once it's bound, including whether the Cloudflare bypass answered,
+ * and arm the crash notifier. Runs off-thread so a slow probe can't delay startup, and every failure
+ * is swallowed — a webhook problem must never take the server down.
+ */
+private fun announceOnline(port: Int) {
+    Thread({
+        runCatching {
+            val cfg = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig
+            val flare: Pair<Boolean, String?>? =
+                if (!cfg.enabled) {
+                    null
+                } else {
+                    val probe = probeFlareOne(cfg.url)
+                    // Seed the reachability state so the first real solve doesn't re-announce what we
+                    // already reported here.
+                    cfg.reportReachable(probe.ok, probe.error)
+                    probe.ok to probe.error
+                }
+            // Only fires on a change, so a crash mid-session reports once, not once per request.
+            cfg.onReachabilityChange = { ok, err -> Notifier.onServiceTransition("FlareSolverr", down = !ok, detail = err) }
+            Notifier.onServerOnline(port, flare)
+        }
+    }, "startup-announce").apply { isDaemon = true }.start()
+}
+
+/**
  * ASCII startup banner printed once the server is live. Pure ASCII on purpose — the Windows console
  * isn't UTF-8, so box-drawing/Unicode glyphs mojibake (same reason the log separators are ASCII).
  * Printed via println (not the logger) so the art isn't prefixed with a timestamp on every line.
@@ -740,6 +765,7 @@ fun main() {
         // it reflects a truly-up server, then block the main thread forever on a latch.
         embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = false)
         printStartupBanner(port)
+        announceOnline(port)
         java.util.concurrent.CountDownLatch(1).await() // park main thread; the server runs on Netty's threads
     } catch (e: java.net.BindException) {
         // A stale server (or something else) is already on the port — say so plainly instead of
@@ -1559,7 +1585,7 @@ fun Application.module() {
         get("/api/extensions") {
             val list = withContext(Dispatchers.IO) {
                 val repoOf = runCatching { availableEntries().associate { it.first.pkg to repoLabel(it.second) } }.getOrDefault(emptyMap())
-                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath), SourceManager.isLoaded(it.pkg)) }
+                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath)) }
             }
             call.respond(list)
         }
@@ -1586,17 +1612,6 @@ fun Application.module() {
                     }
                 },
             )
-        }
-        // Unload releases an extension's .jar (so it can be updated on Windows without a lock); load re-enables it.
-        post("/api/extensions/unload") {
-            val pkg = call.receive<InstallReq>().pkg
-            withContext(Dispatchers.IO) { SourceManager.unload(pkg) }
-            call.respond(LoadedDto(false))
-        }
-        post("/api/extensions/load") {
-            val pkg = call.receive<InstallReq>().pkg
-            SourceManager.load(pkg)
-            call.respond(LoadedDto(true))
         }
         delete("/api/extensions") {
             val pkg = call.queryParam("pkg") ?: return@delete call.respond(HttpStatusCode.BadRequest)

@@ -24,6 +24,36 @@ object FlareSolverrConfig {
      */
     val solvedUserAgents = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    /** Whether the last attempt to talk to FlareSolverr got through. */
+    @Volatile var reachable: Boolean = true
+        private set
+
+    /** Why it's unreachable, when it is. */
+    @Volatile var lastError: String? = null
+        private set
+
+    /**
+     * Set by the server at startup. Invoked only when reachability *changes*, never per request —
+     * a crash is discovered on the next solve, so reporting every failure would fire an alert per
+     * request at exactly the moment things are worst.
+     */
+    @Volatile var onReachabilityChange: ((Boolean, String?) -> Unit)? = null
+
+    /**
+     * Report the outcome of talking to FlareSolverr. [ok] means we reached it; a challenge it failed
+     * to solve is still `true`, because that's the site being difficult, not FlareSolverr being down.
+     */
+    @Synchronized
+    fun reportReachable(
+        ok: Boolean,
+        error: String? = null,
+    ) {
+        lastError = if (ok) null else error
+        if (reachable == ok) return
+        reachable = ok
+        runCatching { onReachabilityChange?.invoke(ok, error) }
+    }
+
     // A small ring of recent solve events so the web UI can toast "solving / solved" — the frontend
     // can't see server logs, and a solve blocks for a few seconds, so this explains the pause.
     data class SolveEvent(val id: Long, val host: String, val phase: String, val cookies: Int, val at: Long)

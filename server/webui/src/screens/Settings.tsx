@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob, BackupResult } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob, BackupResult, FlareTest } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { THEMES, applyTheme, currentTheme } from '../themes'
@@ -77,7 +77,7 @@ export function Settings() {
     setExportOpen(false)
   }
   const [fsUrl, setFsUrl] = useState('')
-  const [fsTest, setFsTest] = useState<{ ok: boolean; version?: string; error?: string } | null>(null)
+  const [fsTest, setFsTest] = useState<FlareTest | null>(null)
   const [fsTesting, setFsTesting] = useState(false)
   const [usbDir, setUsbDir] = useState('')
   const [usbJob, setUsbJob] = useState<BackupJob | null>(null)
@@ -196,7 +196,7 @@ export function Settings() {
   }
   async function testFs() {
     setFsTesting(true); setFsTest(null)
-    const r = await api.flaresolverrTest(fsUrl.trim() || undefined).catch(() => ({ ok: false, error: 'Request failed' }))
+    const r: FlareTest = await api.flaresolverrTest(fsUrl.trim() || undefined).catch(() => ({ ok: false, error: 'Request failed' }))
     setFsTesting(false)
     // Auto-discovery (blank field): if the server found a working endpoint, fill it in + save it.
     if (r.ok && r.url && r.url !== fsUrl.trim()) {
