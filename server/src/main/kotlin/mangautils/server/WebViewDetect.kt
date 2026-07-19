@@ -7,14 +7,19 @@ import java.util.zip.ZipFile
  * Tachiyomi/Mihon extensions have no metadata flag declaring "I need a WebView" — they just call
  * android.webkit.WebView at runtime (JS-rendered pages, Cloudflare). We surface that to the UI by
  * statically scanning the translated extension jar's bytecode for a reference to android/webkit/WebView.
- * Result is cached per jar path (jars only change on install/update).
+ *
+ * Cached per jar path *and* its last-modified time: an update rewrites the jar in place, so caching on
+ * path alone kept answering for the previous version until the next restart.
  */
 object WebViewDetect {
     private val cache = ConcurrentHashMap<String, Boolean>()
     private const val NEEDLE = "android/webkit/WebView"
 
-    fun usesWebView(jarPath: String): Boolean =
-        cache.getOrPut(jarPath) {
+    fun usesWebView(jarPath: String): Boolean {
+        val mtime =
+            runCatching { java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(jarPath)).toMillis() }
+                .getOrDefault(0L)
+        return cache.getOrPut("$jarPath@$mtime") {
             runCatching {
                 ZipFile(jarPath).use { zip ->
                     zip
@@ -28,4 +33,5 @@ object WebViewDetect {
                 }
             }.getOrDefault(false)
         }
+    }
 }

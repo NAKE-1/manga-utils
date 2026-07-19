@@ -66,6 +66,7 @@ class ExtensionInstaller(
         // Release any loaded class loader for this jar first, or Windows keeps the old .jar locked and
         // the overwrite fails (update case).
         ExtensionLoader.releaseJar(jarPath.toString())
+        val before = stampOf(jarPath)
 
         // Prefer the repo's prebuilt jar. It needs no DEX translation, which sidesteps a dex2jar bug
         // that turns DEX 038 (minSdk >= 26) builds into bytecode the JVM verifier rejects.
@@ -73,15 +74,36 @@ class ExtensionInstaller(
             fetchPrebuiltJar(entry, indexUrl, jarPath.toString())
                 ?: translateApk(entry, indexUrl, apkPath.toString(), jarPath.toString())
 
+        // An "update" that silently left the old jar in place is the worst outcome, because the
+        // version bump gets recorded and the extension keeps running the code it always did. One
+        // extension really did sit on a three-week-old jar this way. Refuse to record that.
+        check(stampOf(jarPath) != before) {
+            "The extension file was not replaced — ${jarPath.fileName} is unchanged, so the update did not apply."
+        }
+
         val classMeta =
             pkg.sourceClass
                 ?: error("No ${ExtensionLoader.METADATA_SOURCE_CLASS} metadata; not a Tachiyomi extension?")
         val classNames = classMeta.split(";").map { resolveClassName(pkg.packageName, it.trim()) }
         val nsfw = pkg.nsfwMeta || entry.isNsfw
 
-        // Report what the JVM makes of every class before we try to use one. Never let a reporting
-        // failure break an install.
-        runCatching { ExtensionVerifier.log(ExtensionVerifier.verify(jarPath.toString())) }
+        // Check the JVM accepts the code before we record the extension as installed. A failure here
+        // used to surface much later as an opaque error from whatever first touched the source.
+        val report = runCatching { ExtensionVerifier.verify(jarPath.toString()) }.getOrNull()
+        if (report != null) {
+            ExtensionVerifier.log(report)
+            // Fatal: an entry class that won't load (nothing can start), or malformed bytecode
+            // anywhere (a healthy jar never has any). A missing class elsewhere is tolerated — it's
+            // usually an optional dependency the extension only touches on some code paths.
+            val broken =
+                report.failed.filter {
+                    it.name in classNames || it.kind == ExtensionVerifier.KIND_VERIFY || it.kind == ExtensionVerifier.KIND_FORMAT
+                }
+            check(broken.isEmpty()) {
+                val f = broken.first()
+                "${entry.name} can't run on this build: ${f.name} failed to load (${f.kind}) — ${f.error}"
+            }
+        }
 
         // instantiate to enumerate sources
         val sources =
@@ -108,6 +130,12 @@ class ExtensionInstaller(
         log.info("Installed {} ({} source(s))", entry.pkg, sources.size)
         return installed
     }
+
+    /** Identity of the jar on disk, so we can tell whether an install actually replaced it. */
+    private fun stampOf(path: java.nio.file.Path): Pair<Long, Long>? =
+        runCatching {
+            java.nio.file.Files.getLastModifiedTime(path).toMillis() to java.nio.file.Files.size(path)
+        }.getOrNull()
 
     /** The bits of an extension's manifest we need, however we obtained the jar. */
     private data class Pkg(

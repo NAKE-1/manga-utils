@@ -63,12 +63,15 @@ object ExtensionLoader {
             .dontSanitizeNames(true)
             .to(jarFilePath)
         if (handler.hasException()) {
+            // Returning normally here would leave a partially-translated jar that never got the
+            // BytecodeEditor pass, which install would then happily load and fail on much later with
+            // an error pointing nowhere near the translation. Fail where the damage happened.
             val errorFile = jarFilePath.resolveSibling("${jarFilePath.fileName}-error.txt")
             log.error("dex2jar reported issues; details written to {}", errorFile)
             handler.dump(errorFile, emptyArray())
-        } else {
-            BytecodeEditor.fixAndroidClasses(jarFilePath)
+            error("DEX translation failed for ${File(apkOrDexFile).name} — details in ${errorFile.fileName}")
         }
+        BytecodeEditor.fixAndroidClasses(jarFilePath)
     }
 
     /** Read the APK manifest into a [PackageInfo] whose applicationInfo.metaData has the tags. */
@@ -209,7 +212,14 @@ object ExtensionLoader {
         jarLoaderMap.remove(jarPath)?.let { runCatching { it.close() } }
     }
 
-    /** Instantiate the extension entry [className] from [jarPath] (a Source or SourceFactory). */
+    /**
+     * Instantiate the extension entry [className] from [jarPath] (a Source or SourceFactory).
+     *
+     * Synchronized with [releaseJar]: without it two concurrent first-loads of the same jar each
+     * build a class loader, one wins the map and the other is leaked still holding the file open —
+     * which on Windows is exactly the lock that breaks the next update.
+     */
+    @Synchronized
     fun loadExtensionInstance(
         jarPath: String,
         className: String,
