@@ -9,6 +9,7 @@ package eu.kanade.tachiyomi.network
 
 import android.content.Context
 import eu.kanade.tachiyomi.network.interceptor.CloudflareClientMarker
+import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.FlareSolverrInterceptor
 import eu.kanade.tachiyomi.network.interceptor.IgnoreGzipInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
@@ -72,6 +73,10 @@ class NetworkHelper(
                         ),
                     ).addInterceptor(UncaughtExceptionInterceptor())
                     .addInterceptor(FlareSolverrInterceptor(cookieStore) { ua -> userAgent.value = ua })
+                    // Compatibility shim (no-op): some extensions (Asura/Arena/MangaThemesia-based) assert a
+                    // CloudflareInterceptor is present in the default client and error() otherwise. Real CF
+                    // handling is FlareSolverr's job above; this only satisfies their presence check.
+                    .addInterceptor(CloudflareInterceptor())
                     .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
                     .addNetworkInterceptor(IgnoreGzipInterceptor())
                     .addNetworkInterceptor(BrotliInterceptor)
@@ -105,7 +110,8 @@ class NetworkHelper(
             builder.addNetworkInterceptor(httpLoggingInterceptor)
             // }
 
-            // Cloudflare bypass is out of scope for v1 (was: CloudflareInterceptor).
+            // Cloudflare solving is handled by FlareSolverrInterceptor (added above); the no-op
+            // CloudflareInterceptor there is only a presence shim for extensions that require it.
 
             // when (preferences.dohProvider().get()) {
             //     PREF_DOH_CLOUDFLARE -> builder.dohCloudflare()
