@@ -225,6 +225,7 @@ export const api = {
   extUnload: (pkg: string) => fetch('/api/extensions/unload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) }),
   extLoad: (pkg: string) => fetch('/api/extensions/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) }),
   repos: () => getJson<string[]>('/api/repos'),
+  repoStats: () => getJson<{ url: string; extensions: number; sources: number }[]>('/api/repos/stats'),
   addRepo: async (url: string): Promise<string[]> => {
     const r = await fetch('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Failed to add repo')

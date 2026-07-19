@@ -313,6 +313,9 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
 @Serializable private data class RepoReq(val url: String)
+
+/** A repo plus what it offers: [extensions] packages advertising [sources] sources between them. */
+@Serializable private data class RepoStatDto(val url: String, val extensions: Int, val sources: Int)
 @Serializable private data class InstallResultDto(val pkg: String, val name: String, val sources: Int)
 
 @Serializable private data class DlChapterReq(val url: String, val name: String = "")
@@ -1625,6 +1628,18 @@ fun Application.module() {
         }
 
         get("/api/repos") { call.respond(RepoStore.list()) }
+        // What each repo actually offers. A repo that fails to fetch reports zeroes rather than
+        // failing the whole call, so one dead repo can't blank the others' counts.
+        get("/api/repos/stats") {
+            val stats =
+                withContext(Dispatchers.IO) {
+                    RepoStore.list().map { url ->
+                        val entries = runCatching { ExtensionRepoClient().fetchIndex(url) }.getOrDefault(emptyList())
+                        RepoStatDto(url = url, extensions = entries.size, sources = entries.sumOf { it.sources.size })
+                    }
+                }
+            call.respond(stats)
+        }
         post("/api/repos") {
             val url = call.receive<RepoReq>().url.trim()
             if (url.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Enter a repo URL"))

@@ -28,6 +28,7 @@ export function Extensions() {
   const [avail, setAvail] = useState<ExtAvailable[]>([])
   const [browseLoading, setBrowseLoading] = useState(false)
   const [repos, setRepos] = useState<string[]>([])
+  const [repoStats, setRepoStats] = useState<Record<string, { extensions: number; sources: number }>>({})
   const [repoInput, setRepoInput] = useState('')
   const [repoMsg, setRepoMsg] = useState('')
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
@@ -48,6 +49,13 @@ export function Extensions() {
 
   useEffect(() => { loadInstalled(); api.repos().then(setRepos).catch(() => {}); checkUpdates() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'browse') loadBrowse() }, [tab, q]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Counts need every index fetched, so only pay for it when the Repos tab is actually open.
+  useEffect(() => {
+    if (tab !== 'repos') return
+    api.repoStats()
+      .then((s) => setRepoStats(Object.fromEntries(s.map((r) => [r.url, { extensions: r.extensions, sources: r.sources }]))))
+      .catch(() => {})
+  }, [tab, repos])
 
   async function install(pkg: string, label: string) {
     setBusy((b) => ({ ...b, [pkg]: label }))
@@ -168,14 +176,32 @@ export function Extensions() {
             <button className="btn primary" onClick={addRepo}>Add</button>
           </div>
           {repoMsg && <div className="set-msg err" style={{ padding: '0 16px 8px' }}>{repoMsg}</div>}
+          {repos.length > 0 && (() => {
+            const tot = repos.reduce((a, u) => {
+              const s = repoStats[u]; return s ? { e: a.e + s.extensions, s: a.s + s.sources } : a
+            }, { e: 0, s: 0 })
+            return tot.s > 0 ? (
+              <div className="repo-total">
+                <b>{tot.s.toLocaleString()}</b> sources<span className="sep">·</span>
+                <b>{tot.e.toLocaleString()}</b> extensions
+                <span className="sep">·</span>{repos.length} repo{repos.length === 1 ? '' : 's'}
+              </div>
+            ) : null
+          })()}
           {repos.map((url) => {
             const count = installed.filter((e) => e.repo === repoLabel(url)).length
+            const st = repoStats[url]
             return (
               <div className="ext-row" key={url}>
                 <div className="ext-info">
                   <div className="ext-name">{repoLabel(url)}</div>
                   <div className="ext-sub repo-url">{url}</div>
-                  {count > 0 && <div className="ext-sub">{count} installed extension{count === 1 ? '' : 's'}</div>}
+                  <div className="ext-sub">
+                    {st
+                      ? `${st.sources.toLocaleString()} source${st.sources === 1 ? '' : 's'} · ${st.extensions.toLocaleString()} extension${st.extensions === 1 ? '' : 's'}`
+                      : 'Counting…'}
+                    {count > 0 && ` · ${count} installed`}
+                  </div>
                 </div>
                 <button className="btn sm danger" onClick={() => askRemoveRepo(url)}>Remove</button>
               </div>
