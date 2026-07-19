@@ -11,7 +11,6 @@ import android.content.Context
 import eu.kanade.tachiyomi.network.interceptor.CloudflareClientMarker
 import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.FlareSolverrInterceptor
-import eu.kanade.tachiyomi.network.interceptor.IgnoreGzipInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -78,8 +77,10 @@ class NetworkHelper(
                     // handling is FlareSolverr's job above; this only satisfies their presence check.
                     .addInterceptor(CloudflareInterceptor())
                     .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
-                    .addNetworkInterceptor(IgnoreGzipInterceptor())
-                    .addNetworkInterceptor(BrotliInterceptor)
+                    // NOTE: IgnoreGzip + Brotli are intentionally NOT added. MangaThemesia/Keiyoushi
+                    // extensions (Asura, Arena, …) validate the default client against Mihon's baseline and
+                    // assert `IgnoreGzipInterceptor must not be present`. OkHttp still handles gzip natively
+                    // (BridgeInterceptor); we only forgo Brotli, which manga sources rarely use.
                     // Force the FlareSolverr-solved User-Agent on cleared hosts LAST (after any
                     // extension interceptor + the cookie bridge), so cf_clearance stays valid.
                     .addNetworkInterceptor { chain ->

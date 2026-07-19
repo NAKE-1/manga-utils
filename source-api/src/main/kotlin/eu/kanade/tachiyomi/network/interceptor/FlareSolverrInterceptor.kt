@@ -52,10 +52,15 @@ class FlareSolverrInterceptor(
         val response = chain.proceed(request)
         if (!isCloudflareChallenge(response)) return response
 
+        // Snapshot the code + CF-diagnostic headers BEFORE closing — this is what tells us WHY atsu is
+        // blocking (managed challenge vs 503 overload vs rate-limit), instead of guessing.
+        val initialCode = response.code
+        val initialDiag = cfDiag(response)
+
         if (!FlareSolverrConfig.enabled) {
             response.close()
             throw IOException(
-                "Cloudflare protection is blocking this source (HTTP ${response.code}). " +
+                "Cloudflare protection is blocking this source (HTTP $initialCode [$initialDiag]). " +
                     "A Cloudflare bypass isn't supported yet.",
             )
         }
@@ -102,6 +107,8 @@ class FlareSolverrInterceptor(
             if (ua != null) retry.header("User-Agent", ua)
             val retried = chain.proceed(retry.build())
             if (!isCloudflareChallenge(retried)) return retried // cleared
+            val retriedCode = retried.code
+            val retriedDiag = cfDiag(retried)
             retried.close()
             if (last) {
                 // Suwayomi PR #990: a managed/Turnstile challenge can't be cleared by cookie replay
@@ -118,8 +125,10 @@ class FlareSolverrInterceptor(
                 }
                 FlareSolverrConfig.recordSolveFail(host)
                 throw IOException(
-                    "Cloudflare is still blocking $host after $attempt FlareSolverr solve(s) — this " +
-                        "site uses a managed/Turnstile challenge that a cookie bypass can't clear.",
+                    "Cloudflare still blocking $host after $attempt FlareSolverr solve(s) - " +
+                        "initial HTTP $initialCode [$initialDiag], post-solve HTTP $retriedCode [$retriedDiag]. " +
+                        "(cf-mitigated=challenge => managed/Turnstile, cookie can't clear; " +
+                        "503 + Retry-After => rate-limit/overload; plain 503 => atsu origin busy.)",
                 )
             }
             // not the last attempt → loop and solve once more
@@ -194,6 +203,19 @@ class FlareSolverrInterceptor(
             CHALLENGE_MARKERS.any { body.contains(it, ignoreCase = true) }
         }.getOrDefault(false)
     }
+
+    /**
+     * Snapshot of the CF-relevant response headers so the failure log says WHY, not just "blocking":
+     * `cf-mitigated: challenge` = managed/Turnstile (a cookie can't clear it); `Retry-After` present =
+     * rate-limit/backoff; a plain 503 with neither usually = origin overload (atsu busy under load).
+     */
+    private fun cfDiag(r: Response): String =
+        buildString {
+            append("Server=").append(r.header("Server") ?: "?")
+            r.header("cf-mitigated")?.let { append(", cf-mitigated=").append(it) }
+            r.header("Retry-After")?.let { append(", Retry-After=").append(it) }
+            r.header("cf-ray")?.let { append(", cf-ray=").append(it) }
+        }
 
     /** True for page-image requests — the FlareSolverr rendered-body fallback can't serve binary. */
     private fun isImageUrl(url: HttpUrl): Boolean {
