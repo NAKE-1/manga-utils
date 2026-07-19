@@ -133,9 +133,7 @@ export function Extensions() {
                 <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
                 <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
               </div>
-              {updates.has(e.pkg)
-                ? <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>
-                : <button className="btn sm" disabled={!!busy[e.pkg]} title="Re-download this extension at its current version — repairs a bad install" onClick={() => install(e.pkg, 'Reinstalling…')}>{busy[e.pkg] || 'Reinstall'}</button>}
+              {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>}
               <button className="btn sm danger" disabled={!!busy[e.pkg]} onClick={() => uninstall(e.pkg)}>{busy[e.pkg] === 'Removing…' ? '…' : 'Remove'}</button>
             </div>
           ))}
