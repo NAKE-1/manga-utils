@@ -22,12 +22,37 @@ object AppConfig {
 
     val dataDir: Path by lazy {
         val configured = System.getProperty("MU_DATA_DIR") ?: System.getenv("MU_DATA_DIR")
-        val resolved = (if (configured.isNullOrBlank()) defaultDataDir() else Path.of(configured)).absolute().normalize()
+        // Priority: env/prop wins (Linux/Docker); else a UI-set pointer file redirects the whole data
+        // root (downloads + covers + settings + metadata) to e.g. an external SSD; else the default.
+        val chosen = configured?.takeIf { it.isNotBlank() } ?: readDataRootPointer()
+        val resolved = (if (chosen.isNullOrBlank()) defaultDataDir() else Path.of(chosen)).absolute().normalize()
         runCatching {
             if (!resolved.exists()) resolved.createDirectories()
             migrateLegacyInto(resolved)
         }.onFailure { log.warn("data dir init: {}", it.message) }
+        log.info("data dir: {}", resolved)
         resolved
+    }
+
+    /** Where the data-root pointer lives — the fixed default location (it can't live inside the dir it
+     *  points to). Even after redirecting, the pointer is always read from / written here. */
+    private fun pointerFile(): Path = defaultDataDir().resolve(".dataroot")
+
+    /** The UI-set data-root override (absolute path), or null if none set. Ignored when MU_DATA_DIR is set. */
+    fun readDataRootPointer(): String? =
+        runCatching { pointerFile().let { if (Files.exists(it)) Files.readString(it).trim().ifBlank { null } else null } }.getOrNull()
+
+    /** Persist (path) or clear (null) the data-root pointer. **Takes effect on the next server start.** */
+    fun setDataRootPointer(path: String?) {
+        val f = pointerFile()
+        runCatching {
+            if (path.isNullOrBlank()) {
+                Files.deleteIfExists(f)
+            } else {
+                f.parent?.let { if (!Files.exists(it)) it.createDirectories() }
+                Files.writeString(f, path.trim())
+            }
+        }.onFailure { log.warn("set data-root pointer: {}", it.message) }
     }
 
     val extensionsDir: Path get() = sub("extensions")

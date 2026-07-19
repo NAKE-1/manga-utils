@@ -20,6 +20,9 @@ export interface PageResult { mangas: Manga[]; hasNextPage: boolean }
 export interface BackupResult { imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number; historyRestored?: number; clientPrefsJson?: string | null }
 export interface ImportJob { state: string; phase: string; done: number; total: number; current: string; error?: string; result?: BackupResult | null }
 
+export interface RelocatePreview { sourceBytes: number; sourceFiles: number; targetFreeBytes: number; targetLayout: string; activeDownloads: number; fits: boolean; warning: string }
+export interface RelocateProgress { running: boolean; phase: string; finished: boolean; error: string; mode: string; target: string; filesTotal: number; filesDone: number; bytesTotal: number; bytesDone: number; steps: string[] }
+
 export interface Chapter {
   url: string
   name: string
@@ -189,6 +192,17 @@ export const api = {
     return r.json()
   },
   usbBackupProgress: () => getJson<BackupJob>('/api/dyno/backup/progress'),
+  relocatePlan: async (root: string): Promise<RelocatePreview> => {
+    const r = await fetch('/api/relocate/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not read that path')
+    return r.json()
+  },
+  relocateStart: async (root: string, mode: 'move' | 'copy' | 'point') => {
+    const r = await fetch('/api/relocate/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root, mode }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not start the relocate')
+    return r
+  },
+  relocateProgress: () => getJson<RelocateProgress>('/api/relocate/progress'),
   diag: (id: string) => getJson<DiagResult>(`/api/diag?source=${id}`, 0, 30000),
   devStats: () => getJson<DevStats>('/api/dev/stats'),
   version: () => getJson<VersionInfo>('/api/version'),
@@ -208,6 +222,8 @@ export const api = {
     return r.json()
   },
   extUninstall: (pkg: string) => fetch(`/api/extensions?pkg=${encodeURIComponent(pkg)}`, { method: 'DELETE' }),
+  extUnload: (pkg: string) => fetch('/api/extensions/unload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) }),
+  extLoad: (pkg: string) => fetch('/api/extensions/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) }),
   repos: () => getJson<string[]>('/api/repos'),
   addRepo: async (url: string): Promise<string[]> => {
     const r = await fetch('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
@@ -297,7 +313,7 @@ export interface DlTask {
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 
-export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean }
+export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean; loaded: boolean }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig }

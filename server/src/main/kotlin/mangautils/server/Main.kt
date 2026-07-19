@@ -307,7 +307,9 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 @Volatile private var libUpdateTotal = 0
 @Volatile private var libUpdateRunning = false
 
-@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false)
+@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false, val loaded: Boolean = true)
+
+@Serializable private data class LoadedDto(val loaded: Boolean)
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
 @Serializable private data class RepoReq(val url: String)
@@ -361,6 +363,38 @@ private data class SettingsDto(
     val usbBackupDir: String,
     val discordWebhookUrl: String,
     val notify: mangautils.core.config.NotifyConfig,
+)
+
+@Serializable
+private data class RelocatePlanReq(val root: String)
+
+@Serializable
+private data class RelocateStartReq(val root: String, val mode: String)
+
+@Serializable
+private data class RelocatePreviewDto(
+    val sourceBytes: Long,
+    val sourceFiles: Long,
+    val targetFreeBytes: Long,
+    val targetLayout: String,
+    val activeDownloads: Int,
+    val fits: Boolean,
+    val warning: String,
+)
+
+@Serializable
+private data class RelocateProgressDto(
+    val running: Boolean,
+    val phase: String,
+    val finished: Boolean,
+    val error: String,
+    val mode: String,
+    val target: String,
+    val filesTotal: Long,
+    val filesDone: Long,
+    val bytesTotal: Long,
+    val bytesDone: Long,
+    val steps: List<String>,
 )
 
 @Serializable
@@ -678,6 +712,10 @@ private fun printStartupBanner(port: Int) {
 }
 
 fun main() {
+    // Disable the JVM's JAR URL cache. Without this, closing an extension's URLClassLoader still leaves a
+    // cached JarFile open, which keeps the .jar LOCKED on Windows — so Unload → Update fails. Must run
+    // before any extension jar is opened. (No-op-ish on Linux, which never had the lock.)
+    runCatching { java.net.URLConnection.setDefaultUseCaches("jar", false) }
     LogBuffer.install() // capture WARN/ERROR into a ring buffer for the in-app log viewer
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     // Honor a custom downloads directory chosen in Settings.
@@ -1360,6 +1398,33 @@ fun Application.module() {
             HealthScheduler.reschedule() // apply any change to the health-check schedule
             call.respond(settingsDto(s))
         }
+
+        // ---- Relocate the downloads library to a new root (e.g. an external SSD) ----
+        post("/api/relocate/plan") {
+            val req = call.receive<RelocatePlanReq>()
+            if (req.root.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Pick a target folder"))
+            val p = withContext(Dispatchers.IO) { runCatching { RelocateJob.plan(req.root) }.getOrNull() }
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that path"))
+            call.respond(RelocatePreviewDto(p.sourceBytes, p.sourceFiles, p.targetFreeBytes, p.targetLayout, p.activeDownloads, p.fits, p.warning))
+        }
+        post("/api/relocate/start") {
+            val req = call.receive<RelocateStartReq>()
+            if (req.mode !in setOf("move", "copy", "point")) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad mode"))
+            if (req.root.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Pick a target folder"))
+            if (RelocateJob.running) return@post call.respond(HttpStatusCode.Conflict, ErrorDto("A relocate is already running"))
+            RelocateJob.start(req.root, req.mode)
+            call.respond(HttpStatusCode.Accepted)
+        }
+        get("/api/relocate/progress") {
+            call.respond(
+                RelocateProgressDto(
+                    RelocateJob.running, RelocateJob.phase, RelocateJob.finished, RelocateJob.error,
+                    RelocateJob.mode, RelocateJob.target,
+                    RelocateJob.filesTotal, RelocateJob.filesDone, RelocateJob.bytesTotal, RelocateJob.bytesDone,
+                    RelocateJob.steps.toList(),
+                ),
+            )
+        }
         // Verify a FlareSolverr instance is reachable. With a url it tests that one; blank auto-discovers
         // across the common local/docker endpoints and returns the working one (FlareTestDto.url).
         get("/api/flaresolverr/test") {
@@ -1491,7 +1556,7 @@ fun Application.module() {
         get("/api/extensions") {
             val list = withContext(Dispatchers.IO) {
                 val repoOf = runCatching { availableEntries().associate { it.first.pkg to repoLabel(it.second) } }.getOrDefault(emptyMap())
-                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath)) }
+                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath), SourceManager.isLoaded(it.pkg)) }
             }
             call.respond(list)
         }
@@ -1518,6 +1583,17 @@ fun Application.module() {
                     }
                 },
             )
+        }
+        // Unload releases an extension's .jar (so it can be updated on Windows without a lock); load re-enables it.
+        post("/api/extensions/unload") {
+            val pkg = call.receive<InstallReq>().pkg
+            withContext(Dispatchers.IO) { SourceManager.unload(pkg) }
+            call.respond(LoadedDto(false))
+        }
+        post("/api/extensions/load") {
+            val pkg = call.receive<InstallReq>().pkg
+            SourceManager.load(pkg)
+            call.respond(LoadedDto(true))
         }
         delete("/api/extensions") {
             val pkg = call.queryParam("pkg") ?: return@delete call.respond(HttpStatusCode.BadRequest)

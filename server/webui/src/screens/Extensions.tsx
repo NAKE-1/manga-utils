@@ -75,6 +75,13 @@ export function Extensions() {
     setBusy((b) => { const n = { ...b }; delete n[pkg]; return n })
     loadInstalled(); if (tab === 'browse') loadBrowse()
   }
+  // Unload frees the extension's .jar (so a Windows update won't hit a file lock); Load re-enables it.
+  async function toggleLoad(e: ExtInstalled) {
+    setBusy((b) => ({ ...b, [e.pkg]: e.loaded ? 'Unloading…' : 'Loading…' }))
+    try { if (e.loaded) await api.extUnload(e.pkg); else await api.extLoad(e.pkg) } catch { /* ignore */ }
+    setBusy((b) => { const n = { ...b }; delete n[e.pkg]; return n })
+    loadInstalled()
+  }
   async function addRepo() {
     const url = repoInput.trim(); if (!url) return
     setRepoMsg('')
@@ -122,10 +129,11 @@ export function Extensions() {
             <div className="ext-row" key={e.pkg}>
               <ExtIcon pkg={e.pkg} />
               <div className="ext-info">
-                <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
+                <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}{!e.loaded && <span className="ext-badge" style={{ background: 'var(--muted-2)' }}>UNLOADED</span>}</div>
                 <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
               </div>
               {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>}
+              <button className="btn sm" disabled={!!busy[e.pkg]} title={e.loaded ? 'Free the .jar so it can be updated on Windows' : 'Re-enable this extension'} onClick={() => toggleLoad(e)}>{busy[e.pkg] || (e.loaded ? 'Unload' : 'Load')}</button>
               <button className="btn sm danger" disabled={!!busy[e.pkg]} onClick={() => uninstall(e.pkg)}>{busy[e.pkg] === 'Removing…' ? '…' : 'Remove'}</button>
             </div>
           ))}

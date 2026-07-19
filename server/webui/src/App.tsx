@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, useLocation } from 'react-router-dom'
 import { TopBar } from './components/TopBar'
 import { TabBar } from './components/TabBar'
@@ -16,13 +17,16 @@ import Logs from './screens/Logs'
 import Health from './screens/Health'
 import Webhooks from './screens/Webhooks'
 import Migrate from './screens/Migrate'
+import Relocate from './screens/Relocate'
 import { Stub } from './screens/Stub'
-import { Toasts, DownloadWatcher } from './components/Toast'
+import { Toasts, DownloadWatcher, setReaderActive } from './components/Toast'
 import { PullToRefresh } from './components/PullToRefresh'
 
 export function App() {
   const loc = useLocation()
   const isReader = loc.pathname.startsWith('/reader/')
+  // Mute background toasts (FlareSolverr solves, download progress, scans) while reading.
+  useEffect(() => { setReaderActive(isReader) }, [isReader])
   // DownloadWatcher + Toasts are mounted ONCE here (not inside each branch) so switching in/out of the
   // full-screen reader doesn't remount them — otherwise the FlareSolverr/download watchers reset and
   // swallow the very events (a Cloudflare solve on chapter open) we want to toast.
@@ -54,6 +58,7 @@ export function App() {
               <Route path="/health" element={<Health />} />
               <Route path="/webhooks" element={<Webhooks />} />
               <Route path="/migrate" element={<Migrate />} />
+              <Route path="/relocate" element={<Relocate />} />
               <Route path="/manga/:sourceId" element={<Detail />} />
               <Route path="*" element={<Stub name="Not found" />} />
             </Routes>
