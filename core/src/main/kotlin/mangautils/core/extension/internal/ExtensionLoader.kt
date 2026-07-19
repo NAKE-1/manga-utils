@@ -25,6 +25,7 @@ import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import javax.xml.parsers.DocumentBuilderFactory
@@ -99,6 +100,53 @@ object ExtensionLoader {
                 }
         }
     }
+
+    /** What a prebuilt extension jar's bundled manifest tells us. */
+    data class JarManifest(
+        val packageName: String,
+        val versionName: String?,
+        val versionCode: Long,
+        val meta: Map<String, String>,
+    )
+
+    /**
+     * Reads the `AndroidManifest.xml` bundled inside a prebuilt extension jar. Unlike an APK's binary
+     * AXML this one is plain text, so it parses with the same DocumentBuilder used elsewhere and needs
+     * no apk-parser. Returns null when the entry is missing or unreadable, i.e. the downloaded file
+     * isn't a prebuilt extension jar and the caller should fall back to translating the APK.
+     */
+    fun readJarManifest(jarPath: String): JarManifest? =
+        runCatching {
+            ZipFile(File(jarPath)).use { zip ->
+                val entry = zip.getEntry("AndroidManifest.xml") ?: return null
+                val doc =
+                    zip.getInputStream(entry).use {
+                        DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(it)
+                    }
+                val root = doc.documentElement ?: return null
+                val meta = LinkedHashMap<String, String>()
+                doc
+                    .getElementsByTagName("application")
+                    .item(0)
+                    ?.childNodes
+                    ?.toList()
+                    .orEmpty()
+                    .asSequence()
+                    .filter { it.nodeType == Node.ELEMENT_NODE }
+                    .map { it as Element }
+                    .filter { it.tagName == "meta-data" }
+                    .forEach {
+                        val name = it.getAttribute("android:name")
+                        if (name.isNotEmpty()) meta[name] = it.getAttribute("android:value")
+                    }
+                JarManifest(
+                    packageName = root.getAttribute("package"),
+                    versionName = root.getAttribute("android:versionName").takeIf(String::isNotEmpty),
+                    versionCode = root.getAttribute("android:versionCode").toLongOrNull() ?: 0L,
+                    meta = meta,
+                )
+            }
+        }.getOrNull()
 
     /**
      * Copies the APK's `assets/` entries into the translated jar (at their `assets/...` path), so
