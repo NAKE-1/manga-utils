@@ -52,6 +52,27 @@ function relative(ms: number): string {
 const dateFmt = (ms: number) => (ms > 0 ? new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' }) : '')
 
 type Tab = 'all' | 'unread' | 'read'
+type DlFilter = 'all' | 'dl' | 'undl'
+
+// How you last left a manga's chapter list (tab / sort direction / download filter), remembered per
+// manga in one capped map — the same client-side approach as the reader's saved scroll positions.
+type ChapterView = { tab: Tab; asc: boolean; dl: DlFilter }
+const VIEW_KEY = 'detail.chapterView'
+const VIEW_MAX = 300
+
+function loadViews(): Record<string, ChapterView> {
+  try { return JSON.parse(localStorage.getItem(VIEW_KEY) || '{}') } catch { return {} }
+}
+function saveView(key: string, v: ChapterView) {
+  try {
+    const m = loadViews()
+    // ponytail: evicts in insertion order, not least-recently-used. 300 entries is far more than
+    // anyone reads at once, so the difference never shows up.
+    if (!(key in m)) { const keys = Object.keys(m); if (keys.length >= VIEW_MAX) delete m[keys[0]] }
+    m[key] = v
+    localStorage.setItem(VIEW_KEY, JSON.stringify(m))
+  } catch { /* quota — losing a view preference is not worth surfacing */ }
+}
 
 export function Detail() {
   const { sourceId = '' } = useParams()
@@ -66,8 +87,11 @@ export function Detail() {
   const [descOpen, setDescOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
-  const [tab, setTab] = useState<Tab>('all')
-  const [asc, setAsc] = useState(false)
+  // Restore how this manga was last viewed. Read once on mount so a later save can't re-trigger it.
+  const viewKey = `${sourceId}|${url}`
+  const [savedView] = useState<ChapterView | undefined>(() => loadViews()[viewKey])
+  const [tab, setTab] = useState<Tab>(savedView?.tab ?? 'all')
+  const [asc, setAsc] = useState(savedView?.asc ?? false)
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
   const [tries, setTries] = useState(0)
   const [stateLoaded, setStateLoaded] = useState(false)
@@ -78,7 +102,10 @@ export function Detail() {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [menuOpen, setMenuOpen] = useState(false)
-  const [dlFilter, setDlFilter] = useState<'all' | 'dl' | 'undl'>('all')
+  const [dlFilter, setDlFilter] = useState<DlFilter>(savedView?.dl ?? 'all')
+
+  // Persist the chapter view whenever you change it, so reopening this manga looks how you left it.
+  useEffect(() => { if (url) saveView(viewKey, { tab, asc, dl: dlFilter }) }, [viewKey, url, tab, asc, dlFilter])
 
   useEffect(() => {
     // Abort the detail fetch if you navigate away — the backend cancels the (possibly slow/failing)
