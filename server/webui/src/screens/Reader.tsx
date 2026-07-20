@@ -132,7 +132,7 @@ export function Reader() {
 
   const [count, setCount] = useState<number | null>(null)
   const [force, setForce] = useState(false) // you chose to try a known-broken chapter anyway
-  // Which chapter has been open long enough to trust its progress reading - NOT a boolean. Right after a
+  // Which chapter has been open long enough (500ms) to trust its progress reading - NOT a boolean. Right after a
   // switch the container has no real height, so scroll/height reads as a large fraction and the 40% gate
   // trips instantly. A boolean could not survive the render race that caused: setSettled(false) and
   // setProgress(0) do not apply until the next render, so the preload effect in that same commit still
@@ -258,7 +258,7 @@ export function Reader() {
     setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false); setForce(false); setSettledFor('')
     window.scrollTo(0, 0)
     prefetchedNext.current = '' // stale from the chapter we just left; leaving it set blocks a real preload
-    const settle = setTimeout(() => setSettledFor(chapter), 3000)
+    const settle = setTimeout(() => setSettledFor(chapter), 500)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => {
       setReadUrls(new Set(s.read)) // read markers for the chapter list
@@ -305,7 +305,7 @@ export function Reader() {
   // so a fast scroll that reaches 50% before the chapter list finishes still triggers it once ready.
   // Requests carry X-Preload so the server logs them even for cached/downloaded pages.
   useEffect(() => {
-    if (settledFor !== chapter) return // see `settledFor`: progress is meaningless for the first 3s
+    if (settledFor !== chapter) return // see `settledFor`: progress is meaningless for the first 500ms
     if (progress <= 0.4) return // fire earlier than mid-chapter for more lead time before you flip
     if (!nextCh) { console.log('[reader] past preload point — waiting for chapter list to preload next'); return }
     // Never warm a chapter we already know is broken: it is exactly the burst of doomed image requests
