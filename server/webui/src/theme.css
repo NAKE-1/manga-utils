@@ -1030,7 +1030,14 @@ main > * { animation: fade-up .22s ease backwards; }
 /* Why a download failed — sits under the failed-chapter list, quieter than it. */
 .dlc-why { margin-top: 3px; opacity: .85; font-size: 12px; line-height: 1.4; }
 
-/* Chapter the source can't serve: the download button warns rather than pretending it'll work.
-   Same red as the other destructive/error affordances (.btn.danger). */
+/* A chapter the source can't serve. Reads as a warning at a glance — badge, red control, and a
+   left edge — instead of looking like any other undownloaded chapter until you try it.
+   Same red family as the other error affordances (.btn.danger). */
+.chapter-broken {
+  display: inline-block; font-size: 9px; font-weight: 800; color: #fff; background: #b3453c;
+  padding: 2px 5px; border-radius: 5px; margin-right: 7px; vertical-align: middle; letter-spacing: .04em;
+}
+.chapter-row.broken { border-left: 2px solid #b3453c; }
+.chapter-row.broken .chapter-name { color: #e0a19a; }
 .chapter-dlbtn.broken { color: #e0715c; opacity: 1; }
 @media (hover: hover) { .chapter-dlbtn.broken:hover { filter: brightness(1.15); } }

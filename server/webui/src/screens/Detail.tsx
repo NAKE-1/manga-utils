@@ -244,6 +244,7 @@ export function Detail() {
 ` +
         'Downloading anyway will try the source again. If it works, the chapter stops being skipped.',
       confirmLabel: 'Download anyway',
+      danger: true,
       onConfirm: async () => {
         setConfirm(null)
         await api.clearUnavailable(c.url).catch(() => {})
@@ -326,10 +327,10 @@ export function Detail() {
     const sel = selected.has(c.url)
     const onRow = () => { if (selecting) toggleSelect(c.url); else openChapter(c.url, c.name) }
     return (
-      <div key={c.url} className={'chapter-row' + (read ? ' read' : '') + (c.url === resumeUrl ? ' resume' : '') + (sel ? ' sel' : '')} onClick={onRow}>
+      <div key={c.url} className={'chapter-row' + (read ? ' read' : '') + (c.url === resumeUrl ? ' resume' : '') + (sel ? ' sel' : '') + (broken ? ' broken' : '')} onClick={onRow}>
         {selecting && <span className={'ch-check' + (sel ? ' on' : '')} />}
         <div className="chapter-text">
-          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{c.name}</div>
+          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{broken && <span className="chapter-broken">UNAVAILABLE</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
         {!selecting && (downloading
