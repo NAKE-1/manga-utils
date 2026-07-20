@@ -364,6 +364,8 @@ export function Settings() {
           <div className="set-kv"><span>Saving to</span><code>{info?.effectiveDownloadDir || '…'}</code></div>
           <div className="set-hint" style={{ marginTop: 8 }}>Moving to a bigger drive (e.g. an external SSD)? Relocate copies your whole library across with verification and a live log.</div>
           <div className="set-actions"><button className="btn" onClick={() => nav('/relocate')}>Relocate to another drive →</button></div>
+          <div className="set-hint" style={{ marginTop: 8 }}>Different groups scanlate the same chapter. This shows which of those releases you don't have yet, and fetches them a series at a time.</div>
+          <div className="set-actions"><button className="btn" onClick={() => nav('/scan-versions')}>Scanlation versions →</button></div>
         </div>
         <div className="set-card">
           <button className="set-toggle" onClick={toggleCbz}>

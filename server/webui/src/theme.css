@@ -1067,3 +1067,33 @@ main > * { animation: fade-up .22s ease backwards; }
   padding: 5px 10px; font-size: 12px; font-weight: 650; cursor: pointer; margin-left: 8px;
 }
 @media (hover: hover) { .reader-warn-alt:hover { filter: brightness(1.12); } }
+
+/* Scanlation-versions screen (P5). The dry run is the feature, so the numbers - what you hold, what is
+   missing, what it would cost - carry the layout, and the download button never appears above them. */
+.sv-intro { color: #9a9aa4; font-size: 13px; line-height: 1.5; padding: 0 14px 10px; }
+.sv-tot { margin: 0 14px 12px; padding: 12px 14px; background: #1b1b1f; border: 1px solid #2c2c33; border-radius: 12px; }
+.sv-tot b { font-size: 20px; color: #eee; }
+.sv-tot-sub { font-size: 12px; color: #8a8a94; margin-top: 3px; }
+.sv-queued {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 14px 12px; padding: 10px 14px; font-size: 13px;
+  background: #16301f; border: 1px solid #2c5c3c; border-radius: 10px; color: #cfe8d8;
+}
+.sv-list { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 24px; }
+.sv-row { background: #1b1b1f; border: 1px solid #2c2c33; border-radius: 12px; overflow: hidden; }
+.sv-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  padding: 12px 14px; background: none; border: 0; color: inherit; text-align: left; cursor: pointer;
+}
+.sv-name { font-size: 14px; font-weight: 600; color: #eee; }
+.sv-nums { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #8a8a94; flex: none; }
+.sv-missing { color: #e0a94a; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sv-have, .sv-size { font-variant-numeric: tabular-nums; }
+.sv-caret { color: #6a6a74; }
+.sv-detail { border-top: 1px solid #2c2c33; padding: 10px 14px 14px; }
+.sv-chaps { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.sv-chap { display: grid; grid-template-columns: 66px 1fr 1fr; gap: 8px; font-size: 12px; align-items: baseline; }
+.sv-ch-no { color: #cfcfd6; font-variant-numeric: tabular-nums; }
+.sv-ch-have { color: #6f6f79; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-ch-miss { color: #e0a94a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-act { margin-top: 12px; }

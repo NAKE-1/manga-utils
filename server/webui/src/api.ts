@@ -36,6 +36,14 @@ export interface Chapter {
 
 export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[] }
 
+export interface ScanChapterPlan { number: number; name: string; have: string[]; missing: string[]; missingUrls: string[] }
+export interface ScanSeriesPlan {
+  sourceId: string; mangaUrl: string; title: string
+  numbers: number; versionsOnDisk: number; versionsAtSource: number
+  missing: number; estBytes: number; chapters: ScanChapterPlan[]
+}
+export interface ScanPlan { series: ScanSeriesPlan[]; totalMissing: number; totalEstBytes: number; scope: string }
+
 export interface MangaState {
   inLibrary: boolean; bookmarked: boolean; read: string[]; bookmarks: string[]
   /** chapterUrl -> how far through you got (0..1). Server-side so devices resume each other's reads. */
@@ -128,6 +136,14 @@ export const api = {
   },
   languages: () => getJson<string[]>('/api/languages'),
   library: () => getJson<LibraryEntry[]>('/api/library'),
+  /** Dry run: which scanlations of chapters you hold are missing. No title = whole-library report. */
+  scanverPlan: (title?: string) => getJson<ScanPlan>('/api/scanver/plan' + (title ? `?title=${encodeURIComponent(title)}` : '')),
+  /** Queue the missing versions for ONE series. The server refuses library-wide on purpose. */
+  scanverStart: async (title: string) => {
+    const r = await fetch(`/api/scanver/start?title=${encodeURIComponent(title)}`, { method: 'POST' })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not start')
+    return r.json() as Promise<{ queued: number }>
+  },
   updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }>),
   updateProgress: () => getJson<{ done: number; total: number; running: boolean }>('/api/library/update/progress'),
   // Resolve a pasted source URL (e.g. https://atsu.moe/manga/-tya) to an installed source's manga.
