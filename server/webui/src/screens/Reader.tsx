@@ -271,6 +271,9 @@ export function Reader() {
   useEffect(() => {
     if (progress <= 0.4) return // fire earlier than mid-chapter for more lead time before you flip
     if (!nextCh) { console.log('[reader] past preload point — waiting for chapter list to preload next'); return }
+    // Never warm a chapter we already know is broken: it is exactly the burst of doomed image requests
+    // the gate exists to avoid, and the reader would gate it anyway the moment you flipped to it.
+    if (nextCh.unavailable) { console.log(`[reader] not preloading "${nextCh.name}" — known broken (${nextCh.unavailable})`); return }
     if (prefetchedNext.current === nextCh.url) return
     prefetchedNext.current = nextCh.url
     api.pages(sourceId, nextCh.url, title, nextCh.name).then((r) => {
