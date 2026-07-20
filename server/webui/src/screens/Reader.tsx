@@ -421,14 +421,15 @@ export function Reader() {
             ? chapters.filter((c) => c.url !== cur.url && c.number > 0 && c.number === cur.number)
             : []
           return (
-            <div className="center-msg r-failed">
-              <div className="r-failed-title">{gated ? 'This chapter is known to be broken' : "Couldn't load this chapter"}</div>
-              <div className="r-failed-why">
+            <div className="r-failed-ov" role="dialog" aria-modal="true">
+              <div className="r-failed">
+                <div className="r-failed-title">{gated ? 'This chapter is known to be broken' : "Couldn't load this chapter"}</div>
+                <div className="r-failed-why">
                 {cur?.unavailable
                   ? cur.unavailable
                   : `${cur?.scanlator ? `${cur.scanlator}'s ` : ''}copy of this chapter didn't load.`}
               </div>
-              {others.length > 0 && (
+                {others.length > 0 && (
                 <>
                   <div className="r-failed-alt">Other scanlation{others.length === 1 ? '' : 's'} of this chapter:</div>
                   {others.map((o) => (
@@ -439,10 +440,11 @@ export function Reader() {
                   ))}
                 </>
               )}
-              {gated && (
+                {gated && (
                 <button className="btn r-failed-btn" onClick={() => setForce(true)}>Try loading it anyway</button>
               )}
-              <button className="btn r-failed-btn" onClick={() => nav(-1)}>Back to chapters</button>
+                <button className="btn r-failed-btn" onClick={() => nav(-1)}>Back to chapters</button>
+              </div>
             </div>
           )
         })()}
