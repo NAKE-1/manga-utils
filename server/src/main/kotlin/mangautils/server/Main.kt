@@ -1548,6 +1548,26 @@ fun Application.module() {
         get("/api/dev/stats") { call.respond(devStats()) }
 
         /**
+         * Dry run: which scanlations are missing, and roughly what fetching them would cost. Downloads
+         * nothing. Pass ?title= for the per-chapter breakdown of one series; omit it for the
+         * library-wide totals, which are there to be read rather than acted on.
+         */
+        get("/api/scanver/plan") {
+            val title = call.queryParam("title")
+            call.respond(withContext(Dispatchers.IO) { ScanVersions.plan(title) })
+        }
+
+        /** Queue the missing versions for ONE series. Requires an explicit title - never library-wide. */
+        post("/api/scanver/start") {
+            val title = call.queryParam("title") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing title"))
+            val queued = runCatching { withContext(Dispatchers.IO) { ScanVersions.start(title) } }
+            queued.fold(
+                onSuccess = { call.respond(mapOf("queued" to it)) },
+                onFailure = { call.respond(HttpStatusCode.InternalServerError, ErrorDto(it.message ?: "failed")) },
+            )
+        }
+
+        /**
          * Dev: what the app thinks each downloaded folder of a series actually is, plus what the source
          * currently offers. This is how the per-scanlator work gets checked by eye before anything
          * depends on it — a wrong identity shows up here rather than as odd behaviour weeks later.
