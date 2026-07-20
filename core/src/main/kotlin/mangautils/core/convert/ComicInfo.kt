@@ -16,6 +16,12 @@ data class ComicInfoData(
     val summary: String? = null,
     val pageCount: Int = 0,
     val web: String? = null,
+    /**
+     * The scanlation group this upload came from. Written as ComicInfo's standard `Translator`, so
+     * Komga/Kavita show it too, and read back as the identity of a downloaded folder — which upload
+     * is this? Folder names can't answer that reliably once they're sanitized and length-capped.
+     */
+    val scanlator: String? = null,
 )
 
 object ComicInfo {
@@ -37,6 +43,7 @@ object ComicInfo {
         tag("Summary", data.summary)
         if (data.pageCount > 0) tag("PageCount", data.pageCount.toString())
         tag("Web", data.web)
+        tag("Translator", data.scanlator)
         tag("Manga", "Yes")
         sb.append("</ComicInfo>").append('\n')
         return sb.toString()

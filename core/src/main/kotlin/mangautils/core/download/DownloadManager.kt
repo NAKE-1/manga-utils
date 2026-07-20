@@ -342,6 +342,7 @@ class DownloadManager(
             summary = details.description,
             pageCount = pageCount,
             web = chapter.url,
+            scanlator = runCatching { chapter.scanlator }.getOrNull()?.takeIf { it.isNotBlank() },
         )
 
     /** Decide whether to overwrite an existing chapter file (true) or skip it (false). */
