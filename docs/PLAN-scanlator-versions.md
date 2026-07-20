@@ -72,6 +72,61 @@ Chapter 9 [Team-Scans]           "Team/Scans" sanitized
 Chapter 9 [Team-Scans 88214]     two groups collide after sanitizing → +URL id
 ```
 
+| 7 | Primary version | **First in source order** — the row already shown at the top of a `CH. N` group. No new heuristic, and **no "primary" chip**; position is the marker. |
+| 8 | Preferred scanlator | **Deferred.** Worth having later as a per-series override, since the real preference is slicing style (tall strips vs short pages), which nothing can infer. |
+| 9 | Download fallback | **Next available version.** If a version fails or 404s, fall through to the next version of that chapter rather than failing the chapter. |
+
+---
+
+## Corrections from real data (P2 findings)
+
+Three things measured against the live library that change the design. Two of them correct claims I made
+earlier in this document.
+
+### 1. Page count says nothing about quality — my earlier claim was wrong
+
+I flagged that 27 of 96 downloaded chapters had "suspiciously few pages" (Gamma 3 median 10 vs Gamma 2
+median 117) and inferred they were stubs. **That was wrong.** Measured by total bytes:
+
+| Scanlator | median chapter | median pages | KB per image |
+|---|---|---|---|
+| Gamma | 6.3 MB | 11 | **577** |
+| Gamma 2 | 8.3 MB | 117 | **71** |
+| Gamma 3 | 6.4 MB | 10 | **645** |
+
+Chapter *size* is near-identical across groups; Gamma/Gamma 3 simply use tall strips where Gamma 2 slices
+into many short images. Same content, different slicing.
+
+**Consequence:** page count is dead as a "which version is better" signal, and so is byte size (6.3 vs
+8.3 MB is compression, not missing content). There is no reliable automatic quality signal — which is why
+primary is defined positionally (decision 7) and any real preference is left to the user (decision 8).
+
+This also reframes the feature: it isn't mainly "rescue the broken version", it's **keep both slicing
+styles** so you can read tall strips on a phone and short pages elsewhere.
+
+### 2. `(number, scanlator)` is NOT unique — the disambiguator is a normal path
+
+```
+Chapter 82  Gamma 3  ->  errQ/a1V14x  AND  errQ/6ikFHK
+Chapter 83  Gamma 3  ->  errQ/CE1gkv  AND  errQ/BVBZ7r
+```
+
+Two different uploads sharing a chapter number *and* a scanlator name. `Chapter 82 [Gamma 3]` would
+collide with itself, reintroducing the very bug this change exists to fix. The URL-id fallback was written
+here as a rare edge case for blank scanlators; it is neither rare nor hypothetical, and P3 must treat it as
+an ordinary branch: `Chapter 82 [Gamma 3 a1V14x]`.
+
+### 3. Display and storage currently disagree about which version is "the" one
+
+The chapter list sorts by **number only**, so within a `CH. N` group the order is whatever the source
+returned, and the top row is the source's first — `Gamma` for Chapter 1. But `resolveSelection` does
+`chapters.reversed()` before matching, so the collision-skip kept the *last* one and what is actually on
+disk is `Gamma 3`.
+
+Invisible today (only one version is stored, and the badge matches by name), but it becomes a real bug the
+moment versions are real. Decision 7 exists to make the downloader, the badge, the resume marker and the
+reader all agree on the same version.
+
 ---
 
 ## P0 results — map verified 2026-07-19
