@@ -1,192 +1,191 @@
-# Plan — Suwayomi-style per-scanlator chapter storage (keep multiple versions)
+# Plan — per-scanlator chapter versions (keep every upload)
 
-**Status:** planned, not started. Logged 2026-07-19.
+**Status:** designed, not started. Decisions locked 2026-07-19.
 
 ## Goal
-Stop silently discarding alternate uploads of the same chapter. Today a chapter folder is named
-`sanitize(chapter.name)` only, so two uploads called "Ch. 1" (different scanlator/URL) collide — the
-second is **skipped** (`"already exists"`) and never written. Adopt Suwayomi's model: put a discriminator
-(scanlator) in the folder name so every version coexists in its own folder as a real backup. Confirmed
-behaviour we're fixing: *The Black Leopard Family's Snow Leopard Baby* queued 126 entries, wrote **78**
-folders (one per number), silently dropped the 48 second-uploads; the detail page still shows all 126 as
-"downloaded" because the state check matches by **name**, not by version.
 
-Suwayomi scheme (reference): `downloads/{source}/{manga}/{scanlator}_{chapter}` (folder or `.cbz`) — the
-scanlator in the path is exactly what lets versions coexist. Tachiyomi/Mihon do NOT keep all (they filter
-to one), and historically had our identical collision bug (Mihon #1395).
+Stop silently discarding alternate uploads of the same chapter. A chapter folder is named
+`sanitize(chapter.name)` only, so two uploads called "Ch. 1" from different scanlators collide — the
+second is skipped (`"already exists"`) and never written.
+
+Confirmed case: *The Black Leopard Family's Snow Leopard Baby* queued 126 entries and wrote **78**
+folders, silently dropping 48 second-uploads, while the detail page still showed all 126 as downloaded
+because the check matches by **name**, not by version.
+
+You want every version kept deliberately — a second scanlator's copy is the fallback when one has bad
+quality, missing pages, or a broken upload.
 
 ---
 
-## Current mechanics (what the change touches)
-All in `core/.../download/DownloadManager.kt` unless noted:
-- **`destFor` (l.386)** — `base.resolve(sanitize(chapter.name))` (+`.cbz`). The ONLY place the folder name
-  is formed. This is the core edit.
-- **Skip on collision (l.185)** — `"already exists: $dest"` fires when `destFor` already exists.
-- **`isDownloaded(title, chapterName)` (l.427)** — name-only existence check. Used by the detail page
-  (`Main.kt:601`) and the reader-state endpoint (`Main.kt:940`).
-- **`downloadedChapterNames(title)` (l.451)** — set of folder base-names. Used by **mass-download**
-  (`Main.kt:1172/1192`) to compute "missing" via `sanitize(it.name) in onDisk`.
-- **`DownloadStore`** — `listChapters/listSeries/incomplete/bytes/cbz` iterate folders; each folder = one
-  "chapter" to the store (Downloads-manager, broken-download detection).
-- **`DownloadQueue.Chapter` = `{url, name}`** (scanlator dropped before download). `SChapter` DOES carry
-  `scanlator`; the queue is where it's lost.
-- **Reader:** appears to fetch pages **live** from the source — no read-from-downloads path found
-  (`downloadsDir` only appears in config + isDownloaded). *Verify: offline reading is a TODO, not built.*
-  → If true, the reader is NOT in the blast radius (big simplification).
+## Decisions locked
+
+| # | Decision | Answer |
+|---|---|---|
+| 1 | What counts as "missing" | **Every (chapter, scanlator) pair not on disk.** Alternates are downloaded, not just numbers with zero copies. |
+| 2 | Delete semantics | **Delete removes every version of that chapter.** |
+| 3 | Existing folders | **Never renamed or moved.** A name-only folder is treated as a version and matched by content, not by name. |
+| 4 | Naming format | Still open — see below. Your note ("*a decent chunk on atsu name themselves alpha, beta, delta, alpha 1, alpha 2*") is the real constraint and is designed for regardless of format. |
+
+### Still open
+
+- **4a. Folder format:** `Chapter 1 [alpha 2]` (readable-first) vs `alpha 2_Chapter 1` (Suwayomi-identical).
+  Recommendation stands at readable-first: versions of a chapter sort together, and the Suwayomi form
+  buys interop we don't otherwise use. **Not blocking** — see "identity" below, which makes the folder
+  name cosmetic.
+- **4b. Do *background* library updates grab all versions too,** or only new chapters' primary version?
+  Decision 1 covers explicit downloads. Auto-download-new running "all versions" silently doubles
+  background traffic on every update. Recommendation: **new-chapter auto-download stays primary-only**;
+  alternates come from an explicit action. Flagged because it is easy to get wrong by omission.
 
 ---
 
 ## Design
-### Folder naming
-- When a chapter's number has **one** upload → keep name-only (`Ch. 1`) — no change for the common case,
-  and it keeps existing libraries readable.
-- When a **second** upload of the same sanitized name arrives → give it a discriminated folder.
-  Discriminator priority:
-  1. **scanlator** if present and distinct → `Ch. 1 [GroupB]`
-  2. else a stable **URL discriminator** — the numeric id in the URL (e.g. `…/3945015-chapter-1-en` →
-     `Ch. 1 [3945015]`) or a short hash. Only for sources that return a **blank** scanlator.
-- **Confirmed:** MangaFire *does* give a scanlator — Black Leopard's two "Ch. 1"s are `official` and
-  `unofficial` (152/152 chapters have one). So the discriminator is almost always a real name
-  (`Ch. 1 [official]` / `Ch. 1 [unofficial]`); the URL fallback is the rare no-scanlator case.
-- Format: `"{name} [{disc}]"` (keep the readable name first; matches the CBZ-naming feature-request
-  preference over Suwayomi's `scanlator_` prefix, and sorts better). The `[disc]` goes through
-  `sanitize` too, and the name is capped short enough that the discriminator is never truncated off
-  (else two versions could collide again).
 
-### Thread the scanlator/URL through
-- `DownloadQueue.Chapter` gains `scanlator: String = ""` (it already has `url`). Populate it at every
-  enqueue site from the source chapter: mass-download (`Main.kt:1196`), migration (`MigrationJob`),
-  auto-download-new (`UpdateScheduler`), manual enqueue.
-- When building the `SChapter` for download, set `scanlator` + keep `url` so `destFor` can discriminate.
-- **ComicInfo already stores the source URL** (`web = chapter.url`, l.344) — so a folder already knows
-  which upload it holds; we can read it back to map folder↔URL for state/repair.
+### Identity lives in ComicInfo, not in the folder name
+
+The single most important structural decision, and a change from the earlier draft.
+
+Arbitrary scanlator names (`alpha 2`, `Δelta`, `Team/Scans`, blank) make folder names unreliable as
+identity: they need sanitizing, they can collide after sanitizing, they get truncated by path limits,
+and `[` `]` can appear inside a scanlator name. **So nothing ever parses identity back out of a folder
+name.**
+
+- `ComicInfo.xml` already stores `web = chapter.url`, a unique per-upload fingerprint.
+- We additionally write the **scanlator** into ComicInfo, so new folders are self-identifying.
+- A folder's identity = `(chapterUrl, scanlator, number)` read from its ComicInfo.
+- The folder name is **cosmetic** — for you browsing the filesystem. Renaming a folder by hand must not
+  break anything, and won't.
+
+This also makes decision 4a genuinely low-stakes and reversible.
+
+### Folder naming (cosmetic layer)
+
+- One upload for a number → unchanged: `Chapter 1`. The overwhelmingly common case stays identical, and
+  existing libraries keep working.
+- A second upload arrives → `Chapter 1 [<disc>]`.
+- Discriminator, in priority order:
+  1. **scanlator**, sanitized: illegal path chars stripped, whitespace collapsed, `[`/`]` removed,
+     **capped at 32 chars**.
+  2. If blank, or if it sanitizes to the same string as an existing sibling's, append/fall back to a
+     **stable short id from the chapter URL** (the numeric id where present, else a 6-char hash).
+- **Windows path length is a real constraint.** `dataDir + manga title + chapter name + [disc] + page
+  file` must stay under the limit. The chapter-name portion gets capped so the discriminator can never
+  be truncated off — if it were, two versions could collide again, which is the exact bug we're fixing.
 
 ### Version-aware existence
-- `isDownloaded` gains an overload keyed by the **chapter's url/scanlator**, not just name: "is *this*
-  upload on disk?" = does its discriminated folder (or the name-only folder whose ComicInfo url matches)
-  exist. Keep the old name-only overload for "do I have *any* copy of this number".
-- `downloadedChapterNames` → split into two ideas the callers need:
-  - `downloadedNumbers(title)` (unique chapter numbers present) — for the "do I have this chapter" badge.
-  - `downloadedUrls(title)` (from ComicInfo) — for per-version checks.
 
-### Identify what you already have (ComicInfo fingerprint) — "have one, get the next"
-Every downloaded chapter's `ComicInfo.xml` records its source URL (`web = chapter.url`, l.344). That's the
-fingerprint for "which version is this folder?", so we never re-download or guess:
-1. Read each existing folder's ComicInfo → its URL (old `Ch. 1/` → `…/8178166-chapter-1-en`).
-2. Map URL → scanlator via the source chapter list (`8178166 → official`) → the folder **is** the official
-   version.
-3. **Present set** = every `(number, scanlator)` we can fingerprint from disk.
-4. **Missing** = the source's `(number, scanlator)` list − present → download those into `[scanlator]`
-   folders. So "I have `official` → grab `unofficial`" falls straight out.
-- **Going forward**, also write the scanlator *into* ComicInfo (dedicated field), so new folders
-  self-identify without the source lookup; legacy folders fall back to URL→list.
-- **No renaming:** existing name-only folders stay as the "primary"; only the *new* version gets the
-  `[scanlator]` suffix — nothing you already have is moved or risked.
-- **Edge:** a folder whose ComicInfo has no URL (ancient) or whose URL the source later dropped → can't
-  map; safe fallback = treat as "one version present, unknown which" and **don't** re-pull that number
-  (never duplicate what you have). Non-issue for anything downloaded with the current code.
+Today `isDownloaded(title, chapterName)` answers "is there a folder with this name". It needs to answer
+two different questions, because different callers want different things:
 
----
+- **`hasAnyVersion(title, number)`** — "do I have this chapter at all?" → drives the badge/count that
+  should not inflate.
+- **`hasVersion(title, chapterUrl)`** — "do I have *this specific upload*?" → drives the missing
+  calculation and per-row state.
 
-## What it AFFECTS / could BREAK  ← the fragile core
-1. **Mass-download "missing" calc (`Main.kt:1172/1192`)** — matches `sanitize(it.name) in onDisk`. Once
-   folders are `Ch. 1 [GroupB]`, that name match **fails** → every chapter reads as missing → it would
-   **re-download the whole library**. MUST update to match by number (already groups by number) against
-   `downloadedNumbers`, and decide "missing" semantics (below). **Highest-risk breakage.**
-2. **Detail-page badge (`Main.kt:601`) + reader-state (`Main.kt:940`)** — `isDownloaded(title, name)` by
-   name. With per-version folders it must check the *specific* upload's folder, or every version of a
-   number lights up "downloaded" once any one is grabbed (today's illusion). Decide per-row semantics.
-3. **`DownloadStore` counts** — a series' "chapter count" now includes alternate versions; the
-   Downloads-manager and unique-count logic (the `467fab8` "unique chapters" fix) must count **numbers**,
-   not folders, or the totals inflate again (e.g. 126 instead of 78).
-4. **Broken-download / incomplete detection** — iterates folders; still works per-folder, but an
-   incomplete *alternate* version now shows as its own broken entry.
-5. **Delete (`deleteChapter(title, name)` by name)** — ambiguous with multiple versions. Decide: delete
-   one version (needs url/disc) vs delete all versions of a number.
-6. **Migration re-download & delete+redownload** — will now write *all* versions into separate folders
-   (the desired behaviour) and the delete-old step must remove per-version.
-7. **Existing on-disk downloads (all name-only, e.g. `Ch. 1`)** — after the change the exists-check must
-   still recognise old-scheme folders, or it re-downloads everything you already have. **Backward compat:
-   treat a name-only folder as "version 1" and match it by number; never rename existing folders.**
-8. **Backup / restore & DYNO export** — copies folders; new names are fine, but old backups carry old
-   names → the import/match must tolerate both schemes (same compat as #7).
-9. **Reader** — *not affected if offline reading isn't built.* If/when offline reading lands, it must map
-   chapter(url) → the right version folder (via ComicInfo url), and pick a **primary** per number.
+Backward compatibility: a name-only folder with no scanlator in its ComicInfo is matched by its
+`web` URL. If it has no URL either (ancient), it counts as "one unidentifiable version present" and that
+number is never re-pulled — we never risk duplicating something you already have.
+
+### Reading identity without re-reading everything
+
+`hasVersion` needs each folder's ComicInfo, and the detail page asks per chapter row. Reading hundreds
+of small XML files per page load is fine once and wasteful repeatedly.
+
+Start with an **in-memory cache per manga directory, invalidated on the directory's mtime** — no new
+files, no new format, and correct across external changes. Only if that measures slow do we add a
+persisted per-manga index. `ponytail:` documented so the upgrade path is obvious.
+
+### The three download flows, kept distinct
+
+They currently blur together, and decision 1 affects them differently:
+
+| Flow | Behaviour |
+|---|---|
+| **Mass download / download missing** (explicit) | All versions — decision 1. |
+| **Fill alternates** (new job, below) | All versions, and the safe way to do the big first pass. |
+| **Auto-download new chapters** (background) | Primary only — pending decision 4b. |
 
 ---
 
-## What it IMPROVES
-- Alternate uploads are **actually stored** as backups (the stated goal) instead of silently skipped.
-- No more discarding a possibly **more-complete** version (the "what if a diff Ch. 1 has more pages"
-  case) — you keep both; page count picks the reader default, not an irreversible guess.
-- **Matches Suwayomi** → cleaner interop for export/DYNO/import and a proven, documented scheme.
-- Detail-page counts stop lying once state is version-aware (fixes the confusing 126/152).
-- Foundation for a later reader "switch version / scanlator" control.
+## What this breaks — the fragile core
+
+Ordered by risk. The earlier draft's line references are from a previous session and **must be
+re-verified before editing** (see P0).
+
+1. **Mass-download "missing" calculation** — matches `sanitize(it.name) in onDisk`. Once folders carry a
+   discriminator this match fails and *everything* reads as missing → re-downloads the library. Must move
+   to identity-based matching. **Highest risk in the whole plan.**
+2. **The upgrade shock.** Decision 1 means that after this ships, the first library-wide "download
+   missing" legitimately wants every alternate you never had — potentially thousands of chapters and a
+   large fraction of your library size again. This is *correct behaviour* and still needs to not
+   ambush you: dry-run is mandatory, it reports counts and estimated size before queuing, and the
+   recommended path is one manga first.
+3. **Detail-page badge + reader state** — `isDownloaded` by name. Must become per-version, or every
+   version of a number lights up as downloaded once any one is fetched (today's illusion).
+4. **`DownloadStore` counts** — a series' chapter count must count **numbers**, not folders, or totals
+   inflate again (126 instead of 78) — re-breaking the `467fab8` "unique chapters" fix.
+5. **Delete** — becomes "all versions of this number" (decision 2); must enumerate versions rather than
+   delete one path.
+6. **Broken-download detection** — still per-folder, but an incomplete *alternate* now shows as its own
+   broken entry. Ensure repair targets the right folder.
+7. **Backup / restore / DYNO export** — copies folders, so new names are fine, but old backups carry
+   old names; import must tolerate both, same compatibility rule as decision 3.
+8. **Reader** — believed unaffected because offline reading isn't built (reader fetches live).
+   **Verify in P0**; if offline reading exists, it must pick a primary version per number.
 
 ---
 
-## Manual control — verify on ONE title before the whole library
-A dedicated, **settings-openable** screen — same shape as the Relocate screen: a live, **verbose log** you
-watch, mirrored to the server log. The whole point is to *prove it on one manga first*, never turn it
-loose on the whole library blind.
-- **Scope:** pick **a single manga** (test) *or* the whole library.
-- **Dry-run (scan only):** reports what it *would* do, per chapter — "Ch. 1: have `[official]`, missing
-  `[unofficial]` → would download" — **without downloading anything.** This is the verify step.
-- **Run:** same, but actually queues the missing versions.
-- **Verbose log (in-app + server log):** every step visible —
-  `scanning 78 folders… Ch. 1 = official (ComicInfo url 8178166)… source has official+unofficial…
-  missing: unofficial… queued 'Ch. 1 [unofficial]'…` — so you can confirm the logic before trusting it.
-- **Intended workflow:** dry-run one manga → read the log → run it on that one → confirm the
-  `[unofficial]` folders appear and nothing else changed → *then* dry-run + run library-wide.
-- Endpoints mirror the relocate/health jobs: `POST /api/scanver/plan` (dry-run; per-manga or all),
-  `POST /api/scanver/start`, `GET /api/scanver/progress` (phase + counters + step log). Reuse the
-  Relocate screen's log/progress UI pattern.
+## Build order
 
----
+**P0 — Re-verify the map (do not skip).** The line references in this document come from an earlier
+session and the installer has changed since. Re-confirm: `destFor`, the skip-on-collision branch,
+`isDownloaded`/`downloadedChapterNames` call sites, the mass-download missing calculation, `DownloadStore`
+counting, delete, and whether the reader reads from disk. Correct this document, *then* write code.
 
-## Decisions to lock (need your call)
-1. **Download all versions by default, or one-per-number unless asked?** Suwayomi keeps whatever you
-   queue. If "all", mass-download "missing" means *"I'm missing a number entirely"* (have ≥1 version =
-   not missing) — otherwise you'd perpetually re-pull second versions. Recommended: **"missing" = number
-   has zero versions**; a separate opt-in "grab all versions" for the backup case.
-2. **Naming format** — `Ch. 1 [GroupB]` (readable-first, recommended) vs Suwayomi's `GroupB_Ch. 1`.
-3. **Discriminator when scanlator IS blank** (rare — *not* MangaFire, which gives official/unofficial) —
-   URL id (`[3945015]`) vs short hash.
-4. **Primary version** (for badge / future reading) — most pages / first grabbed / preferred scanlator.
-5. **Delete semantics** — per-version or all-versions-of-a-number.
-6. **Back-compat** — leave existing name-only folders as-is (recommended) vs one-time rename to the new
-   scheme.
+**P1 — Plumbing, no behaviour change.** `DownloadQueue.Chapter` gains `scanlator`; populate it at every
+enqueue site (mass-download, migration, auto-download-new, manual). Write scanlator into ComicInfo.
+Ships invisibly and de-risks everything after it.
 
----
+**P2 — Identity layer.** Read `(url, scanlator, number)` from ComicInfo with the mtime cache. Implement
+`hasAnyVersion` / `hasVersion` alongside the existing checks, still unused. Testable in isolation.
 
-## Phasing (build order)
-- **P1 — Plumbing (no behaviour change):** add `scanlator` to `DownloadQueue.Chapter`, populate at all
-  enqueue sites, set it on the `SChapter` for download. Ships invisibly; de-risks the rest.
-- **P2 — Version-aware storage:** `destFor` discrimination + `shouldReplaceExisting`/skip keyed on the
-  disc (write the second upload instead of skipping) + **backward-compat matching** for old name-only
-  folders. Now both versions land on disk.
-- **P3 — State correctness:** update mass-download "missing" (match by number), detail/reader badges
-  (per-version), `DownloadStore` counting (numbers not folders), delete semantics. **This is where the
-  breakage lives — most of the testing budget goes here.**
-- **P4 — Manual rescan/fill control (the verification vehicle):** the settings-openable screen above —
-  **dry-run + verbose log, single-manga scope first**, then library-wide. Build this alongside P2/P3 so
-  you can *prove the whole thing on one title* before it ever touches the library. This is how you sign
-  off P2/P3, not a nice-to-have.
-- **P5 — (optional, later)** reader primary-pick + a "switch version" control — only once offline
-  reading from downloads exists.
+**P3 — Version-aware storage.** `destFor` discrimination + replace the skip-on-collision with "write the
+alternate". Both versions now land on disk. Existing folders untouched.
+
+**P4 — State correctness.** Switch the callers: missing calculation, badges, counts, delete. **This is
+where the breakage lives and where most of the testing goes.**
+
+**P5 — The verification vehicle: a scan/fill screen.** Same shape as Relocate — pick **one manga** or the
+whole library, **dry-run** that downloads nothing and logs per chapter ("Ch. 1: have `[official]`,
+missing `[alpha 2]` → would download"), then a real run. Endpoints mirror the relocate job
+(`plan` / `start` / `progress`). Build alongside P3/P4 — this is how P3/P4 get signed off, not a
+nice-to-have afterwards.
+
+**P6 — optional, later.** Reader "switch version" control, once offline reading exists.
 
 ---
 
 ## Verification
-- **Dry-run one manga first** (Black Leopard): the log lists, per chapter, the version you have (from
-  ComicInfo) and the one it *would* fetch — and downloads **nothing**. Read it, sanity-check the logic.
-- Then **run that one manga**: `Ch. 1 [unofficial]` (etc.) appear as their own complete folders; your
-  original `Ch. 1` is untouched; nothing else changes. Only *then* run library-wide.
-- Download a series with two same-name uploads → **two folders** on disk (`Ch. 1 [official]` +
-  `Ch. 1 [unofficial]`), both complete; nothing skipped.
-- **Existing** name-only downloads are still recognised → no mass re-download after upgrading.
-- **Mass-download "missing"** shows the right number (e.g. 78/78 for a fully-downloaded series, not
-  126/152) and only queues genuinely-absent numbers.
-- Detail page marks the specific downloaded version(s) correctly, not "all versions downloaded".
-- Delete removes the intended version(s); Downloads-manager totals count numbers, not inflated folders.
-- Backup → restore on a clean data dir preserves all versions and still matches.
+
+1. **Dry-run one manga** (Black Leopard) — log lists per chapter what's on disk and what it *would*
+   fetch, downloads nothing. Read it before trusting it.
+2. **Run that one manga** — `Chapter 1 [unofficial]` appears as its own complete folder, the original
+   `Chapter 1` is byte-identical and untouched, nothing else changes.
+3. **Existing downloads still recognised** — no mass re-download of things you already have. Check
+   against a series with scanlators named unhelpfully (atsu's `alpha 1` / `alpha 2`).
+4. **Counts stay honest** — detail page shows 78/78 for a fully-downloaded series, not 126/152.
+5. **Delete** removes all versions of a number; Downloads manager totals count numbers, not folders.
+6. **Backup → restore** on a clean data dir preserves every version and still matches.
+7. Only after all of the above: dry-run library-wide, read the totals, then run.
+
+---
+
+## Risks and rollback
+
+- **Rollback is cheap by construction.** Nothing existing is renamed, moved, or deleted, so reverting the
+  code leaves a library that still works — alternates simply become inert extra folders.
+- **The dangerous direction is the missing calculation**, not the storage. A storage bug writes an extra
+  folder; a missing-calculation bug re-downloads a 71 GB library. P4 is gated behind P5's dry-run for
+  exactly this reason.
+- **Path length on Windows** is the most likely functional surprise; the Linux deploy won't show it, so
+  test on Windows with a long manga title and a long scanlator name.
