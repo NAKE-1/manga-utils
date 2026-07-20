@@ -120,10 +120,14 @@ export function Reader() {
 
   const [count, setCount] = useState<number | null>(null)
   const [force, setForce] = useState(false) // you chose to try a known-broken chapter anyway
-  // Preload stays off for the first 3s of a chapter. Right after a switch the container has no real
-  // height yet, so scroll/height reads as a large fraction and the 40% gate trips instantly - which is
-  // why preloads were firing in the same millisecond as the READ they were supposed to follow.
-  const [settled, setSettled] = useState(false)
+  // Which chapter has been open long enough to trust its progress reading - NOT a boolean. Right after a
+  // switch the container has no real height, so scroll/height reads as a large fraction and the 40% gate
+  // trips instantly. A boolean could not survive the render race that caused: setSettled(false) and
+  // setProgress(0) do not apply until the next render, so the preload effect in that same commit still
+  // saw settled=true and the PREVIOUS chapter's progress, and fired 366ms into a fresh chapter. Holding
+  // the URL means a stale value can never read as settled for the chapter now on screen.
+  const [settledFor, setSettledFor] = useState('')
+  const prefetchedNext = useRef('') // the chapter we have already warmed; cleared on every chapter change
   // Windowing: only mount an <img> for pages up to here (0-based). Grows as you scroll, so opening a
   // chapter fires ~preload requests — not all 68 at once (which would pin every browser connection
   // and freeze the app, esp. on a down source). Reset per chapter.
@@ -239,9 +243,10 @@ export function Reader() {
   useEffect(() => {
     const key = sourceId + '|' + chapter
     pendingRestore.current = loadPositions()[key] ?? null // resume point for this chapter, if any
-    setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false); setForce(false); setSettled(false)
+    setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false); setForce(false); setSettledFor('')
     window.scrollTo(0, 0)
-    const settle = setTimeout(() => setSettled(true), 3000)
+    prefetchedNext.current = '' // stale from the chapter we just left; leaving it set blocks a real preload
+    const settle = setTimeout(() => setSettledFor(chapter), 3000)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
@@ -275,9 +280,8 @@ export function Reader() {
   // as BOTH hold (progress>0.5 AND the chapter list has loaded); the effect re-runs when nextCh appears,
   // so a fast scroll that reaches 50% before the chapter list finishes still triggers it once ready.
   // Requests carry X-Preload so the server logs them even for cached/downloaded pages.
-  const prefetchedNext = useRef('')
   useEffect(() => {
-    if (!settled) return // see `settled`: the first 3s of a chapter give a meaningless progress reading
+    if (settledFor !== chapter) return // see `settledFor`: progress is meaningless for the first 3s
     if (progress <= 0.4) return // fire earlier than mid-chapter for more lead time before you flip
     if (!nextCh) { console.log('[reader] past preload point — waiting for chapter list to preload next'); return }
     // Never warm a chapter we already know is broken: it is exactly the burst of doomed image requests
@@ -304,7 +308,7 @@ export function Reader() {
       // can tell a warm-up from a real read - and it must be able to, to refuse warming a broken chapter.
       for (let i = 0; i < n; i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) + '&pre=1' }
     }).catch(() => { prefetchedNext.current = '' })
-  }, [progress, nextCh, sourceId, title, settled])
+  }, [progress, nextCh, sourceId, title, settledFor, chapter])
 
   function openChapter(c?: Chapter) {
     if (!c) return
