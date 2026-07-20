@@ -179,7 +179,7 @@ export const api = {
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&title=${encodeURIComponent(title)}&name=${encodeURIComponent(name)}${thumb ? `&thumb=${encodeURIComponent(thumb)}` : ''}`, { method: 'POST' }),
   /** Where you stopped in a chapter (0..1). Sent on leaving it; the server drops ~0 and ~1. */
   setPosition: (id: string, manga: string, chapter: string, frac: number) =>
-    fetch(`/api/position?id=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&frac=${frac}`, { method: 'POST' }),
+    fetch(`/api/position?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&frac=${frac}`, { method: 'POST' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>
