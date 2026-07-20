@@ -23,6 +23,7 @@ export default function ScanVersions() {
   const [detail, setDetail] = useState<ScanSeriesPlan | null>(null)
   const [busy, setBusy] = useState('')
   const [queued, setQueued] = useState<{ title: string; n: number } | null>(null)
+  const [started, setStarted] = useState<Record<string, number>>({}) // title -> versions queued, sticky
 
   useEffect(() => {
     api.scanverPlan().then(setPlan).catch((e) => setErr(String(e?.message || e)))
@@ -40,6 +41,7 @@ export default function ScanVersions() {
     try {
       const r = await api.scanverStart(title)
       setQueued({ title, n: r.queued })
+      setStarted((m) => ({ ...m, [title]: r.queued }))
       setPlan(await api.scanverPlan().catch(() => plan))
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
   }
@@ -47,7 +49,9 @@ export default function ScanVersions() {
   if (err) return <div className="center-msg">{err}</div>
   if (!plan) return <div className="spinner" />
 
-  const series = plan.series.filter((s) => s.missing > 0)
+  const series = plan.series
+    .filter((s) => s.missing > 0)
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }))
 
   return (
     <>
@@ -98,9 +102,16 @@ export default function ScanVersions() {
                       ))}
                     </div>
                     <div className="sv-act">
-                      <button className="btn primary" disabled={!!busy} onClick={() => start(s.title)}>
-                        {busy === s.title ? 'Queuing…' : `Download ${s.missing} missing version${s.missing === 1 ? '' : 's'} (~${fmtBytes(s.estBytes)})`}
-                      </button>
+                      {started[s.title] ? (
+                        <div className="sv-started">
+                          ✓ Queued {started[s.title]} version{started[s.title] === 1 ? '' : 's'} — downloading now.
+                          <button className="dl-link" onClick={() => nav('/downloads')}>View →</button>
+                        </div>
+                      ) : (
+                        <button className="btn primary" disabled={!!busy} onClick={() => start(s.title)}>
+                          {busy === s.title ? 'Queuing…' : `Download ${s.missing} missing version${s.missing === 1 ? '' : 's'} (~${fmtBytes(s.estBytes)})`}
+                        </button>
+                      )}
                     </div>
                   </>
                 )}

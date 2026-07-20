@@ -1097,3 +1097,10 @@ main > * { animation: fade-up .22s ease backwards; }
 .sv-ch-have { color: #6f6f79; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sv-ch-miss { color: #e0a94a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sv-act { margin-top: 12px; }
+
+/* A series whose fill you already kicked off - the button does not revert to "Download", it stays done. */
+.sv-started {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 13px; color: #cfe8d8; padding: 8px 12px;
+  background: #16301f; border: 1px solid #2c5c3c; border-radius: 8px;
+}
