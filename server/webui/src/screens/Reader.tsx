@@ -291,7 +291,9 @@ export function Reader() {
       fetch(pageUrl(sourceId, nextCh.url, 0, title, nextCh.name), { headers: { 'X-Preload': '1' } }).catch(() => {})
       // Warm the browser IMAGE cache via new Image() — the same method the info page uses for its
       // instant first-chapter open — so the pages are ready to paint on arrival, not just cached bytes.
-      for (let i = 0; i < n; i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) }
+      // ?pre=1 rather than a header: new Image() cannot set headers, so this is the only way the server
+      // can tell a warm-up from a real read - and it must be able to, to refuse warming a broken chapter.
+      for (let i = 0; i < n; i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) + '&pre=1' }
     }).catch(() => { prefetchedNext.current = '' })
   }, [progress, nextCh, sourceId, title])
 

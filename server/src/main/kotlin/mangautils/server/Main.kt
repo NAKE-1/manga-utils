@@ -1863,6 +1863,18 @@ fun Application.module() {
                 log.info("PRELOAD  SKIPPED {} ({}) - {}", name ?: chapter, call.queryParam("scan") ?: "unknown scan", why)
                 return@get call.respond(HttpStatusCode.NoContent)
             }
+            // Refuse to warm a chapter we know is broken. The reader also skips these, but that depends on
+            // the browser running current JS - a cached bundle would still preload it, and this endpoint is
+            // the only place that always knows. A preload is never something you asked for directly, so
+            // dropping it costs nothing; an explicit read still goes through (that is the Force path).
+            val isPreload = call.request.headers["X-Preload"] != null || call.queryParam("pre") == "1"
+            if (isPreload && UnavailableChapters.isUnavailable(chapter)) {
+                if (index == 0) {
+                    log.info("PRELOAD  SKIPPED {} ({}) - {}", name ?: chapter, call.queryParam("scan") ?: "unknown scan",
+                        UnavailableChapters.list().firstOrNull { it.url == chapter }?.reason ?: "known broken")
+                }
+                return@get call.respond(HttpStatusCode.NoContent)
+            }
             if (call.request.headers["X-Preload"] != null && index == 0) log.info("PRELOAD  next chapter {}", chapter)
             var fromSource = false
             val bytes = withContext(mangautils.core.async.Pools.image) {
