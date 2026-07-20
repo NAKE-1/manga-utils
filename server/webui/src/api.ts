@@ -34,11 +34,11 @@ export interface Chapter {
   unavailable?: string | null
 }
 
-export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[] }
+export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[]; newVersions?: string[] }
 
 export interface ScanChapterPlan { number: number; name: string; have: string[]; missing: string[]; missingUrls: string[] }
 export interface ScanSeriesPlan {
-  sourceId: string; mangaUrl: string; title: string
+  sourceId: string; sourceName: string; mangaUrl: string; title: string
   numbers: number; versionsOnDisk: number; versionsAtSource: number
   missing: number; estBytes: number; chapters: ScanChapterPlan[]
 }

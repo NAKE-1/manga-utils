@@ -36,6 +36,7 @@ object ScanVersions {
     @Serializable
     data class SeriesPlan(
         val sourceId: Long,
+        val sourceName: String,
         val mangaUrl: String,
         val title: String,
         val numbers: Int,
@@ -96,6 +97,7 @@ object ScanVersions {
         val missingCount = chapters.sumOf { it.missing.size }
         return SeriesPlan(
             sourceId = entry.sourceId,
+            sourceName = sourceName(entry.sourceId),
             mangaUrl = entry.mangaUrl,
             title = entry.title,
             numbers = byNumber.size,
@@ -113,6 +115,10 @@ object ScanVersions {
      * walking every page of a 70 GB library to produce an estimate would cost more than the estimate
      * is worth. ponytail: sample of 5; widen it if the numbers ever look silly.
      */
+    /** Human name of the source (atsu, EZManga, MangaFire...) rather than a numeric id. */
+    private fun sourceName(id: Long): String =
+        runCatching { mangautils.core.source.SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
+
     private fun averageChapterBytes(title: String): Long =
         runCatching {
             val dir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))

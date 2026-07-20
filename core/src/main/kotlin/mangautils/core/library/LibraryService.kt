@@ -17,6 +17,8 @@ import org.slf4j.LoggerFactory
 data class UpdateResult(
     val entry: LibraryEntry,
     val newChapters: List<ChapterRef>,
+    /** New scans of numbers already tracked. Downloaded like the rest, but not counted as new chapters. */
+    val newVersions: List<ChapterRef> = emptyList(),
 )
 
 /** Follow/unfollow series and detect new chapters (the tracker core). */
@@ -127,20 +129,31 @@ object LibraryService {
                     return UpdateResult(entry, emptyList())
                 }
         val knownUrls = entry.knownChapters.map { it.url }.toSet()
-        val newChapters = current.filter { it.url !in knownUrls }.map { it.toRef() }
+        // Group by chapter number so a new URL can be told apart: a number we've never had (a real new
+        // chapter) vs another scan of one we already track. Same number-keying the download counts use.
+        val knownNumbers = entry.knownChapters.map { it.number }.toSet()
+        val fresh = current.filter { it.url !in knownUrls }.map { it.toRef() }
+        val newChapters = fresh.filter { it.number !in knownNumbers } // -> "!" badge + count
+        val newVersions = fresh.filter { it.number in knownNumbers }  // another scan; list marker only
         entry.knownChapters = current.map { it.toRef() }.toMutableList()
-        // Accumulate unseen new-chapter urls for the badge (only after the first snapshot exists).
-        if (knownUrls.isNotEmpty()) newChapters.forEach { if (it.url !in entry.newChapters) entry.newChapters.add(it.url) }
+        // Accumulate unseen urls (only after the first snapshot exists, so a first sync isn't all "new").
+        if (knownUrls.isNotEmpty()) {
+            newChapters.forEach { if (it.url !in entry.newChapters) entry.newChapters.add(it.url) }
+            newVersions.forEach { if (it.url !in entry.newVersions) entry.newVersions.add(it.url) }
+        }
         entry.lastCheckedAt = System.currentTimeMillis()
         LibraryStore.upsert(entry)
-        return UpdateResult(entry, newChapters)
+        // Both are returned so auto-download still pulls every version - the split is for the badge, not
+        // for what gets fetched.
+        return UpdateResult(entry, newChapters, newVersions)
     }
 
     /** Clear the "new chapters" flag for a series (called when the user opens it). */
     fun markSeen(sourceId: Long, mangaUrl: String) {
         val entry = LibraryStore.find(sourceId, mangaUrl) ?: return
-        if (entry.newChapters.isNotEmpty()) {
+        if (entry.newChapters.isNotEmpty() || entry.newVersions.isNotEmpty()) {
             entry.newChapters = mutableListOf()
+            entry.newVersions = mutableListOf()
             LibraryStore.upsert(entry)
         }
     }
@@ -148,7 +161,8 @@ object LibraryService {
     /** Drop one chapter from the "new" set (called when it's read) — the badge clears once none remain. */
     fun markChapterSeen(sourceId: Long, mangaUrl: String, chapterUrl: String) {
         val entry = LibraryStore.find(sourceId, mangaUrl) ?: return
-        if (entry.newChapters.remove(chapterUrl)) LibraryStore.upsert(entry)
+        // A read chapter clears from whichever list held it - new-number or new-scan.
+        if (entry.newChapters.remove(chapterUrl) or entry.newVersions.remove(chapterUrl)) LibraryStore.upsert(entry)
     }
 
     private fun SChapter.toRef() =

@@ -209,7 +209,7 @@ private data class ChapterDto(
 )
 
 @Serializable
-private data class DetailDto(val manga: MangaDto, val chapters: List<ChapterDto>, val newChapters: List<String> = emptyList())
+private data class DetailDto(val manga: MangaDto, val chapters: List<ChapterDto>, val newChapters: List<String> = emptyList(), val newVersions: List<String> = emptyList())
 
 @Serializable
 private data class LibraryDto(
@@ -669,6 +669,7 @@ private fun cachedDetail(e: LibraryEntry): DetailDto {
         )
     },
         e.newChapters.toList(),
+        e.newVersions.toList(),
     )
 }
 

@@ -79,7 +79,7 @@ export default function ScanVersions() {
         <div className="sv-list">{series.map((s) => (
           <div className="sv-row" key={s.title}>
             <button className="sv-head" onClick={() => expand(s.title)}>
-              <div className="sv-name">{s.title}</div>
+              <div className="sv-name">{s.title}<span className="sv-src">{s.sourceName}</span></div>
               <div className="sv-nums">
                 <span className="sv-missing">+{s.missing}</span>
                 <span className="sv-have">{s.versionsOnDisk}/{s.versionsAtSource} on disk</span>

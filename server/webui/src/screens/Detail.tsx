@@ -298,6 +298,7 @@ export function Detail() {
   // Some sources don't expose a status — show "Unknown" rather than nothing (still tappable to scan).
   const status = STATUS_LABELS[m.status] || 'Unknown'
   const newSet = new Set(data.newChapters)
+  const newVerSet = new Set(data.newVersions) // new scan of a number we already had - quieter than NEW
   // The chapter you'd resume on (first unread ascending, else the latest) — gets a "Resume" marker.
   const readNums = readKeySet(data.chapters, readSet)
   const resumeUrl = (() => {
@@ -334,7 +335,7 @@ export function Detail() {
       <div key={c.url} className={'chapter-row' + (read ? ' read' : '') + (c.url === resumeUrl ? ' resume' : '') + (sel ? ' sel' : '') + (broken ? ' broken' : '')} onClick={onRow}>
         {selecting && <span className={'ch-check' + (sel ? ' on' : '')} />}
         <div className="chapter-text">
-          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{broken && <span className="chapter-broken">UNAVAILABLE</span>}{c.name}</div>
+          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{!newSet.has(c.url) && newVerSet.has(c.url) && <span className="chapter-newver">NEW VER</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{broken && <span className="chapter-broken">UNAVAILABLE</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
         {!selecting && (downloading

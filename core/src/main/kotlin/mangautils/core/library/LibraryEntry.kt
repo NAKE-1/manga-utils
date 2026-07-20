@@ -60,8 +60,14 @@ data class LibraryEntry(
     val addedAt: Long = System.currentTimeMillis(),
     var lastCheckedAt: Long = 0,
     var knownChapters: MutableList<ChapterRef> = mutableListOf(),
-    /** URLs of chapters detected as new since last seen — drives the "!" badge + red check. */
+    /** URLs of genuinely-new chapter NUMBERS since last seen — drives the "!" badge + red check. */
     var newChapters: MutableList<String> = mutableListOf(),
+    /**
+     * URLs of new SCANS of numbers we already had. Still downloaded (hoarding every version is the point),
+     * but a second scan of Ch. 11 is not a new chapter - it gets a quieter marker in the chapter list only
+     * and never touches the "!" badge or the library "N new" count.
+     */
+    var newVersions: MutableList<String> = mutableListOf(),
 ) {
     val key: String get() = "$sourceId:$mangaUrl"
 }

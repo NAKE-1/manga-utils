@@ -62,12 +62,20 @@ object UpdateScheduler {
     /** If autoDownloadNew is on, enqueue every newly-found chapter for download. */
     fun autoDownloadNew(results: List<UpdateResult>) {
         if (!runCatching { SettingsStore.get().autoDownloadNew }.getOrDefault(false)) return
-        results.filter { it.newChapters.isNotEmpty() }.forEach { r ->
+        results.filter { it.newChapters.isNotEmpty() || it.newVersions.isNotEmpty() }.forEach { r ->
             // Never auto-queue a chapter the source can't serve; it would fail on every update.
             val unavailable = runCatching { mangautils.core.download.UnavailableChapters.urls() }.getOrDefault(emptySet())
-            val chapters = r.newChapters.filterNot { it.url in unavailable }.map { DownloadQueue.Chapter(it.url, it.name) }
+            // Pull new numbers AND new scans of numbers we already have - keeping every version is the
+            // point. The new-chapter vs new-version split is only about the badge, not what gets fetched.
+            val fresh = (r.newChapters + r.newVersions).filterNot { it.url in unavailable }
+            val chapters = fresh.map { DownloadQueue.Chapter(it.url, it.name) }
             if (chapters.isNotEmpty()) {
-                log.info("auto-downloading {} new chapter(s) of '{}'", chapters.size, r.entry.title)
+                log.info(
+                    "auto-downloading {} new chapter(s) + {} new version(s) of '{}'",
+                    r.newChapters.count { it.url !in unavailable },
+                    r.newVersions.count { it.url !in unavailable },
+                    r.entry.title,
+                )
                 DownloadQueue.enqueue(r.entry.sourceId, r.entry.mangaUrl, r.entry.title, chapters)
             }
         }
