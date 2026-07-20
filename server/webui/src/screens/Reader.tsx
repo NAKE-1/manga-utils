@@ -463,12 +463,26 @@ export function Reader() {
 
       {/* Source-trouble banner: shown when pages are failing, so it's never a silent infinite spinner.
           Dismissable (acknowledge) — reappears only if more pages fail after you dismiss it. */}
-      {failedPages.size > warnAck && (
-        <div className="reader-warn">
-          <span className="reader-warn-txt">⚠ {failedPages.size} page{failedPages.size > 1 ? 's' : ''} failed to load - the source may be having trouble. Tap a failed page to retry.</span>
-          <button className="reader-warn-x" onClick={() => setWarnAck(failedPages.size)}>Dismiss</button>
-        </div>
-      )}
+      {failedPages.size > warnAck && (() => {
+        // Pages 404 individually while the page LIST loads fine, so a broken chapter shows up here
+        // rather than as an empty chapter. If we hold another scanlation of this same chapter, offer
+        // it — retrying pages that are gone from the host will never work.
+        const alts = cur ? chapters.filter((c) => c.url !== cur.url && c.number > 0 && c.number === cur.number) : []
+        return (
+          <div className="reader-warn">
+            <span className="reader-warn-txt">
+              ⚠ {failedPages.size} page{failedPages.size > 1 ? 's' : ''} failed to load - the source may be having trouble.
+              {alts.length > 0 ? ' Try another scanlation, or tap a failed page to retry.' : ' Tap a failed page to retry.'}
+            </span>
+            {alts.map((o) => (
+              <button key={o.url} className="reader-warn-alt" onClick={() => openChapter(o)}>
+                Read {o.scanlator || 'another version'}
+              </button>
+            ))}
+            <button className="reader-warn-x" onClick={() => setWarnAck(failedPages.size)}>Dismiss</button>
+          </div>
+        )
+      })()}
 
       {/* Minimal progress pill when chrome hidden — fades opposite the chrome. */}
       {count && showPill ? (

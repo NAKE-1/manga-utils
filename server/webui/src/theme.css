@@ -1048,3 +1048,11 @@ main > * { animation: fade-up .22s ease backwards; }
 .r-failed-why { font-size: 13px; opacity: .8; max-width: 44ch; line-height: 1.5; }
 .r-failed-alt { font-size: 12px; opacity: .65; margin-top: 6px; letter-spacing: .03em; text-transform: uppercase; }
 .r-failed-btn { min-width: 220px; }
+
+/* "Read <scanlator>" in the reader's failed-pages banner — the way out of a chapter whose images
+   are gone from the host, where retrying can't help. */
+.reader-warn-alt {
+  flex: none; background: #b3453c; color: #fff; border: 0; border-radius: 6px;
+  padding: 5px 10px; font-size: 12px; font-weight: 650; cursor: pointer; margin-left: 8px;
+}
+@media (hover: hover) { .reader-warn-alt:hover { filter: brightness(1.12); } }
