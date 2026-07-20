@@ -273,7 +273,15 @@ export function Reader() {
     if (!nextCh) { console.log('[reader] past preload point — waiting for chapter list to preload next'); return }
     // Never warm a chapter we already know is broken: it is exactly the burst of doomed image requests
     // the gate exists to avoid, and the reader would gate it anyway the moment you flipped to it.
-    if (nextCh.unavailable) { console.log(`[reader] not preloading "${nextCh.name}" — known broken (${nextCh.unavailable})`); return }
+    if (nextCh.unavailable) {
+      const scan = nextCh.scanlator || 'unknown scan'
+      console.log(`[reader] not preloading "${nextCh.name}" (${scan}) — known broken: ${nextCh.unavailable}`)
+      // One no-op ping so the skip is visible in the server log next to the real PRELOAD lines. The
+      // server answers 204 without touching the source, so this costs nothing it was going to cost anyway.
+      fetch(pageUrl(sourceId, nextCh.url, 0, title, nextCh.name) + `&scan=${encodeURIComponent(scan)}`,
+        { headers: { 'X-Preload-Skip': nextCh.unavailable } }).catch(() => {})
+      return
+    }
     if (prefetchedNext.current === nextCh.url) return
     prefetchedNext.current = nextCh.url
     api.pages(sourceId, nextCh.url, title, nextCh.name).then((r) => {

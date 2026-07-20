@@ -1857,6 +1857,12 @@ fun Application.module() {
             // Next-chapter preload requests are marked so they're visible in the log even for
             // cached/downloaded pages (normal /img/page logging stays filtered to keep the console clean).
             // One line per preloaded chapter (on its first page) instead of one per page.
+            // The reader refuses to warm a chapter it knows is broken, and says so here rather than only
+            // in the browser console - this log is where you actually watch downloads and reads happen.
+            call.request.headers["X-Preload-Skip"]?.let { why ->
+                log.info("PRELOAD  SKIPPED {} ({}) - {}", name ?: chapter, call.queryParam("scan") ?: "unknown scan", why)
+                return@get call.respond(HttpStatusCode.NoContent)
+            }
             if (call.request.headers["X-Preload"] != null && index == 0) log.info("PRELOAD  next chapter {}", chapter)
             var fromSource = false
             val bytes = withContext(mangautils.core.async.Pools.image) {
