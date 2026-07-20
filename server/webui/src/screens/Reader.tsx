@@ -119,6 +119,7 @@ export function Reader() {
   const nav = useNavigate()
 
   const [count, setCount] = useState<number | null>(null)
+  const [force, setForce] = useState(false) // you chose to try a known-broken chapter anyway
   // Windowing: only mount an <img> for pages up to here (0-based). Grows as you scroll, so opening a
   // chapter fires ~preload requests — not all 68 at once (which would pin every browser connection
   // and freeze the app, esp. on a down source). Reset per chapter.
@@ -234,7 +235,7 @@ export function Reader() {
   useEffect(() => {
     const key = sourceId + '|' + chapter
     pendingRestore.current = loadPositions()[key] ?? null // resume point for this chapter, if any
-    setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false)
+    setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false); setForce(false)
     window.scrollTo(0, 0)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
@@ -248,6 +249,11 @@ export function Reader() {
 
   // Navigate the de-duplicated list (scanlator-aware) so prev/next skip duplicate chapters.
   const cur = chapters.find((c) => c.url === chapter)
+  // We already recorded that this chapter's images are gone (UnavailableChapters). Rendering the pages
+  // would fire a burst of requests we know will 404 - which is also what trips the source-wide image
+  // breaker and drags down the chapter you switch to. So ask first, and don't touch the network unless
+  // you say to.
+  const gated = !!cur?.unavailable && !force
   const navList = dedupChapters(cur, chapters)
   const idx = navList.findIndex((c) => c.url === chapter)
   const nextCh = idx > 0 ? navList[idx - 1] : undefined // newer
@@ -406,8 +412,8 @@ export function Reader() {
   return (
     <div className="reader">
       <div className="reader-scroll" onClick={onTap}>
-        {count === null && <div className="spinner" />}
-        {count === 0 && (() => {
+        {count === null && !gated && <div className="spinner" />}
+        {(gated || count === 0) && (() => {
           // This chapter won't load — but another scanlation of the same number might, and we very
           // likely have one. Offering them here beats sending you back to the chapter list to work
           // out which of "Ch. 90" is the one that works.
@@ -416,7 +422,7 @@ export function Reader() {
             : []
           return (
             <div className="center-msg r-failed">
-              <div className="r-failed-title">Couldn't load this chapter</div>
+              <div className="r-failed-title">{gated ? 'This chapter is known to be broken' : "Couldn't load this chapter"}</div>
               <div className="r-failed-why">
                 {cur?.unavailable
                   ? cur.unavailable
@@ -433,11 +439,14 @@ export function Reader() {
                   ))}
                 </>
               )}
+              {gated && (
+                <button className="btn r-failed-btn" onClick={() => setForce(true)}>Try loading it anyway</button>
+              )}
               <button className="btn r-failed-btn" onClick={() => nav(-1)}>Back to chapters</button>
             </div>
           )
         })()}
-        {count !== null && count > 0 && (() => {
+        {count !== null && count > 0 && !gated && (() => {
           // Windowing: mount an <img> for pages up to renderCeil; pages beyond are empty height-reserved
           // slots with NO request. EAGER honors its promise ("loads every page at once") and mounts the
           // whole chapter — they queue through the IMG_MAX gate in order, so it's a sequential full-chapter

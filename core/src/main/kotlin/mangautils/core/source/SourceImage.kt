@@ -34,6 +34,7 @@ object SourceImage {
         // blackhole EVERY cover for that source for the whole cooldown → "No Poster" across the grid.
         // A cover miss must fail only that one card, never cascade; so each fetch stands alone here.
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
+        var gone = false // image is permanently missing rather than the source being in trouble
         return try {
             val request = Request.Builder().url(url).headers(src.headers).build()
             src.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
@@ -79,6 +80,7 @@ object SourceImage {
     ): ByteArray? {
         if (SourceCircuits.images.isOpen(sourceId)) return null // breaker open (dead CDN) → instant fail
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
+        var gone = false // image is permanently missing rather than the source being in trouble
         return try {
             val bytes = withTimeout(7_000) {
                 if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
@@ -87,11 +89,20 @@ object SourceImage {
                         resp.body?.bytes()
                     } else {
                         log.warn("page {} failed: HTTP {} {}", page.index, resp.code, page.imageUrl)
+                        // A 404/410 means THIS image is gone, not that the source is unhealthy. The breaker
+                        // is source-wide, so counting these lets one dead chapter fast-fail every image from
+                        // the source for 20s - including the chapter you switch to when the dead one fails.
+                        // 429 and 5xx are genuine source trouble and still count.
+                        if (resp.code in 400..499 && resp.code != 429) gone = true
                         null
                     }
                 }
             }
-            if (bytes != null) SourceCircuits.images.recordSuccess(sourceId) else SourceCircuits.images.recordFailure(sourceId)
+            if (bytes != null) {
+                SourceCircuits.images.recordSuccess(sourceId)
+            } else if (!gone) {
+                SourceCircuits.images.recordFailure(sourceId)
+            }
             bytes
         } catch (e: Exception) {
             // A plain cancellation (you navigated away) isn't the source's fault — don't trip the breaker.
