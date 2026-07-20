@@ -260,7 +260,17 @@ export function Reader() {
     prefetchedNext.current = '' // stale from the chapter we just left; leaving it set blocks a real preload
     const settle = setTimeout(() => setSettledFor(chapter), 3000)
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
-    api.mangaState(sourceId, manga).then((s) => setReadUrls(new Set(s.read))).catch(() => {}) // read markers for the chapter list
+    api.mangaState(sourceId, manga).then((s) => {
+      setReadUrls(new Set(s.read)) // read markers for the chapter list
+      // The server's position wins over this device's - it is the one another device could have moved.
+      // Guarded on you not having scrolled yet: this reply is async, and re-pinning after you have
+      // started reading would yank you away from where you are.
+      const remote = s.positions?.[chapter]
+      if (remote != null && progressRef.current <= 0.02) {
+        pendingRestore.current = remote
+        applyRestore()
+      }
+    }).catch(() => {})
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
     api.setRead(sourceId, manga, chapter, true)
     api.detail(sourceId, manga)
@@ -268,7 +278,9 @@ export function Reader() {
       .catch(() => api.recordHistory(sourceId, manga, chapter, title, name))
     return () => {
       clearTimeout(settle)
-      savePosition(key, progressRef.current) // persist the resume point when leaving this chapter
+      // Local save keeps this device instant; the server copy is what lets another device pick it up.
+      savePosition(key, progressRef.current)
+      api.setPosition(sourceId, manga, chapter, Math.round(progressRef.current * 1000) / 1000).catch(() => {})
     }
   }, [sourceId, chapter])
 

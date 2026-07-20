@@ -54,6 +54,7 @@ import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
 import mangautils.core.library.MangaBookmarkStore
+import mangautils.core.library.PositionStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.CloudflareState
 import mangautils.core.source.Diagnostics
@@ -519,7 +520,14 @@ private data class DiagDto(
 @Serializable private data class ResolveDto(val sourceId: String, val mangaUrl: String, val title: String, val cover: String? = null)
 
 @Serializable
-private data class MangaStateDto(val inLibrary: Boolean, val bookmarked: Boolean, val read: List<String>, val bookmarks: List<String>)
+private data class MangaStateDto(
+    val inLibrary: Boolean,
+    val bookmarked: Boolean,
+    val read: List<String>,
+    val bookmarks: List<String>,
+    /** chapterUrl -> how far through you got (0..1), so any device resumes where the last one stopped. */
+    val positions: Map<String, Float> = emptyMap(),
+)
 
 @Serializable
 private data class CountDto(val count: Int)
@@ -1121,6 +1129,7 @@ fun Application.module() {
                     MangaBookmarkStore.isBookmarked(id, url),
                     ReadStore.readUrls(id, url).toList(),
                     BookmarkStore.bookmarks(id, url).toList(),
+                    PositionStore.positions(id, url),
                 )
             }
             call.respond(st)
@@ -1359,6 +1368,16 @@ fun Application.module() {
             call.respond(HttpStatusCode.OK)
         }
 
+        /** Where you stopped in a chapter. Sent when leaving it, so it survives to your other devices. */
+        post("/api/position") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val chapter = call.queryParam("chapter") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val frac = call.queryParam("frac")?.toFloatOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { PositionStore.set(id, manga, chapter, frac) }
+            call.respond(HttpStatusCode.OK)
+        }
+
         post("/api/read") {
             val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
             val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
@@ -1366,6 +1385,10 @@ fun Application.module() {
             val read = call.queryParam("read")?.toBoolean() ?: true
             withContext(Dispatchers.IO) {
                 ReadStore.setRead(id, manga, chapter, read)
+                // Unread means "I want to read this again", so the resume point goes with the flag. Done
+                // here rather than in each client so every caller - web, bulk mark-unread, a future app -
+                // gets it without having to remember.
+                if (!read) PositionStore.clear(id, manga, chapter)
                 // Reading a new chapter clears its "new" flag; the "!" badge disappears once none remain.
                 if (read) LibraryService.markChapterSeen(id, manga, chapter)
             }

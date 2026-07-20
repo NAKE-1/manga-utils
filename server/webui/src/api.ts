@@ -36,7 +36,11 @@ export interface Chapter {
 
 export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[] }
 
-export interface MangaState { inLibrary: boolean; bookmarked: boolean; read: string[]; bookmarks: string[] }
+export interface MangaState {
+  inLibrary: boolean; bookmarked: boolean; read: string[]; bookmarks: string[]
+  /** chapterUrl -> how far through you got (0..1). Server-side so devices resume each other's reads. */
+  positions?: Record<string, number>
+}
 
 export interface LibraryEntry {
   sourceId: string
@@ -157,6 +161,9 @@ export const api = {
   },
   recordHistory: (id: string, manga: string, chapter: string, title: string, name: string, thumb?: string | null) =>
     fetch(`/api/history?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&title=${encodeURIComponent(title)}&name=${encodeURIComponent(name)}${thumb ? `&thumb=${encodeURIComponent(thumb)}` : ''}`, { method: 'POST' }),
+  /** Where you stopped in a chapter (0..1). Sent on leaving it; the server drops ~0 and ~1. */
+  setPosition: (id: string, manga: string, chapter: string, frac: number) =>
+    fetch(`/api/position?id=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&frac=${frac}`, { method: 'POST' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>
