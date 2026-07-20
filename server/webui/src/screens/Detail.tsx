@@ -226,6 +226,33 @@ export function Detail() {
   }
   let dlTimer: ReturnType<typeof setTimeout>
   function toast(msg: string) { setDlMsg(msg); clearTimeout(dlTimer); dlTimer = setTimeout(() => setDlMsg(''), 2500) }
+  /**
+   * Downloading a chapter we already know the source can't serve. Say what's wrong and who it's from
+   * before spending a minute failing, but never block it outright — sources do republish, and the
+   * mark is only ever a cached observation.
+   */
+  function askForce(c: { url: string; name: string; scanlator?: string | null; unavailable?: string | null }) {
+    const src = source?.name || 'this source'
+    setConfirm({
+      title: 'This chapter is unavailable',
+      message:
+        `${c.name}${c.scanlator ? ` (${c.scanlator})` : ''} from ${src} couldn't be downloaded last time:
+
+` +
+        `${c.unavailable}
+
+` +
+        'Downloading anyway will try the source again. If it works, the chapter stops being skipped.',
+      confirmLabel: 'Download anyway',
+      onConfirm: async () => {
+        setConfirm(null)
+        await api.clearUnavailable(c.url).catch(() => {})
+        downloadChapters([{ url: c.url, name: c.name }])
+      },
+      onCancel: () => setConfirm(null),
+    })
+  }
+
   function downloadChapters(chs: { url: string; name: string }[]) {
     if (chs.length === 0) return
     api.enqueueDownload(sourceId, url, data!.manga.title, chs).catch(() => {})
@@ -290,6 +317,9 @@ export function Detail() {
   const renderRow = (c: (typeof chaps)[number]) => {
     const read = chapterRead(c, readSet, readNums)
     const bm = state.bookmarks.includes(c.url)
+    // A chapter the source can't serve. Worth saying so on the row — otherwise it looks like any
+    // other undownloaded chapter and you find out only after waiting for it to fail.
+    const broken = !c.downloaded && !!c.unavailable
     const meta = [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
     const prog = dlProg[c.url]
     const downloading = prog && (prog.state === 'running' || prog.state === 'queued')
@@ -304,7 +334,12 @@ export function Detail() {
         </div>
         {!selecting && (downloading
           ? <span className="chapter-dlbtn"><ProgressRing pct={prog.total > 0 ? (prog.done / prog.total) * 100 : 0} size={26} /></span>
-          : <button className={'chapter-dlbtn' + (c.downloaded ? ' done' : '')} onClick={(e) => { e.stopPropagation(); if (!c.downloaded) downloadChapters([{ url: c.url, name: c.name }]) }} title={c.downloaded ? 'Downloaded' : 'Download'} aria-label="Download"><IconDownload /></button>)}
+          : <button
+              className={'chapter-dlbtn' + (c.downloaded ? ' done' : '') + (broken ? ' broken' : '')}
+              onClick={(e) => { e.stopPropagation(); if (c.downloaded) return; if (broken) askForce(c); else downloadChapters([{ url: c.url, name: c.name }]) }}
+              title={c.downloaded ? 'Downloaded' : broken ? `Unavailable — ${c.unavailable}` : 'Download'}
+              aria-label={broken ? 'Unavailable — download anyway' : 'Download'}
+            ><IconDownload /></button>)}
         {bm && <IconBookmarkSm filled className="chapter-bm" />}
       </div>
     )

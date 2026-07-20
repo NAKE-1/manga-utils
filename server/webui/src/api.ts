@@ -30,6 +30,8 @@ export interface Chapter {
   dateUpload: number
   number: number
   downloaded: boolean
+  /** Set when the source can't serve this chapter; the text explains why. */
+  unavailable?: string | null
 }
 
 export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[] }
@@ -225,6 +227,8 @@ export const api = {
     return r.json()
   },
   extUninstall: (pkg: string) => fetch(`/api/extensions?pkg=${encodeURIComponent(pkg)}`, { method: 'DELETE' }),
+  /** Forget that a chapter is unavailable, so it can be downloaded again. */
+  clearUnavailable: (url: string) => fetch(`/api/downloads/unavailable?url=${encodeURIComponent(url)}`, { method: 'DELETE' }),
   repos: () => getJson<string[]>('/api/repos'),
   repoStats: () => getJson<{ url: string; extensions: number; sources: number }[]>('/api/repos/stats'),
   addRepo: async (url: string): Promise<string[]> => {

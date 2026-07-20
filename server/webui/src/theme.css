@@ -1029,3 +1029,8 @@ main > * { animation: fade-up .22s ease backwards; }
 
 /* Why a download failed — sits under the failed-chapter list, quieter than it. */
 .dlc-why { margin-top: 3px; opacity: .85; font-size: 12px; line-height: 1.4; }
+
+/* Chapter the source can't serve: the download button warns rather than pretending it'll work.
+   Same red as the other destructive/error affordances (.btn.danger). */
+.chapter-dlbtn.broken { color: #e0715c; opacity: 1; }
+@media (hover: hover) { .chapter-dlbtn.broken:hover { filter: brightness(1.15); } }

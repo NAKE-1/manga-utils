@@ -203,6 +203,8 @@ private data class ChapterDto(
     val dateUpload: Long = 0,
     val number: Float = -1f,
     val downloaded: Boolean = false,
+    /** Why the source can't serve this chapter, when it can't. Null means it's fine. */
+    val unavailable: String? = null,
 )
 
 @Serializable
@@ -643,16 +645,24 @@ private val browseCache = ConcurrentHashMap<String, Pair<Long, PageResultDto>>()
 private val coverCache = ConcurrentHashMap<String, ByteArray>()
 
 /** Build details from a cached library entry — instant + offline (mirrors the desktop). */
-private fun cachedDetail(e: LibraryEntry): DetailDto = DetailDto(
+private fun cachedDetail(e: LibraryEntry): DetailDto {
+    // Looked up once for the whole list, not per chapter.
+    val unavailableBy = runCatching { UnavailableChapters.list().associate { u -> u.url to u.reason } }.getOrDefault(emptyMap())
+    return DetailDto(
     MangaDto(e.sourceId.toString(), e.mangaUrl, e.title, e.thumbnailUrl, e.author, e.artist, e.description, e.genre, e.status),
     e.knownChapters.map {
         // Per *version*, not per name: several scanlations share a chapter name, so a name check marks
         // all of them downloaded as soon as any one is, which greys out the button for the very
         // alternates you're trying to fetch. Matches legacy name-only folders too, via their ComicInfo.
-        ChapterDto(it.url, it.name, it.scanlator, it.dateUpload, it.number, runCatching { ChapterIdentity.hasVersion(e.title, it.url) }.getOrDefault(false))
+        ChapterDto(
+            it.url, it.name, it.scanlator, it.dateUpload, it.number,
+            runCatching { ChapterIdentity.hasVersion(e.title, it.url) }.getOrDefault(false),
+            unavailableBy[it.url],
+        )
     },
-    e.newChapters.toList(),
-)
+        e.newChapters.toList(),
+    )
+}
 
 private fun pagesFor(sourceId: Long, chapterUrl: String): List<Page> =
     pageCache.getOrPut("$sourceId|$chapterUrl") { SourceImage.pageList(sourceId, chapterUrl) }
