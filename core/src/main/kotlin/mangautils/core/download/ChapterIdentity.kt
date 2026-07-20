@@ -79,6 +79,12 @@ object ChapterIdentity {
     fun downloadedUrls(title: String): Set<String> =
         versionsOf(title).filter { it.complete }.mapNotNull { it.url }.toSet()
 
+    /**
+     * Identify a single chapter folder or .cbz, without scanning the series. Used on the write path,
+     * where scanning every sibling for each chapter would be quadratic.
+     */
+    fun identify(path: Path): Version? = runCatching { readOne(path) }.getOrNull()
+
     /** Drop cached listings — call after a download or delete changes a series. */
     fun invalidate(title: String? = null) {
         if (title == null) {

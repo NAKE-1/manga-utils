@@ -179,14 +179,38 @@ class DownloadManager(
         candidates: List<Candidate>,
         srcFails: MutableMap<Long, Int> = java.util.concurrent.ConcurrentHashMap(),
     ): Boolean {
-        val dest = destFor(title, chapter)
-        if (java.nio.file.Files.exists(dest) && !shouldReplaceExisting(chapter.name, dest)) {
+        var dest = destFor(title, chapter)
+        // We may already hold this exact upload under a different folder name — anything downloaded
+        // before versioning is stored as a plain "Chapter 4" with no scanlator suffix. Without this the
+        // new suffixed path wouldn't exist and we'd fetch a second copy of the same thing.
+        // ponytail: rescans the series when its directory changes; a persisted index if it drags.
+        if (existingPolicy == ExistingPolicy.SKIP && ChapterIdentity.hasVersion(title, chapter.url)) {
             job.attempts.add(
-                JobAttempt(sourceId = 0, target = chapter.name, outcome = "skipped", message = "already exists: $dest"),
+                JobAttempt(sourceId = 0, target = chapter.name, outcome = "skipped", message = "already downloaded (this exact upload)"),
             )
             StatusStore.save(job)
-            log.debug("Skipping existing '{}'", chapter.name)
+            log.debug("Skipping '{}' - this upload is already on disk", chapter.name)
             return true
+        }
+        if (java.nio.file.Files.exists(dest)) {
+            // Whose upload is already sitting there? Identity comes from the folder's ComicInfo, never
+            // from its name — two groups can sanitize to the same string, and a folder renamed by hand
+            // must not break this.
+            val existing = ChapterIdentity.identify(dest)?.url
+            if (existing != null && existing != chapter.url) {
+                // A *different* upload owns that name. Previously this skipped, silently discarding the
+                // alternate; now it gets its own folder.
+                dest = destFor(title, chapter, extraDisc = urlIdOf(chapter.url))
+                log.info("'{}' already holds another upload - storing this one as '{}'", chapter.name, dest.fileName)
+            }
+            if (java.nio.file.Files.exists(dest) && !shouldReplaceExisting(chapter.name, dest)) {
+                job.attempts.add(
+                    JobAttempt(sourceId = 0, target = chapter.name, outcome = "skipped", message = "already exists: $dest"),
+                )
+                StatusStore.save(job)
+                log.debug("Skipping existing '{}'", chapter.name)
+                return true
+            }
         }
         for (cand in candidates) {
             if (cancelled()) return false // stopped — don't try mirrors, don't write anything
@@ -388,9 +412,47 @@ class DownloadManager(
     private fun destFor(
         title: String,
         chapter: SChapter,
+    ): Path = destFor(title, chapter, extraDisc = null)
+
+    /**
+     * Where one upload of a chapter is stored: `Chapter 4 [Gamma 2]`.
+     *
+     * Every version carries its scanlator, including the first, because a chapter routinely has three
+     * uploads — leaving one unsuffixed would make exactly one folder per chapter ambiguous. Existing
+     * name-only folders are never renamed; they simply coexist.
+     *
+     * [extraDisc] appends a URL id to break a tie when two uploads share a number *and* a scanlator,
+     * which really happens (two distinct "Gamma 3" uploads of chapter 82).
+     */
+    private fun destFor(
+        title: String,
+        chapter: SChapter,
+        extraDisc: String?,
     ): Path {
         val base = AppConfig.downloadsDir.resolve(sanitize(title))
-        return if (downloadAsCbz) base.resolve(sanitize(chapter.name) + ".cbz") else base.resolve(sanitize(chapter.name))
+        val disc = listOfNotNull(discriminatorFor(chapter).takeIf { it.isNotBlank() }, extraDisc).joinToString(" ")
+        val ext = if (downloadAsCbz) ".cbz" else ""
+        if (disc.isBlank()) return base.resolve(sanitize(chapter.name) + ext)
+
+        val suffix = " [$disc]"
+        // Windows' 260-char path limit is the binding one (Linux allows 255 bytes per component and
+        // 4096 total). Trim the chapter name, never the discriminator: a truncated discriminator could
+        // let two versions collide again, which is the bug this whole scheme exists to prevent.
+        val room = MAX_PATH_BUDGET - base.toString().length - suffix.length - ext.length - RESERVED_FOR_PAGES
+        val name = sanitize(chapter.name).let { if (room in 1 until it.length) it.take(room).trimEnd() else it }
+        return base.resolve(name + suffix + ext)
+    }
+
+    /** The scanlator, sanitized and capped; falls back to a stable id from the URL when it's blank. */
+    private fun discriminatorFor(chapter: SChapter): String {
+        val raw = runCatching { chapter.scanlator }.getOrNull().orEmpty().replace('[', ' ').replace(']', ' ')
+        return sanitize(raw).trim().take(DISC_MAX).ifBlank { urlIdOf(chapter.url) }
+    }
+
+    /** Short stable id for an upload — the last URL segment, else a hash of the whole URL. */
+    private fun urlIdOf(url: String): String {
+        val tail = url.trimEnd('/').substringAfterLast('/')
+        return sanitize(tail).take(DISC_MAX).ifBlank { Integer.toHexString(url.hashCode()) }
     }
 
     private fun seed(url: String): SManga = SManga.create().apply { this.url = url; title = url }
@@ -415,6 +477,13 @@ class DownloadManager(
     companion object {
         /** Skip a source for the rest of a job after this many consecutive chapter failures. */
         private const val MAX_SOURCE_FAILURES = 4
+
+        /** Scanlator names are arbitrary ("Gamma 3", "Team/Scans"); cap so a path can't blow up. */
+        const val DISC_MAX = 32
+
+        /** Windows MAX_PATH, minus room for the page filenames inside the folder. */
+        const val MAX_PATH_BUDGET = 260
+        const val RESERVED_FOR_PAGES = 20
 
         fun sanitize(name: String): String =
             name
