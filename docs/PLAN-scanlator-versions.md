@@ -26,16 +26,122 @@ quality, missing pages, or a broken upload.
 | 3 | Existing folders | **Never renamed or moved.** A name-only folder is treated as a version and matched by content, not by name. |
 | 4 | Naming format | Still open — see below. Your note ("*a decent chunk on atsu name themselves alpha, beta, delta, alpha 1, alpha 2*") is the real constraint and is designed for regardless of format. |
 
-### Still open
+| 5 | Auto-download of new versions | **Eventually yes** — a new scan of chapter 12 should be picked up. **Gated off until verified**: nothing automatic or scheduled pulls alternate versions until the dev smoke-test signs it off. |
 
-- **4a. Folder format:** `Chapter 1 [alpha 2]` (readable-first) vs `alpha 2_Chapter 1` (Suwayomi-identical).
-  Recommendation stands at readable-first: versions of a chapter sort together, and the Suwayomi form
-  buys interop we don't otherwise use. **Not blocking** — see "identity" below, which makes the folder
-  name cosmetic.
-- **4b. Do *background* library updates grab all versions too,** or only new chapters' primary version?
-  Decision 1 covers explicit downloads. Auto-download-new running "all versions" silently doubles
-  background traffic on every update. Recommendation: **new-chapter auto-download stays primary-only**;
-  alternates come from an explicit action. Flagged because it is easy to get wrong by omission.
+| 6 | Folder format | **`Chapter 4 [Gamma 2]` — always name the scanlator when the source gives one**, including the first version downloaded. |
+
+### Why every version is suffixed, including the first
+
+An earlier draft let the first download keep a plain name and suffixed only later ones. Real data killed
+that: on atsu a chapter routinely has three versions (`Gamma`, `Gamma 2`, `Gamma 3`), so one folder per
+chapter would always be the ambiguous one — you couldn't tell which scan `Chapter 4` held without opening
+its ComicInfo.
+
+```
+Chapter 4 [Gamma]        Chapter 4 [Gamma 2]        Chapter 4 [Gamma 3]
+```
+
+Existing folders are still never renamed, so a library will mix plain (old) and suffixed (new) names.
+That's accepted: identity comes from ComicInfo either way, and the mixing is visible rather than
+misleading.
+
+### Path length — measured, not assumed
+
+Scanned all **444,922** files under `F:\manga-utils\downloads`:
+
+- longest full path today: **199** chars → **61 chars of headroom** under Windows' 260 limit
+- a typical ` [Gamma 3]` costs 10 → 51 left. Comfortable.
+- longest manga dir 113, longest chapter dir 88. Those don't co-occur today, but if they ever did that
+  path alone is **241** chars, and a suffix would overflow. `LongPathsEnabled` is not set on this machine,
+  so 260 is a real ceiling.
+
+Rules that follow:
+- Cap the discriminator at **32 chars** (generous — `Gamma 3` is 7).
+- If the full path would still exceed a **240-char** budget, **trim the chapter-name portion, never the
+  discriminator.** The name is cosmetic; the discriminator is identity, and truncating it could make two
+  versions collide again — the exact bug being fixed.
+- Sanitize as before: strip path-illegal characters, collapse whitespace, drop `[`/`]`. If two scanlators
+  sanitize to the same string, append the URL id.
+
+Examples:
+```
+Chapter 4 [Gamma 2]              typical
+Chapter 4 [Gamma 2].cbz          CBZ mode — suffix before the extension
+Chapter 7 [3945015]              blank scanlator → stable id from the chapter URL
+Chapter 9 [Team-Scans]           "Team/Scans" sanitized
+Chapter 9 [Team-Scans 88214]     two groups collide after sanitizing → +URL id
+```
+
+---
+
+## P0 results — map verified 2026-07-19
+
+Verified directly against the code. Five confirmations and **one correction that changes the plan**.
+
+| Item | Status |
+|---|---|
+| `destFor` — `base.resolve(sanitize(chapter.name))` (+`.cbz`), the only place a folder name is formed | ✅ `DownloadManager.kt:386` |
+| Skip-on-collision `"already exists: $dest"`, guarded by `shouldReplaceExisting` | ✅ `:185` |
+| `isDownloaded(title, chapterName)` name-only | ✅ `:427` — callers `Main.kt:637`, `:1007`, `desktop/App.kt:392,2194,2226,2260` |
+| `downloadedChapterNames(title)` | ✅ `:451` — callers `Main.kt:1047,1239,1259`, `MigrationJob.kt:58,125` |
+| Missing calc groups by number, then matches `sanitize(c.name) in onDisk` | ✅ `Main.kt:1047-1050`, `:1239-1243` — highest-risk item confirmed |
+| `DownloadQueue.Chapter(url, name)` — **no scanlator** | ✅ `DownloadQueue.kt:39` — P1 target |
+| `ChapterRef` **already has `scanlator`** | ✅ `LibraryEntry.kt:40` — plumbing is half-built already |
+| **Reader reads from disk — offline reading EXISTS** | ❌ **Correction.** `LocalChapterReader.localChapter(title, name)` at `Main.kt:1680,1737`, keyed by **name only**. The reader *is* in the blast radius and needs a primary-version pick. |
+| New chapters detected **by URL** | ⚠️ `LibraryService.kt:130` — `current.filter { it.url !in knownUrls }`. This is the exact line that makes a new scan look like a new chapter. |
+
+---
+
+## New chapter vs new version
+
+A new upload of an existing chapter must not be mistaken for a new chapter.
+
+`LibraryService.kt:130` treats any unseen URL as a new chapter, so a second scan of chapter 11 fires the
+`!` badge and inflates the library's new-chapter count. Split the one concept into two:
+
+```kotlin
+val fresh       = current.filter { it.url !in knownUrls }
+val newChapters = fresh.filter { key(it) !in knownNumbers }   // a number we've never had  -> "!" badge
+val newVersions = fresh.filter { key(it) in knownNumbers }    // another scan of a number we have
+```
+
+(`key()` is the same number-or-name grouping the download counts already use, so the two agree.)
+
+- **`newChapters`** keeps its current meaning: drives the `!` marker, the library "N new" count, and
+  auto-download. 12 → 13 chapters is new; chapter 11 gaining a scan is **not**.
+- **`newVersions`** is tracked separately and surfaced **in the chapter list only**, with its own marker
+  distinct from the new-chapter one. It never contributes to the `!` count and never triggers
+  auto-download while gating is on.
+
+`LibraryEntry` gains `newVersions: MutableList<String>` beside the existing `newChapters`, cleared by the
+same paths.
+
+---
+
+## Gating — nothing automatic until it's proven
+
+Scheduled updates must not start pulling alternate versions on their own.
+
+- A setting, **default off**: alternate versions are never queued by the library update or the
+  scheduler. Detection still runs (so `newVersions` populates and the chapter list marks them) — only
+  *fetching* is gated.
+- Mass-download's missing calculation follows the same flag, so "download missing" doesn't silently
+  become a library-wide alternate fetch before you want it.
+- Turning it on is a deliberate act after the smoke test passes.
+
+## Dev smoke-test controls (temporary)
+
+A dev-only panel to prove this on one series before anything runs at scale. Explicitly temporary —
+removed or folded into the real screen once P5 lands.
+
+- **Pick a series** from the library list.
+- **Scan** — dry-run for that series only: per chapter, what's on disk (from ComicInfo), which versions
+  the source has, what's missing. Downloads nothing.
+- **Fetch versions** — queue the missing alternates **for that one series**.
+- **Show identity** — dump what we read from each folder's ComicInfo (url, scanlator, number), so a
+  wrong identity is visible directly rather than inferred from behaviour.
+
+This is what signs off P3/P4 before the flag is ever turned on library-wide.
 
 ---
 
