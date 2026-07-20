@@ -132,7 +132,14 @@ function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t:
         {running && t.pagesTotal > 0 && <span className="dlc-count">{t.pagesDone}/{t.pagesTotal}{t.kbps > 0 ? ` · ${fmtSpeed(t.kbps)}` : ''}</span>}
       </div>
       <div className="dlc-bar"><div className={'dlc-fill ' + (failed ? 'failed' : '')} style={{ width: pct + '%' }} /></div>
-      {failed && (failedList || t.error) && <div className="dlc-foot err">{failedList ? `Failed: ${failedList}` : t.error}</div>}
+      {/* Which chapters failed AND why. The reason is what tells you whether retrying is worth it,
+          so it can't be dropped just because we also have a list of names. */}
+      {failed && (failedList || t.error) && (
+        <div className="dlc-foot err">
+          {failedList && <div>Failed: {failedList}</div>}
+          {t.error && <div className="dlc-why">{t.error}</div>}
+        </div>
+      )}
     </div>
   )
 }

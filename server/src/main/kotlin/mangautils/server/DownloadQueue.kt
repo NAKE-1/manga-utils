@@ -286,6 +286,14 @@ object DownloadQueue {
             attempts
                 .filter { it.outcome == "failed" && it.target in failedNames }
                 .associate { it.target to reasonFor(it.message.orEmpty()) }
+        // Remember the ones the source simply cannot serve, so nothing queues them again on its own.
+        val now = System.currentTimeMillis()
+        attempts.filter { it.outcome == "failed" && it.target in failedNames && isPermanent(it.message.orEmpty()) }
+            .forEach { a ->
+                task.chapters.filter { it.name == a.target }.forEach { ch ->
+                    mangautils.core.download.UnavailableChapters.mark(ch.url, task.mangaTitle, ch.name, reasonFor(a.message.orEmpty()), now)
+                }
+            }
         if (reasons.isEmpty()) return "${task.failedCount} chapter(s) couldn't be downloaded"
 
         // One reason for everything is the common case - say it once rather than per chapter.
@@ -299,6 +307,14 @@ object DownloadQueue {
             }
         return if (distinct.size == 1) "$which: ${distinct.first()}" else "$which: ${reasons.values.first()} (and other errors)"
     }
+
+    /**
+     * Is this failure the source's fault permanently? Only a missing/delisted chapter qualifies —
+     * everything else (down, rate-limited, timed out, Cloudflare) can succeed on a later attempt and
+     * must not be written off.
+     */
+    private fun isPermanent(message: String): Boolean =
+        message.contains("404") || message.contains("No chapters matched")
 
     /** Map a raw error to a plain explanation. Unrecognised messages pass through unchanged. */
     private fun reasonFor(message: String): String =

@@ -40,6 +40,7 @@ import mangautils.core.download.ChapterIdentity
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.DownloadStore
+import mangautils.core.download.UnavailableChapters
 import mangautils.core.extension.ExtensionIcons
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.ExtensionRepoClient
@@ -1280,7 +1281,12 @@ fun Application.module() {
                     val have = runCatching { ChapterIdentity.downloadedUrls(e.title) }.getOrDefault(emptySet())
                     val haveNums = runCatching { ChapterIdentity.downloadedNumbers(e.title) }.getOrDefault(emptySet())
                     val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
-                    val missing = groups.filterNot { (_, vs) -> vs.any { it.url in have || it.number in haveNums } }
+                    // Chapters the source can't serve are not "missing" in any actionable sense -
+                    // queueing them just fails again. Force-download from the chapter row to override.
+                    val unavailable = runCatching { UnavailableChapters.urls() }.getOrDefault(emptySet())
+                    val missing = groups
+                        .filterNot { (_, vs) -> vs.any { it.url in have || it.number in haveNums } }
+                        .filterNot { (_, vs) -> vs.all { it.url in unavailable } }
                         .map { (_, vs) -> vs.first() }
                         .map { DownloadQueue.Chapter(it.url, it.name) }
                     if (missing.isNotEmpty()) { DownloadQueue.enqueue(e.sourceId, e.mangaUrl, e.title, missing); n += missing.size }
@@ -1546,6 +1552,18 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+
+        /** Chapters the source can't serve, which automatic downloads skip. */
+        get("/api/downloads/unavailable") { call.respond(UnavailableChapters.list()) }
+
+        /**
+         * Forget a chapter is unavailable so it can be tried again - the Force path. Without ?url= it
+         * clears every mark, e.g. after a source has republished.
+         */
+        delete("/api/downloads/unavailable") {
+            UnavailableChapters.clear(call.queryParam("url"))
+            call.respond(UnavailableChapters.list())
+        }
 
         /**
          * Dry run: which scanlations are missing, and roughly what fetching them would cost. Downloads

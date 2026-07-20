@@ -1026,3 +1026,6 @@ main > * { animation: fade-up .22s ease backwards; }
 }
 .repo-total b { color: var(--text); font-weight: 600; font-size: 15px; }
 .repo-total .sep { margin: 0 7px; opacity: .45; }
+
+/* Why a download failed — sits under the failed-chapter list, quieter than it. */
+.dlc-why { margin-top: 3px; opacity: .85; font-size: 12px; line-height: 1.4; }

@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import mangautils.core.config.AppConfig
 import mangautils.core.download.ChapterIdentity
 import mangautils.core.download.DownloadManager
+import mangautils.core.download.UnavailableChapters
 import mangautils.core.library.LibraryEntry
 import mangautils.core.library.LibraryStore
 import org.slf4j.LoggerFactory
@@ -76,7 +77,9 @@ object ScanVersions {
         detail: Boolean,
     ): SeriesPlan {
         val onDisk = ChapterIdentity.versionsOf(entry.title).filter { it.complete }
-        val haveUrls = onDisk.mapNotNull { it.url }.toSet()
+        // Treat unavailable chapters as accounted for: they are not fetchable, so listing them as
+        // missing would overstate the plan and queue guaranteed failures.
+        val haveUrls = onDisk.mapNotNull { it.url }.toSet() + UnavailableChapters.urls()
         // Group the source's chapters by number so the report reads per chapter, not per URL.
         val byNumber = entry.knownChapters.groupBy { it.number }
         val chapters =

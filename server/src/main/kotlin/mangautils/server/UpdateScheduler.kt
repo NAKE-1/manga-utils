@@ -63,7 +63,9 @@ object UpdateScheduler {
     fun autoDownloadNew(results: List<UpdateResult>) {
         if (!runCatching { SettingsStore.get().autoDownloadNew }.getOrDefault(false)) return
         results.filter { it.newChapters.isNotEmpty() }.forEach { r ->
-            val chapters = r.newChapters.map { DownloadQueue.Chapter(it.url, it.name) }
+            // Never auto-queue a chapter the source can't serve; it would fail on every update.
+            val unavailable = runCatching { mangautils.core.download.UnavailableChapters.urls() }.getOrDefault(emptySet())
+            val chapters = r.newChapters.filterNot { it.url in unavailable }.map { DownloadQueue.Chapter(it.url, it.name) }
             if (chapters.isNotEmpty()) {
                 log.info("auto-downloading {} new chapter(s) of '{}'", chapters.size, r.entry.title)
                 DownloadQueue.enqueue(r.entry.sourceId, r.entry.mangaUrl, r.entry.title, chapters)
