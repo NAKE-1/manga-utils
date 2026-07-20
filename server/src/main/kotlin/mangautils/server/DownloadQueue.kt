@@ -157,9 +157,17 @@ object DownloadQueue {
             )
             val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(task.chapters.map { it.url }.toSet()))
             // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
-            val byTarget = job.attempts.groupBy { it.target }
-            val doneNames = byTarget.filterValues { atts -> atts.any { it.outcome == "ok" || it.outcome == "skipped" } }.keys
-            task.doneCount = doneNames.size
+            // Reconcile by URL, not by chapter name: several scanlations of a chapter share a name, so
+            // grouping attempts by name merges them and undercounts a versioned download.
+            val doneUrls = task.finishedUrls.toMutableSet()
+            // A chapter already on disk finishes without emitting progress, so it needs adding by hand.
+            // Deliberately narrow: a skip because the source gave up ("source unavailable") is NOT done,
+            // it just never ran — treating it as done is what hid 55 chapters from Retry.
+            job.attempts
+                .filter { it.outcome == "skipped" && it.message.orEmpty().contains("already", ignoreCase = true) }
+                .flatMap { a -> task.chapters.filter { it.name == a.target } }
+                .forEach { doneUrls.add(it.url) }
+            task.doneCount = doneUrls.size
             task.bytesPerSec = 0.0
             if (task.state == "stopped") {
                 // Stopped by the user: keep the chapters that finished, drop the rest silently
@@ -168,7 +176,9 @@ object DownloadQueue {
                 task.failedCount = 0
             } else {
                 task.failed.clear()
-                task.failed.addAll(task.chapters.filter { it.name !in doneNames })
+                // Anything without a successful outcome is retryable — including chapters the job never
+                // reached because the source's failure breaker tripped part-way through.
+                task.failed.addAll(task.chapters.filter { it.url !in doneUrls })
                 task.failedCount = task.failed.size
                 task.state = if (task.failedCount == 0) "done" else "failed"
                 if (task.failedCount > 0) task.error = job.error.ifBlank { "${task.failedCount} chapter(s) failed" }
