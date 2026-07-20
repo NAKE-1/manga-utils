@@ -36,6 +36,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
+import mangautils.core.download.ChapterIdentity
 import mangautils.core.config.SettingsStore
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.DownloadStore
@@ -311,6 +312,16 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
+@Serializable private data class IdentSrcDto(val url: String, val name: String, val scanlator: String? = null, val number: Float = -1f)
+@Serializable private data class IdentDiskDto(
+    val folder: String, val url: String? = null, val scanlator: String? = null, val resolvedScanlator: String? = null,
+    val number: Float? = null, val pageCount: Int = 0, val complete: Boolean = true, val unidentified: Boolean = false,
+)
+@Serializable private data class IdentityDto(
+    val title: String, val onDisk: Int, val identified: Int, val sourceVersions: Int, val sourceNumbers: Int,
+    val missing: Int, val chapters: List<IdentDiskDto>, val source: List<IdentSrcDto>,
+)
+
 @Serializable private data class RepoReq(val url: String)
 
 /** A repo plus what it offers: [extensions] packages advertising [sources] sources between them. */
@@ -1524,6 +1535,62 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+
+        /**
+         * Dev: what the app thinks each downloaded folder of a series actually is, plus what the source
+         * currently offers. This is how the per-scanlator work gets checked by eye before anything
+         * depends on it — a wrong identity shows up here rather than as odd behaviour weeks later.
+         */
+        get("/api/dev/identity") {
+            val title = call.queryParam("title") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("missing title"))
+            val sourceId = call.queryParam("source")?.toLongOrNull()
+            val mangaUrl = call.queryParam("url")
+            val dto =
+                withContext(Dispatchers.IO) {
+                    val onDisk = ChapterIdentity.versionsOf(title)
+                    // Map url -> scanlator from the source, so pre-P1 folders (no Translator tag) can
+                    // still be identified, and so we can list which versions exist but aren't downloaded.
+                    val fromSource =
+                        if (sourceId != null && mangaUrl != null) {
+                            runCatching {
+                                val src = SourceManager.loadSource(sourceId) ?: error("source not loaded")
+                                val seed = eu.kanade.tachiyomi.source.model.SManga.create().apply { url = mangaUrl }
+                                src.getChapterList(seed).map { c ->
+                                    IdentSrcDto(c.url, c.name, c.scanlator, c.chapter_number)
+                                }
+                            }.getOrElse { emptyList<IdentSrcDto>() }
+                        } else {
+                            emptyList()
+                        }
+                    val byUrl = fromSource.associateBy { it.url }
+                    val disk =
+                        onDisk.map { v ->
+                            IdentDiskDto(
+                                folder = v.folder,
+                                url = v.url,
+                                scanlator = v.scanlator,
+                                // Where the folder predates P1, recover the group from the source list.
+                                resolvedScanlator = v.scanlator ?: v.url?.let { byUrl[it]?.scanlator },
+                                number = v.number,
+                                pageCount = v.pageCount,
+                                complete = v.complete,
+                                unidentified = v.unidentified,
+                            )
+                        }.sortedWith(compareBy({ it.number ?: Float.MAX_VALUE }, { it.folder }))
+                    val haveUrls = disk.mapNotNull { it.url }.toSet()
+                    IdentityDto(
+                        title = title,
+                        onDisk = disk.size,
+                        identified = disk.count { !it.unidentified },
+                        sourceVersions = fromSource.size,
+                        sourceNumbers = fromSource.map { it.number }.distinct().size,
+                        missing = fromSource.filterNot { it.url in haveUrls }.size,
+                        chapters = disk,
+                        source = fromSource.sortedWith(compareBy({ it.number }, { it.scanlator ?: "" })),
+                    )
+                }
+            call.respond(dto)
+        }
         get("/api/logs") {
             val level = call.queryParam("level") ?: "warn"
             val limit = call.queryParam("limit")?.toIntOrNull() ?: 200
