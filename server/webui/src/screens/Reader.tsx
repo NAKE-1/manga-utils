@@ -16,6 +16,16 @@ const lsGet = (k: string, d: string) => localStorage.getItem(k) ?? d
 // Resume mid-chapter: remember how far through each chapter you were (as a 0-1 fraction), keyed by
 // source|chapter, in one capped localStorage map. Near-start/near-end positions aren't kept so a
 // fresh open (or a finished chapter) starts at the top.
+const PREF_KEY = 'reader.pref' // manga -> the scanlator you're deliberately reading
+function loadPrefs(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}') } catch { return {} }
+}
+function savePref(manga: string, scan: string) {
+  if (!manga || !scan) return
+  const m = loadPrefs(); m[manga] = scan
+  try { localStorage.setItem(PREF_KEY, JSON.stringify(m)) } catch { /* quota */ }
+}
+
 const POS_KEY = 'reader.positions'
 function loadPositions(): Record<string, number> {
   try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') } catch { return {} }
@@ -104,7 +114,11 @@ function ReaderPage({ src, sizing, index, onStatus }: { src: string; sizing: Siz
   )
 }
 
-function dedupChapters(current: Chapter | undefined, all: Chapter[]): Chapter[] {
+// Collapse each chapter number to one version for prev/next navigation. `preferred` is the scanlator you
+// were actually reading - it wins over `current.scanlator`, because `current` can be a forced detour: if
+// you're on Alpha and hit an Alpha-less 19.5, you land on Gamma's 19.5, but chapter 20 should snap BACK
+// to Alpha. Keying next/prev off the detour is exactly the "it says Gamma but I was reading Alpha" bug.
+function dedupChapters(current: Chapter | undefined, all: Chapter[], preferred?: string | null): Chapter[] {
   if (!current) return all
   const byNum = new Map<number, Chapter[]>()
   for (const c of all) {
@@ -115,7 +129,11 @@ function dedupChapters(current: Chapter | undefined, all: Chapter[]): Chapter[] 
   const keep = new Set<string>()
   for (const [num, g] of byNum) {
     if (num < 0) { g.forEach((c) => keep.add(c.url)); continue } // unnumbered: don't collapse
-    const pick = g.find((c) => c.url === current.url) || [...g].reverse().find((c) => c.scanlator === current.scanlator) || g[g.length - 1]
+    const pick =
+      g.find((c) => c.url === current.url) ||                                  // the number you're literally on
+      (preferred ? [...g].reverse().find((c) => c.scanlator === preferred) : undefined) || // stay on your group
+      [...g].reverse().find((c) => c.scanlator === current.scanlator) ||       // else whoever you're on now
+      g[g.length - 1]
     keep.add(pick.url)
   }
   return all.filter((c) => keep.has(c.url))
@@ -132,6 +150,9 @@ export function Reader() {
 
   const [count, setCount] = useState<number | null>(null)
   const [force, setForce] = useState(false) // you chose to try a known-broken chapter anyway
+  // The scanlator you're actually reading. Only changes when you had a real choice (a number with more
+  // than one version) - so a forced single-version detour never hijacks your preferred group.
+  const [preferredScan, setPreferredScan] = useState<string | null>(() => loadPrefs()[manga] ?? null)
   // Which chapter has been open long enough (500ms) to trust its progress reading - NOT a boolean. Right after a
   // switch the container has no real height, so scroll/height reads as a large fraction and the 40% gate
   // trips instantly. A boolean could not survive the render race that caused: setSettled(false) and
@@ -286,12 +307,23 @@ export function Reader() {
 
   // Navigate the de-duplicated list (scanlator-aware) so prev/next skip duplicate chapters.
   const cur = chapters.find((c) => c.url === chapter)
+  // Adopt the current scanlator as preferred ONLY when this number has alternatives - landing on it then
+  // meant a choice. A number with a single version (the Gamma-only 19.5 case) is forced, so it must not
+  // change what you prefer, or every chapter after the detour would inherit the wrong group.
+  useEffect(() => {
+    if (!cur?.scanlator) return
+    const versions = chapters.filter((c) => c.number === cur.number)
+    if (versions.length > 1 && cur.scanlator !== preferredScan) {
+      setPreferredScan(cur.scanlator)
+      savePref(manga, cur.scanlator)
+    }
+  }, [cur?.url, chapters, manga]) // eslint-disable-line react-hooks/exhaustive-deps
   // We already recorded that this chapter's images are gone (UnavailableChapters). Rendering the pages
   // would fire a burst of requests we know will 404 - which is also what trips the source-wide image
   // breaker and drags down the chapter you switch to. So ask first, and don't touch the network unless
   // you say to.
   const gated = !!cur?.unavailable && !force
-  const navList = dedupChapters(cur, chapters)
+  const navList = dedupChapters(cur, chapters, preferredScan)
   const idx = navList.findIndex((c) => c.url === chapter)
   const nextCh = idx > 0 ? navList[idx - 1] : undefined // newer
   const prevCh = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : undefined // older
