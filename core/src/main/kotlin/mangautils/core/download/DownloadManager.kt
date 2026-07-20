@@ -196,7 +196,7 @@ class DownloadManager(
                     runBlocking {
                         val pages = cand.source.getPageList(cand.chapter)
                         if (pages.isEmpty()) error("source returned 0 pages")
-                        downloadPages(cand.source, pages, chapter.name, cand.sourceId)
+                        downloadPages(cand.source, pages, chapter.name, chapter.url, cand.sourceId)
                     }
                 val dest = destFor(title, chapter)
                 if (downloadAsCbz) {
@@ -243,6 +243,7 @@ class DownloadManager(
         source: HttpSource,
         pages: List<Page>,
         chapterName: String,
+        chapterUrl: String,
         sourceId: Long,
     ): List<PageImage> =
         coroutineScope {
@@ -252,7 +253,7 @@ class DownloadManager(
             val bytes = java.util.concurrent.atomic.AtomicLong(0)
             val startNanos = System.nanoTime()
             // Emit an initial 0/total so the UI can show the bar immediately.
-            listener?.onProgress(PageProgress(chapterName, sourceId, 0, total, 0, 0))
+            listener?.onProgress(PageProgress(chapterName, chapterUrl, sourceId, 0, total, 0, 0))
             pages
                 .map { page ->
                     async(mangautils.core.async.Pools.download) {
@@ -263,7 +264,7 @@ class DownloadManager(
                             val d = done.incrementAndGet()
                             val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
                             synchronized(this@DownloadManager) {
-                                listener?.onProgress(PageProgress(chapterName, sourceId, d, total, totalBytes, elapsedMs))
+                                listener?.onProgress(PageProgress(chapterName, chapterUrl, sourceId, d, total, totalBytes, elapsedMs))
                             }
                             image
                         }

@@ -58,9 +58,11 @@ object DownloadQueue {
         @Volatile var bytesPerSec = 0.0
         @Volatile var lastLogAt = 0L // throttle for the live progress log line
         @Volatile var error = ""
-        // Chapters that failed (for the Retry button); names of finished chapters (live progress).
+        // Chapters that failed (for the Retry button); URLs of finished chapters (live progress).
+        // Keyed by URL, not name: several scanlations of one chapter share a name, so a name-keyed
+        // set would mark every version done as soon as any one of them finished.
         val failed = CopyOnWriteArrayList<Chapter>()
-        val finishedNames = ConcurrentHashMap.newKeySet<String>()
+        val finishedUrls = ConcurrentHashMap.newKeySet<String>()
         val active get() = state == "queued" || state == "running"
         fun nameToUrl(name: String) = chapters.firstOrNull { it.name == name }?.url ?: ""
     }
@@ -133,12 +135,15 @@ object DownloadQueue {
                 cancelled = { task.state == "stopped" }, // Stop button flips state → download aborts cooperatively
                 listener = { p ->
                     task.currentChapter = p.chapter
-                    task.currentChapterUrl = task.nameToUrl(p.chapter)
+                    // Fall back to the name lookup only for a downloader that predates chapterUrl.
+                    task.currentChapterUrl = p.chapterUrl.ifBlank { task.nameToUrl(p.chapter) }
                     task.pagesDone = p.pagesDone
                     task.pagesTotal = p.pagesTotal
                     task.bytesPerSec = p.bytesPerSecond
-                    if (p.finished && p.pagesTotal > 0) task.finishedNames.add(p.chapter)
-                    task.doneCount = task.finishedNames.size
+                    if (p.finished && p.pagesTotal > 0) {
+                        task.finishedUrls.add(p.chapterUrl.ifBlank { task.nameToUrl(p.chapter) })
+                    }
+                    task.doneCount = task.finishedUrls.size
                     // Live progress in the server log so you can watch a download happen (matches the
                     // READ/PRELOAD semantic lines). Throttled to ~0.8s so a fast chapter isn't a line
                     // per page; always logs the first page and the finished line.
@@ -246,7 +251,7 @@ object DownloadQueue {
         runCatching {
             val list = tasks.values.sortedBy { it.order }.map { t ->
                 PTask(t.id, t.sourceId, t.mangaUrl, t.mangaTitle, srcName(t.sourceId), t.order, t.tag, t.state,
-                    t.chapters.map { PChap(it.url, it.name) }, t.finishedNames.toList(), t.failed.map { it.name }, t.error)
+                    t.chapters.map { PChap(it.url, it.name) }, t.finishedUrls.toList(), t.failed.map { it.url }, t.error)
             }
             queueFile.createParentDirectories()
             queueFile.writeText(pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
@@ -262,14 +267,20 @@ object DownloadQueue {
         var interrupted = 0; var kept = 0
         for (pt in pf.tasks) {
             val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag }
-            pt.done.forEach { task.finishedNames.add(it) }
-            task.doneCount = pt.done.size
+            // Older queue files stored names here; map them back so a restart doesn't lose progress.
+            val urlByName = pt.chapters.associateBy({ it.name }, { it.url })
+            pt.done.forEach { task.finishedUrls.add(if (it.startsWith("http") || it in urlByName.values) it else urlByName[it] ?: it) }
+            task.doneCount = task.finishedUrls.size
             when (pt.state) {
                 "queued", "running", "interrupted" -> { task.state = "interrupted"; interrupted++ }
                 else -> {
                     task.state = pt.state
+                    // Match on URL, falling back to name for queue files written before this change.
+                    val byUrl = pt.chapters.associateBy { it.url }
                     val byName = pt.chapters.associateBy { it.name }
-                    task.failed.addAll(pt.failed.mapNotNull { n -> byName[n]?.let { Chapter(it.url, it.name) } })
+                    task.failed.addAll(
+                        pt.failed.mapNotNull { k -> (byUrl[k] ?: byName[k])?.let { Chapter(it.url, it.name) } },
+                    )
                     task.failedCount = task.failed.size
                     task.error = pt.error
                     kept++

@@ -8,6 +8,11 @@ package mangautils.core.download
 /** A live snapshot of a chapter download, emitted after each page completes. */
 data class PageProgress(
     val chapter: String,
+    /**
+     * Source URL of the chapter being downloaded. Unique per upload, unlike [chapter] — several
+     * scanlations of one chapter share a name, so anything tracking progress must key on this.
+     */
+    val chapterUrl: String = "",
     val sourceId: Long,
     val pagesDone: Int,
     val pagesTotal: Int,
