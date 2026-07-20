@@ -80,6 +80,16 @@ object ChapterIdentity {
         versionsOf(title).filter { it.complete }.mapNotNull { it.url }.toSet()
 
     /**
+     * Chapter numbers we hold at least one version of.
+     *
+     * URL matching alone is too strict: a source that re-uploads a chapter gives it a new URL, so the
+     * folder we already have stops matching and the chapter reads as missing — and gets fetched again.
+     * Falling back to the number keeps "I have a copy of this chapter" true across a re-upload.
+     */
+    fun downloadedNumbers(title: String): Set<Float> =
+        versionsOf(title).filter { it.complete }.mapNotNull { it.number }.toSet()
+
+    /**
      * Identify a single chapter folder or .cbz, without scanning the series. Used on the write path,
      * where scanning every sibling for each chapter would be quadratic.
      */

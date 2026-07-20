@@ -1064,9 +1064,10 @@ fun Application.module() {
                     // them. A number counts as downloaded when ANY of its versions is on disk; grabbing the
                     // remaining versions is a separate, opt-in action.
                     val have = runCatching { ChapterIdentity.downloadedUrls(it.title) }.getOrDefault(emptySet())
+                    val haveNums = runCatching { ChapterIdentity.downloadedNumbers(it.title) }.getOrDefault(emptySet())
                     val groups = it.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
                     val total = groups.size
-                    val downloaded = groups.count { (_, vs) -> vs.any { c -> c.url in have } }
+                    val downloaded = groups.count { (_, vs) -> vs.any { c -> c.url in have || c.number in haveNums } }
                     LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size,
                         last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0, downloaded, total)
                 }
@@ -1256,9 +1257,10 @@ fun Application.module() {
             val plan = withContext(Dispatchers.IO) {
                 val items = LibraryStore.list().map { e ->
                     val have = runCatching { ChapterIdentity.downloadedUrls(e.title) }.getOrDefault(emptySet())
+                    val haveNums = runCatching { ChapterIdentity.downloadedNumbers(e.title) }.getOrDefault(emptySet())
                     val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
                     val total = groups.size
-                    val downloaded = groups.count { (_, vs) -> vs.any { it.url in have } }
+                    val downloaded = groups.count { (_, vs) -> vs.any { it.url in have || it.number in haveNums } }
                     val src = runCatching { SourceManager.loadSource(e.sourceId)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: e.sourceId.toString()
                     MassPlanItemDto(e.sourceId.toString(), e.mangaUrl, e.title, src, total, downloaded, total - downloaded)
                 }.sortedWith(compareByDescending<MassPlanItemDto> { it.missing }.thenBy { it.title.lowercase() })
@@ -1276,8 +1278,9 @@ fun Application.module() {
                 var n = 0
                 LibraryStore.list().filter { (it.sourceId to it.mangaUrl) in wanted }.forEach { e ->
                     val have = runCatching { ChapterIdentity.downloadedUrls(e.title) }.getOrDefault(emptySet())
+                    val haveNums = runCatching { ChapterIdentity.downloadedNumbers(e.title) }.getOrDefault(emptySet())
                     val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
-                    val missing = groups.filterNot { (_, vs) -> vs.any { it.url in have } }
+                    val missing = groups.filterNot { (_, vs) -> vs.any { it.url in have || it.number in haveNums } }
                         .map { (_, vs) -> vs.first() }
                         .map { DownloadQueue.Chapter(it.url, it.name) }
                     if (missing.isNotEmpty()) { DownloadQueue.enqueue(e.sourceId, e.mangaUrl, e.title, missing); n += missing.size }
