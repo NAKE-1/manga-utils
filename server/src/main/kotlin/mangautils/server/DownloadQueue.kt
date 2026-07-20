@@ -181,7 +181,7 @@ object DownloadQueue {
                 task.failed.addAll(task.chapters.filter { it.url !in doneUrls })
                 task.failedCount = task.failed.size
                 task.state = if (task.failedCount == 0) "done" else "failed"
-                if (task.failedCount > 0) task.error = job.error.ifBlank { "${task.failedCount} chapter(s) failed" }
+                if (task.failedCount > 0) task.error = explainFailure(task, job.attempts)
             }
         }.onFailure {
             task.bytesPerSec = 0.0
@@ -195,7 +195,10 @@ object DownloadQueue {
                 Notifier.onDownloadComplete(task.sourceId, task.mangaUrl, task.mangaTitle, task.doneCount)
             }
             "failed" -> {
-                log.info("DOWNLOAD FAILED - '{}' ({}/{} done, {} failed)", task.mangaTitle, task.doneCount, task.total, task.failedCount)
+                log.info(
+                    "DOWNLOAD FAILED - '{}' ({}/{} done, {} failed) - {}",
+                    task.mangaTitle, task.doneCount, task.total, task.failedCount, task.error,
+                )
                 Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error)
             }
             "stopped" -> log.info("DOWNLOAD STOPPED - '{}' ({}/{} chapters kept)", task.mangaTitle, task.doneCount, task.total)
@@ -270,6 +273,53 @@ object DownloadQueue {
 
     /** Restore the queue from disk on startup. Active tasks become "interrupted" and wait for a manual
      *  Resume (they do NOT auto-start); finished ones are kept as history. */
+
+    /**
+     * Turn a download failure into something worth reading. "1 chapter(s) failed" says nothing you can
+     * act on; whether the source is down, the chapter's images are gone, or Cloudflare is in the way
+     * are three different problems with three different responses - and only one of them is worth
+     * retrying.
+     */
+    private fun explainFailure(task: Task, attempts: List<mangautils.core.status.JobAttempt>): String {
+        val failedNames = task.failed.map { it.name }.toSet()
+        val reasons =
+            attempts
+                .filter { it.outcome == "failed" && it.target in failedNames }
+                .associate { it.target to reasonFor(it.message.orEmpty()) }
+        if (reasons.isEmpty()) return "${task.failedCount} chapter(s) couldn't be downloaded"
+
+        // One reason for everything is the common case - say it once rather than per chapter.
+        val distinct = reasons.values.distinct()
+        val chapters = reasons.keys.sorted()
+        val which =
+            when {
+                chapters.size == 1 -> chapters.first()
+                chapters.size <= 3 -> chapters.joinToString(", ")
+                else -> "${chapters.take(2).joinToString(", ")} and ${chapters.size - 2} more"
+            }
+        return if (distinct.size == 1) "$which: ${distinct.first()}" else "$which: ${reasons.values.first()} (and other errors)"
+    }
+
+    /** Map a raw error to a plain explanation. Unrecognised messages pass through unchanged. */
+    private fun reasonFor(message: String): String =
+        when {
+            message.contains("404") ->
+                "the source is missing these images - the chapter is broken on their end, so retrying won't help"
+            message.contains("521") || message.contains("522") || message.contains("523") ->
+                "the source's server is unreachable - usually temporary, worth retrying later"
+            message.contains("503") || message.contains("502") ->
+                "the source is overloaded or down - worth retrying later"
+            message.contains("429") ->
+                "the source is rate-limiting us - wait a while before retrying"
+            message.contains("403") || message.contains("Cloudflare", ignoreCase = true) ->
+                "blocked by Cloudflare - a bypass may be needed for this source"
+            message.contains("timed out", ignoreCase = true) || message.contains("timeout", ignoreCase = true) ->
+                "the source timed out - worth retrying"
+            message.contains("No chapters matched") -> "the chapter is no longer listed on the source"
+            message.isBlank() -> "download failed for an unknown reason"
+            else -> message
+        }
+
     @Synchronized
     fun loadAndResume() {
         val pf = runCatching { if (queueFile.exists()) pjson.decodeFromString<PFile>(queueFile.readText()) else null }.getOrNull() ?: return
