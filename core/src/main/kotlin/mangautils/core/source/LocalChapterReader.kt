@@ -6,6 +6,7 @@
 package mangautils.core.source
 
 import mangautils.core.config.AppConfig
+import mangautils.core.download.ChapterIdentity
 import mangautils.core.download.DownloadManager
 import java.nio.file.Files
 import java.nio.file.Path
@@ -45,22 +46,36 @@ object LocalChapterReader {
 
     private fun isImage(name: String) = name.substringAfterLast('.', "").lowercase() in imageExts
 
-    fun localChapter(title: String, chapterName: String): LocalChapter? {
+    fun localChapter(title: String, chapterName: String, chapterUrl: String? = null): LocalChapter? {
         val base = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))
-        val cbz = base.resolve(DownloadManager.sanitize(chapterName) + ".cbz")
-        if (Files.exists(cbz)) {
-            val entries = runCatching {
-                ZipFile(cbz.toFile()).use { z -> z.entries().toList().map { it.name }.filter { isImage(it) }.sorted() }
-            }.getOrDefault(emptyList())
-            if (entries.isNotEmpty()) return LocalChapter.Archive(cbz, entries)
+        // Per-scanlator storage means the folder is "Chapter 89 [Gamma 2]", not "Chapter 89", so resolving
+        // by name alone misses the download entirely and we silently refetch from the source. The chapter
+        // URL is the actual identity (ComicInfo `Web`), and it also picks the RIGHT scanlation when we hold
+        // several of the same number - a name match could hand back a different group's pages.
+        if (chapterUrl != null) {
+            val folderName = ChapterIdentity.versionsOf(title).firstOrNull { it.url == chapterUrl && it.complete }?.folder
+            if (folderName != null) {
+                folderPages(base.resolve(folderName))?.let { return it }
+                archivePages(base.resolve(folderName + ".cbz"))?.let { return it }
+            }
         }
-        val folder = base.resolve(DownloadManager.sanitize(chapterName))
-        if (Files.isDirectory(folder)) {
-            val files = runCatching {
-                Files.list(folder).use { s -> s.filter { isImage(it.fileName.toString()) }.toList() }.sortedBy { it.fileName.toString() }
-            }.getOrDefault(emptyList())
-            if (files.isNotEmpty()) return LocalChapter.Folder(files)
-        }
-        return null
+        archivePages(base.resolve(DownloadManager.sanitize(chapterName) + ".cbz"))?.let { return it }
+        return folderPages(base.resolve(DownloadManager.sanitize(chapterName)))
+    }
+
+    private fun archivePages(cbz: java.nio.file.Path): LocalChapter? {
+        if (!Files.exists(cbz)) return null
+        val entries = runCatching {
+            ZipFile(cbz.toFile()).use { z -> z.entries().toList().map { it.name }.filter { isImage(it) }.sorted() }
+        }.getOrDefault(emptyList())
+        return if (entries.isEmpty()) null else LocalChapter.Archive(cbz, entries)
+    }
+
+    private fun folderPages(folder: java.nio.file.Path): LocalChapter? {
+        if (!Files.isDirectory(folder)) return null
+        val files = runCatching {
+            Files.list(folder).use { s -> s.filter { isImage(it.fileName.toString()) }.toList() }.sortedBy { it.fileName.toString() }
+        }.getOrDefault(emptyList())
+        return if (files.isEmpty()) null else LocalChapter.Folder(files)
     }
 }

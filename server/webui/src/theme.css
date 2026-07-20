@@ -1043,7 +1043,11 @@ main > * { animation: fade-up .22s ease backwards; }
 @media (hover: hover) { .chapter-dlbtn.broken:hover { filter: brightness(1.15); } }
 
 /* Reader: a chapter that wouldn't load, offering the other scanlations of the same number. */
-.r-failed { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #ccc; padding: 0 24px; }
+.r-failed {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; color: #ccc;
+  /* Clear the floating back/home buttons and the title chip, which otherwise sit on top of this text. */
+  padding: 96px 24px 0; text-align: center;
+}
 .r-failed-title { font-size: 16px; font-weight: 650; color: #eee; }
 .r-failed-why { font-size: 13px; opacity: .8; max-width: 44ch; line-height: 1.5; }
 .r-failed-alt { font-size: 12px; opacity: .65; margin-top: 6px; letter-spacing: .03em; text-transform: uppercase; }

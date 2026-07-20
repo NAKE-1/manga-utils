@@ -107,7 +107,12 @@ object SourceImage {
         } catch (e: Exception) {
             // A plain cancellation (you navigated away) isn't the source's fault — don't trip the breaker.
             if (e is CancellationException && e !is TimeoutCancellationException) throw e
-            SourceCircuits.images.recordFailure(sourceId)
+            // Extensions raise a missing image as an exception ("HTTP error 404"), not as a response, so
+            // the response-side 4xx check below never sees it. Same reasoning: a gone image is not a sick
+            // source, and counting it lets one dead chapter fast-fail the whole source for 20s.
+            val code = Regex("""HTTP error (\d{3})""").find(e.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+            if (code != null && code in 400..499 && code != 429) gone = true
+            if (!gone) SourceCircuits.images.recordFailure(sourceId)
             log.warn("page {} failed: {} ({})", page.index, e.message ?: e::class.simpleName, page.imageUrl)
             null
         }

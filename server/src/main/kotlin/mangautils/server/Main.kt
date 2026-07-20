@@ -1803,7 +1803,7 @@ fun Application.module() {
             val name = call.queryParam("name")
             val count = withContext(Dispatchers.IO) {
                 // Offline-first: a local download knows its own page count without the network.
-                val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name) }.getOrNull() else null
+                val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name, chapter) }.getOrNull() else null
                 local?.count ?: pagesFor(id, chapter).size
             }
             call.respond(PagesDto(count))
@@ -1860,7 +1860,7 @@ fun Application.module() {
             if (call.request.headers["X-Preload"] != null && index == 0) log.info("PRELOAD  next chapter {}", chapter)
             var fromSource = false
             val bytes = withContext(mangautils.core.async.Pools.image) {
-                val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name) }.getOrNull() else null
+                val local = if (title != null && name != null) runCatching { LocalChapterReader.localChapter(title, name, chapter) }.getOrNull() else null
                 if (local != null) {
                     local.bytes(index)
                 } else {
