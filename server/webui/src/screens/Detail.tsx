@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
+import { clearPositions } from './Reader'
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots, IconJetBrains } from '../components/icons'
 import { ProgressRing } from '../components/ProgressRing'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
@@ -267,6 +268,9 @@ export function Detail() {
   function bulkSetRead(urls: string[], read: boolean) {
     const next = new Set(readSet)
     urls.forEach((u) => { if (read) next.add(u); else next.delete(u); api.setRead(sourceId, url, u, read) })
+    // Unread means "I want to read this again", so the saved resume point has to go with it - otherwise
+    // reopening the chapter jumps you back to where you left off in the read you just discarded.
+    if (!read) clearPositions(sourceId, urls)
     setReadSet(next)
   }
   function toggleSelect(chUrl: string) {

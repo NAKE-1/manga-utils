@@ -20,6 +20,18 @@ const POS_KEY = 'reader.positions'
 function loadPositions(): Record<string, number> {
   try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') } catch { return {} }
 }
+/**
+ * Forget where you were in these chapters. Marking something unread means you intend to read it again
+ * from the start, so a leftover resume point would drop you back at 60% of a chapter you just reset -
+ * the read flag and the resume point describe the same thing and have to be cleared together.
+ */
+export function clearPositions(sourceId: string, chapterUrls: string[]) {
+  if (!chapterUrls.length) return
+  const m = loadPositions()
+  for (const u of chapterUrls) delete m[sourceId + '|' + u]
+  try { localStorage.setItem(POS_KEY, JSON.stringify(m)) } catch { /* quota */ }
+}
+
 function savePosition(key: string, frac: number) {
   if (!key) return
   const m = loadPositions()
