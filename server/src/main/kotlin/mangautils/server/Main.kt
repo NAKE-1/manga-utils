@@ -1058,10 +1058,15 @@ fun Application.module() {
                     // Group known chapters by number (dedup multi-scanlator variants); a chapter counts as
                     // downloaded if ANY of its variants has a file on disk. Badge = unique chapters, not the
                     // scanlator-inflated total, so a fully-downloaded series reads green (not perpetual yellow).
-                    val onDisk = runCatching { DownloadManager.downloadedChapterNames(it.title) }.getOrDefault(emptySet())
+                    // Match on chapter URL, not folder name. Every version of a chapter shares a name, and
+                    // versioned folders are "Chapter 4 [Gamma 2]", so a name match now fails for anything
+                    // downloaded since versioning - reporting chapters we hold as missing and re-fetching
+                    // them. A number counts as downloaded when ANY of its versions is on disk; grabbing the
+                    // remaining versions is a separate, opt-in action.
+                    val have = runCatching { ChapterIdentity.downloadedUrls(it.title) }.getOrDefault(emptySet())
                     val groups = it.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
                     val total = groups.size
-                    val downloaded = groups.count { (_, vs) -> vs.any { c -> DownloadManager.sanitize(c.name) in onDisk } }
+                    val downloaded = groups.count { (_, vs) -> vs.any { c -> c.url in have } }
                     LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size,
                         last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0, downloaded, total)
                 }
@@ -1250,10 +1255,10 @@ fun Application.module() {
         get("/api/downloads/mass/plan") {
             val plan = withContext(Dispatchers.IO) {
                 val items = LibraryStore.list().map { e ->
-                    val onDisk = runCatching { DownloadManager.downloadedChapterNames(e.title) }.getOrDefault(emptySet())
+                    val have = runCatching { ChapterIdentity.downloadedUrls(e.title) }.getOrDefault(emptySet())
                     val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
                     val total = groups.size
-                    val downloaded = groups.count { (_, vs) -> vs.any { DownloadManager.sanitize(it.name) in onDisk } }
+                    val downloaded = groups.count { (_, vs) -> vs.any { it.url in have } }
                     val src = runCatching { SourceManager.loadSource(e.sourceId)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: e.sourceId.toString()
                     MassPlanItemDto(e.sourceId.toString(), e.mangaUrl, e.title, src, total, downloaded, total - downloaded)
                 }.sortedWith(compareByDescending<MassPlanItemDto> { it.missing }.thenBy { it.title.lowercase() })
@@ -1270,9 +1275,9 @@ fun Application.module() {
             val queued = withContext(Dispatchers.IO) {
                 var n = 0
                 LibraryStore.list().filter { (it.sourceId to it.mangaUrl) in wanted }.forEach { e ->
-                    val onDisk = runCatching { DownloadManager.downloadedChapterNames(e.title) }.getOrDefault(emptySet())
+                    val have = runCatching { ChapterIdentity.downloadedUrls(e.title) }.getOrDefault(emptySet())
                     val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
-                    val missing = groups.filterNot { (_, vs) -> vs.any { DownloadManager.sanitize(it.name) in onDisk } }
+                    val missing = groups.filterNot { (_, vs) -> vs.any { it.url in have } }
                         .map { (_, vs) -> vs.first() }
                         .map { DownloadQueue.Chapter(it.url, it.name) }
                     if (missing.isNotEmpty()) { DownloadQueue.enqueue(e.sourceId, e.mangaUrl, e.title, missing); n += missing.size }

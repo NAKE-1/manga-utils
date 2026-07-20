@@ -3,6 +3,7 @@ package mangautils.server
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.runBlocking
+import mangautils.core.download.ChapterIdentity
 import mangautils.core.download.DownloadManager
 import mangautils.core.library.BookmarkStore
 import mangautils.core.library.HistoryStore
@@ -55,14 +56,15 @@ object MigrationJob {
         val fromEntry = LibraryStore.find(fromSource, fromUrl) ?: error("The source manga isn't in your library.")
         val readSet = ReadStore.readUrls(fromSource, fromUrl)
         val bmSet = BookmarkStore.bookmarks(fromSource, fromUrl)
-        val dlNames = runCatching { DownloadManager.downloadedChapterNames(fromEntry.title) }.getOrDefault(emptySet())
+        // By URL, not name - see the note in Main.kt's library counts.
+        val dlUrls = runCatching { ChapterIdentity.downloadedUrls(fromEntry.title) }.getOrDefault(emptySet())
 
         // Count UNIQUE chapters (grouped by number, else name) — the same grouping the detail page and
         // library badge use — so a multi-scanlator source shows 95 chapters, not 277 raw entries.
         fun key(number: Float, name: String) = if (number > 0) "n$number" else "t${name.trim().lowercase()}"
         val fromGroups = fromEntry.knownChapters.groupBy { key(it.number, it.name) }
         val fromTotal = fromGroups.size
-        val fromDownloaded = fromGroups.count { (_, vs) -> vs.any { DownloadManager.sanitize(it.name) in dlNames } }
+        val fromDownloaded = fromGroups.count { (_, vs) -> vs.any { it.url in dlUrls } }
 
         val readNumbers = fromEntry.knownChapters.filter { it.url in readSet && it.number >= 0 }.map { it.number }.toSet()
         val bmNumbers = fromEntry.knownChapters.filter { it.url in bmSet && it.number >= 0 }.map { it.number }.toSet()
@@ -122,12 +124,13 @@ object MigrationJob {
 
             if (deleteOldDownloads) {
                 phase = "downloads"
-                val dlNames = runCatching { DownloadManager.downloadedChapterNames(fromEntry.title) }.getOrDefault(emptySet())
-                val n = dlNames.size
+                // By URL, not name - see the note in Main.kt's library counts.
+                val dlUrls = runCatching { ChapterIdentity.downloadedUrls(fromEntry.title) }.getOrDefault(emptySet())
+                val n = dlUrls.size
                 DownloadManager.deleteDownloads(fromEntry.title)
                 step("Deleted $n old downloaded chapter(s).")
                 if (reDownload && n > 0) {
-                    val dlNumbers = fromEntry.knownChapters.filter { DownloadManager.sanitize(it.name) in dlNames && it.number >= 0 }.map { it.number }.toSet()
+                    val dlNumbers = fromEntry.knownChapters.filter { it.url in dlUrls && it.number >= 0 }.map { it.number }.toSet()
                     val bDl = plan.toChapters.filter { it.chapter_number in dlNumbers }.map { DownloadQueue.Chapter(it.url, it.name) }
                     if (bDl.isNotEmpty()) { DownloadQueue.enqueue(toSource, toUrl, plan.toTitle, bDl, tag = "migration"); step("Queued ${bDl.size} chapter(s) to re-download from the new source — see Downloads.") }
                 }
