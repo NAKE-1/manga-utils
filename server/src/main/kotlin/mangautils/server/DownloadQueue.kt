@@ -176,10 +176,12 @@ object DownloadQueue {
                 .forEach { doneUrls.add(it.url) }
             foldSkips()
 
-            // Auto-retry transient failures at the END of this manga's chapters — not the whole download
-            // list. A rate-limited/overloaded chapter reliably succeeds once the source has had the rest of
-            // the manga to recover; a 404 never will, so permanent failures are excluded and left for the
-            // colour/notify step. Bounded so a genuinely-down source can't loop.
+            // Auto-retry transient failures. A rate-limited/overloaded chapter reliably succeeds once the
+            // source has had a rest; a 404 never will, so permanent failures are excluded and left for the
+            // colour/notify step. The rest MUST be a real wait: when the whole source is down (502 on the
+            // very first call) nothing else downloads, so without an explicit delay all three retries fire
+            // in ~150ms and fail identically - useless. Escalating backoff gives genuine recovery time,
+            // interruptible by Stop. Bounded so a source that stays down can't loop.
             while (task.state != "stopped" && task.autoRetries < AUTO_RETRY_CAP) {
                 doneUrls.addAll(task.finishedUrls)
                 val stillFailed = allUrls - doneUrls
@@ -188,10 +190,17 @@ object DownloadQueue {
                 val transient = (stillFailed - permanentUrls).toSet()
                 if (transient.isEmpty()) break
                 task.autoRetries++
+                val waitMs = AUTO_RETRY_BACKOFF_MS * task.autoRetries // 20s, 40s, 60s
                 log.info(
-                    "DOWNLOAD auto-retry {}/{} - '{}' ({} transient failure(s), source rested for the rest of the manga)",
-                    task.autoRetries, AUTO_RETRY_CAP, task.mangaTitle, transient.size,
+                    "DOWNLOAD auto-retry {}/{} - '{}' ({} transient failure(s), resting the source {}s first)",
+                    task.autoRetries, AUTO_RETRY_CAP, task.mangaTitle, transient.size, waitMs / 1000,
                 )
+                // ponytail: the wait holds this task's pool slot (it stays "running"), so a source that's
+                // down ties up one slot per retrying task for up to ~2min. Bounded and other sources keep
+                // running; re-queue-with-delay instead if that ever starves the pool.
+                var waited = 0L
+                while (waited < waitMs && task.state != "stopped") { Thread.sleep(500); waited += 500 }
+                if (task.state == "stopped") break
                 val rj = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(transient))
                 attempts.addAll(rj.attempts)
                 doneUrls.addAll(task.finishedUrls)
@@ -347,6 +356,10 @@ object DownloadQueue {
     /** How many automatic transient-retry passes a task gets. Rate-limited chapters recover reliably on
      *  retry, so give them real room; 404s are excluded, so this never burns a pass on a dead chapter. */
     private const val AUTO_RETRY_CAP = 3
+
+    /** Base backoff before an auto-retry, multiplied by the attempt number (20s, 40s, 60s). Real rest so a
+     *  down source can recover; without it retries fire instantly and fail identically. */
+    private const val AUTO_RETRY_BACKOFF_MS = 20_000L
 
     /**
      * Is this failure the source's fault permanently? Only a missing/delisted chapter qualifies —
