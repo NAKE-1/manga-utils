@@ -118,9 +118,25 @@ object Notifier {
         if (cfg()?.downloadComplete == true) bg.submit { runCatching { enqueueManga("✅ **Downloaded** $done chapter${plural(done)}", sourceId, mangaUrl, title) } }
     }
 
-    fun onDownloadFailed(sourceId: Long, mangaUrl: String, title: String, failed: Int, reason: String) {
+    /**
+     * A download task ended with failures. Whether to ping is per-cause, not blanket: a rate-limit or a
+     * momentary overload that auto-retry couldn't clear stays silent (the card is enough), while a source
+     * that's down, a Cloudflare wall, a genuinely-missing chapter, or a 404 you're covered for all warrant
+     * a line. [failClass] is DownloadQueue's verdict: "transient" | "alternative" | "gone" | "".
+     */
+    fun onDownloadFailed(sourceId: Long, mangaUrl: String, title: String, failed: Int, reason: String, failClass: String = "") {
         if (!active() || cfg()?.downloadFailed != true) return
-        bg.submit { runCatching { enqueueManga("⚠️ **Download failed** — $failed chapter${plural(failed)}\n${reason.take(500)}", sourceId, mangaUrl, title, color = RED) } }
+        // Transient that recovered is silent — UNLESS it's a source-down / Cloudflare cause, which won't
+        // fix itself and you may want to act on.
+        val actionableTransient = reason.contains("unreachable") ||
+            reason.contains("Cloudflare", ignoreCase = true) || reason.contains("blocked", ignoreCase = true)
+        if (failClass == "transient" && !actionableTransient) return
+        val (label, color) = when (failClass) {
+            "alternative" -> "ℹ️ **Missing here — covered by another scan**" to AMBER
+            "transient" -> "⚠️ **Couldn't reach source**" to AMBER
+            else -> "⚠️ **Download failed**" to RED // "gone" or unclassified
+        }
+        bg.submit { runCatching { enqueueManga("$label — $failed chapter${plural(failed)}\n${reason.take(500)}", sourceId, mangaUrl, title, color = color) } }
     }
 
     /** Called when the download queue goes idle — flush a session summary of everything downloaded. */

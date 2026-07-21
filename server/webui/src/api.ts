@@ -339,6 +339,7 @@ export interface DlTask {
   total: number; done: number; failed: number
   currentChapter: string; currentChapterUrl: string; pagesDone: number; pagesTotal: number
   kbps: number; error: string; failedChapters: DlChapterRef[]; tag: string
+  failClass?: string; autoRetries?: number // "" | "transient" | "alternative" | "gone"
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 

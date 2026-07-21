@@ -339,6 +339,8 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
     val total: Int, val done: Int, val failed: Int,
     val currentChapter: String, val currentChapterUrl: String, val pagesDone: Int, val pagesTotal: Int,
     val kbps: Double, val error: String, val failedChapters: List<DlChapterReq>, val tag: String = "",
+    /** What the failures mean, for the card colour: "" | "transient" | "alternative" | "gone". */
+    val failClass: String = "", val autoRetries: Int = 0,
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 @Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
@@ -697,6 +699,7 @@ private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
             it.total, it.doneCount, it.failedCount,
             it.currentChapter, it.currentChapterUrl, it.pagesDone, it.pagesTotal,
             it.bytesPerSec / 1024.0, it.error, it.failed.map { c -> DlChapterReq(c.url, c.name) }, it.tag,
+            it.failClass, it.autoRetries,
         )
     },
     DownloadQueue.activeCount(),

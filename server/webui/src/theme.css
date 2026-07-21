@@ -716,9 +716,20 @@ img { display: block; }
 .dlc-bar { height: 4px; border-radius: 999px; background: var(--card-2); overflow: hidden; margin-top: 8px; }
 .dlc-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
 .dlc-fill.done { background: #3fae5a; }
-.dlc-fill.failed, .dlc-fill.stopped { background: #d34b3f; }
+.dlc-fill.stopped { background: #d34b3f; }
+/* Failure colour is now by class, not a blanket red. Red is reserved for genuinely-missing chapters;
+   a busy source or a chapter covered by another scan reads amber/green - not a real problem. */
+.dlc-fill.fc-gone { background: #d34b3f; }
+.dlc-fill.fc-transient { background: #e0a458; }
+.dlc-fill.fc-alternative { background: #3fae5a; }
 .dlc-foot { font-size: 12px; color: var(--muted); margin-top: 5px; min-height: 14px; font-variant-numeric: tabular-nums; }
-.dlc-foot.err { color: #e0715c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dlc-foot.fc-gone { color: #e0715c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dlc-foot.fc-transient { color: #d8974a; }
+.dlc-foot.fc-alternative { color: #57a06f; }
+.dlc-fc { font-weight: 700; }
+.dlc-retry { display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: #d8974a; background: rgba(224,164,88,.16); border-radius: 5px;
+  padding: 1px 6px; vertical-align: middle; }
 .dl-state { flex: 0 0 auto; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; background: var(--card-2); color: var(--muted); }
 .dl-state.done { background: rgba(63,174,90,0.18); color: #3fae5a; }
 .dl-state.failed, .dl-state.stopped { background: rgba(211,75,63,0.18); color: #d34b3f; }

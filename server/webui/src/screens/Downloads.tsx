@@ -96,6 +96,10 @@ function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t:
   const queued = t.state === 'queued'
   const failed = t.state === 'failed'
   const interrupted = t.state === 'interrupted'
+  // A failed task isn't uniformly "bad": the source may have just been busy (amber), the chapters may be
+  // covered by another scan (green/amber), or genuinely gone (red). Only the last is a real red problem.
+  const fc = t.failClass || (failed ? 'gone' : '')
+  const failLabel = fc === 'transient' ? "Couldn't reach source" : fc === 'alternative' ? 'Missing here — covered elsewhere' : fc === 'gone' ? 'Missing — no other copy' : ''
   // Bar = finished chapters + the fraction of the chapter in progress.
   const cur = t.pagesTotal > 0 ? t.pagesDone / t.pagesTotal : 0
   const pct = t.total > 0 ? Math.round(((t.done + (running ? cur : 0)) / t.total) * 100) : 0
@@ -106,7 +110,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t:
   return (
     <div className="dlc">
       <div className="dlc-top">
-        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.mangaTitle}</div>
+        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.mangaTitle}{running && (t.autoRetries ?? 0) > 0 && <span className="dlc-retry" title="Retrying chapters the source was too busy for">retrying</span>}</div>
         <div className="dlc-actions">
           {queued && (
             <span className="dlc-reorder">
@@ -131,11 +135,12 @@ function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t:
         </span>
         {running && t.pagesTotal > 0 && <span className="dlc-count">{t.pagesDone}/{t.pagesTotal}{t.kbps > 0 ? ` · ${fmtSpeed(t.kbps)}` : ''}</span>}
       </div>
-      <div className="dlc-bar"><div className={'dlc-fill ' + (failed ? 'failed' : '')} style={{ width: pct + '%' }} /></div>
-      {/* Which chapters failed AND why. The reason is what tells you whether retrying is worth it,
-          so it can't be dropped just because we also have a list of names. */}
+      <div className="dlc-bar"><div className={'dlc-fill ' + (failed ? 'fc-' + fc : '')} style={{ width: pct + '%' }} /></div>
+      {/* Which chapters failed AND why. The reason tells you whether retrying is worth it, and the class
+          tells you whether it's a real problem: red = genuinely missing, amber = busy source or covered. */}
       {failed && (failedList || t.error) && (
-        <div className="dlc-foot err">
+        <div className={'dlc-foot fc-' + fc}>
+          {failLabel && <div className="dlc-fc">{failLabel}</div>}
           {failedList && <div>Failed: {failedList}</div>}
           {t.error && <div className="dlc-why">{t.error}</div>}
         </div>

@@ -58,6 +58,10 @@ object DownloadQueue {
         @Volatile var bytesPerSec = 0.0
         @Volatile var lastLogAt = 0L // throttle for the live progress log line
         @Volatile var error = ""
+        @Volatile var autoRetries = 0 // automatic transient-retry passes already spent (capped)
+        // What the remaining failures mean, for the card colour: "" none, "transient" source was busy,
+        // "alternative" a 404 we hold under another scan, "gone" a 404 with no other copy. Worst wins.
+        @Volatile var failClass = ""
         // Chapters that failed (for the Retry button); URLs of finished chapters (live progress).
         // Keyed by URL, not name: several scanlations of one chapter share a name, so a name-keyed
         // set would mark every version done as soon as any one of them finished.
@@ -122,6 +126,7 @@ object DownloadQueue {
     private fun run(task: Task) {
         if (Thread.currentThread().isInterrupted) { task.state = "stopped"; return }
         task.state = "running"
+        task.failClass = "" // recomputed at the end; clear stale colour from a prior run
         Notifier.onDownloadStart(task.sourceId, task.mangaUrl, task.mangaTitle, task.total)
         runCatching {
             val s = SettingsStore.get()
@@ -155,18 +160,44 @@ object DownloadQueue {
                     }
                 },
             )
-            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(task.chapters.map { it.url }.toSet()))
+            val allUrls = task.chapters.map { it.url }.toSet()
+            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls))
             // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
             // Reconcile by URL, not by chapter name: several scanlations of a chapter share a name, so
             // grouping attempts by name merges them and undercounts a versioned download.
             val doneUrls = task.finishedUrls.toMutableSet()
+            val attempts = job.attempts.toMutableList() // accumulates across auto-retry passes
             // A chapter already on disk finishes without emitting progress, so it needs adding by hand.
             // Deliberately narrow: a skip because the source gave up ("source unavailable") is NOT done,
             // it just never ran — treating it as done is what hid 55 chapters from Retry.
-            job.attempts
+            fun foldSkips() = attempts
                 .filter { it.outcome == "skipped" && it.message.orEmpty().contains("already", ignoreCase = true) }
                 .flatMap { a -> task.chapters.filter { it.name == a.target } }
                 .forEach { doneUrls.add(it.url) }
+            foldSkips()
+
+            // Auto-retry transient failures at the END of this manga's chapters — not the whole download
+            // list. A rate-limited/overloaded chapter reliably succeeds once the source has had the rest of
+            // the manga to recover; a 404 never will, so permanent failures are excluded and left for the
+            // colour/notify step. Bounded so a genuinely-down source can't loop.
+            while (task.state != "stopped" && task.autoRetries < AUTO_RETRY_CAP) {
+                doneUrls.addAll(task.finishedUrls)
+                val stillFailed = allUrls - doneUrls
+                if (stillFailed.isEmpty()) break
+                val permanentUrls = permanentFailedUrls(task, attempts)
+                val transient = (stillFailed - permanentUrls).toSet()
+                if (transient.isEmpty()) break
+                task.autoRetries++
+                log.info(
+                    "DOWNLOAD auto-retry {}/{} - '{}' ({} transient failure(s), source rested for the rest of the manga)",
+                    task.autoRetries, AUTO_RETRY_CAP, task.mangaTitle, transient.size,
+                )
+                val rj = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(transient))
+                attempts.addAll(rj.attempts)
+                doneUrls.addAll(task.finishedUrls)
+                foldSkips()
+            }
+
             task.doneCount = doneUrls.size
             task.bytesPerSec = 0.0
             if (task.state == "stopped") {
@@ -181,7 +212,10 @@ object DownloadQueue {
                 task.failed.addAll(task.chapters.filter { it.url !in doneUrls })
                 task.failedCount = task.failed.size
                 task.state = if (task.failedCount == 0) "done" else "failed"
-                if (task.failedCount > 0) task.error = explainFailure(task, job.attempts)
+                if (task.failedCount > 0) {
+                    task.error = explainFailure(task, attempts)
+                    task.failClass = classifyFailures(task, attempts)
+                }
             }
         }.onFailure {
             task.bytesPerSec = 0.0
@@ -199,7 +233,7 @@ object DownloadQueue {
                     "DOWNLOAD FAILED - '{}' ({}/{} done, {} failed) - {}",
                     task.mangaTitle, task.doneCount, task.total, task.failedCount, task.error,
                 )
-                Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error)
+                Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error, task.failClass)
             }
             "stopped" -> log.info("DOWNLOAD STOPPED - '{}' ({}/{} chapters kept)", task.mangaTitle, task.doneCount, task.total)
         }
@@ -252,6 +286,7 @@ object DownloadQueue {
         val id: String, val sourceId: Long, val mangaUrl: String, val title: String, val source: String,
         val order: Int, val tag: String, val state: String,
         val chapters: List<PChap>, val done: List<String>, val failed: List<String>, val error: String,
+        val autoRetries: Int = 0, val failClass: String = "",
     )
     @Serializable private data class PFile(val version: Int = 1, val savedAt: Long, val tasks: List<PTask>)
 
@@ -264,7 +299,8 @@ object DownloadQueue {
         runCatching {
             val list = tasks.values.sortedBy { it.order }.map { t ->
                 PTask(t.id, t.sourceId, t.mangaUrl, t.mangaTitle, srcName(t.sourceId), t.order, t.tag, t.state,
-                    t.chapters.map { PChap(it.url, it.name) }, t.finishedUrls.toList(), t.failed.map { it.url }, t.error)
+                    t.chapters.map { PChap(it.url, it.name) }, t.finishedUrls.toList(), t.failed.map { it.url }, t.error,
+                    t.autoRetries, t.failClass)
             }
             queueFile.createParentDirectories()
             queueFile.writeText(pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
@@ -308,6 +344,10 @@ object DownloadQueue {
         return if (distinct.size == 1) "$which: ${distinct.first()}" else "$which: ${reasons.values.first()} (and other errors)"
     }
 
+    /** How many automatic transient-retry passes a task gets. Rate-limited chapters recover reliably on
+     *  retry, so give them real room; 404s are excluded, so this never burns a pass on a dead chapter. */
+    private const val AUTO_RETRY_CAP = 3
+
     /**
      * Is this failure the source's fault permanently? Only a missing/delisted chapter qualifies —
      * everything else (down, rate-limited, timed out, Cloudflare) can succeed on a later attempt and
@@ -315,6 +355,46 @@ object DownloadQueue {
      */
     private fun isPermanent(message: String): Boolean =
         message.contains("404") || message.contains("No chapters matched")
+
+    /** URLs of chapters that failed permanently (404/delisted) — the ones auto-retry must skip. Name-keyed
+     *  like explainFailure, since attempts carry the chapter name, not its URL. */
+    private fun permanentFailedUrls(task: Task, attempts: List<mangautils.core.status.JobAttempt>): Set<String> {
+        val permanentNames = attempts
+            .filter { it.outcome == "failed" && isPermanent(it.message.orEmpty()) }
+            .map { it.target }.toSet()
+        return task.chapters.filter { it.name in permanentNames }.map { it.url }.toSet()
+    }
+
+    /**
+     * Classify what the remaining failures mean, for the card colour. Worst wins, because the bar is one
+     * colour: a genuinely-gone chapter (red) outranks a busy source (amber) outranks a covered 404 (green).
+     * A transient failure only lands here after auto-retry has given up on it.
+     */
+    private fun classifyFailures(task: Task, attempts: List<mangautils.core.status.JobAttempt>): String {
+        val permanentUrls = permanentFailedUrls(task, attempts)
+        var gone = false; var alternative = false; var transient = false
+        for (ch in task.failed) {
+            if (ch.url !in permanentUrls) { transient = true; continue } // source was busy, not missing
+            if (hasAlternative(task.sourceId, task.mangaUrl, task.mangaTitle, ch.url)) alternative = true else gone = true
+        }
+        return when {
+            gone -> "gone"
+            transient -> "transient"
+            alternative -> "alternative"
+            else -> ""
+        }
+    }
+
+    /** Do we have — or could we still get — this chapter's number from a different scanlation? A 404 that's
+     *  covered elsewhere isn't a hole in the library, so it reads green rather than red. */
+    private fun hasAlternative(sourceId: Long, mangaUrl: String, mangaTitle: String, chapterUrl: String): Boolean {
+        val entry = mangautils.core.library.LibraryStore.find(sourceId, mangaUrl) ?: return false
+        val number = entry.knownChapters.firstOrNull { it.url == chapterUrl }?.number ?: return false
+        if (number < 0) return false // unnumbered can't be matched across scans
+        if (runCatching { mangautils.core.download.ChapterIdentity.hasAnyVersion(mangaTitle, number) }.getOrDefault(false)) return true
+        val unavailable = mangautils.core.download.UnavailableChapters.urls()
+        return entry.knownChapters.any { it.number == number && it.url != chapterUrl && it.url !in unavailable }
+    }
 
     /** Map a raw error to a plain explanation. Unrecognised messages pass through unchanged. */
     private fun reasonFor(message: String): String =
@@ -342,7 +422,7 @@ object DownloadQueue {
         if (pf.tasks.isEmpty()) return
         var interrupted = 0; var kept = 0
         for (pt in pf.tasks) {
-            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag }
+            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag; autoRetries = pt.autoRetries; failClass = pt.failClass }
             // Older queue files stored names here; map them back so a restart doesn't lose progress.
             val urlByName = pt.chapters.associateBy({ it.name }, { it.url })
             pt.done.forEach { task.finishedUrls.add(if (it.startsWith("http") || it in urlByName.values) it else urlByName[it] ?: it) }
