@@ -654,13 +654,28 @@ private val browseCache = ConcurrentHashMap<String, Pair<Long, PageResultDto>>()
 // Cache thumbnailed cover bytes (per cover url) so the grid isn't re-fetching + re-resizing.
 private val coverCache = ConcurrentHashMap<String, ByteArray>()
 
+/**
+ * The source sometimes lists the same chapter twice under one group name — e.g. two distinct "Gamma 3"
+ * uploads of ch 82. We keep both (they may differ), but two identical "Gamma 3" rows are confusing, so
+ * the duplicates are numbered Windows-style: the first stays "Gamma 3", the next become "Gamma 3 (2)",
+ * "Gamma 3 (3)". Display only — the chapter URL, the on-disk folder, and ComicInfo are all untouched.
+ */
+private fun disambiguateScanlators(chapters: List<ChapterDto>): List<ChapterDto> {
+    val seen = HashMap<String, Int>()
+    return chapters.map { c ->
+        val scan = c.scanlator?.takeIf { it.isNotBlank() } ?: return@map c
+        val n = (seen["${c.number} $scan"]?.plus(1) ?: 1).also { seen["${c.number} $scan"] = it }
+        if (n == 1) c else c.copy(scanlator = "$scan ($n)")
+    }
+}
+
 /** Build details from a cached library entry — instant + offline (mirrors the desktop). */
 private fun cachedDetail(e: LibraryEntry): DetailDto {
     // Looked up once for the whole list, not per chapter.
     val unavailableBy = runCatching { UnavailableChapters.list().associate { u -> u.url to u.reason } }.getOrDefault(emptyMap())
     return DetailDto(
     MangaDto(e.sourceId.toString(), e.mangaUrl, e.title, e.thumbnailUrl, e.author, e.artist, e.description, e.genre, e.status),
-    e.knownChapters.map {
+    disambiguateScanlators(e.knownChapters.map {
         // Per *version*, not per name: several scanlations share a chapter name, so a name check marks
         // all of them downloaded as soon as any one is, which greys out the button for the very
         // alternates you're trying to fetch. Matches legacy name-only folders too, via their ComicInfo.
@@ -669,7 +684,7 @@ private fun cachedDetail(e: LibraryEntry): DetailDto {
             runCatching { ChapterIdentity.hasVersion(e.title, it.url) }.getOrDefault(false),
             unavailableBy[it.url],
         )
-    },
+    }),
         e.newChapters.toList(),
         e.newVersions.toList(),
     )
@@ -1033,7 +1048,7 @@ fun Application.module() {
                     }
                     DetailDto(
                         d.manga.toDto(id),
-                        d.chapters.map { ch ->
+                        disambiguateScanlators(d.chapters.map { ch ->
                             val chName = runCatching { ch.name }.getOrDefault("")
                             ChapterDto(
                                 url = runCatching { ch.url }.getOrDefault(""),
@@ -1043,7 +1058,7 @@ fun Application.module() {
                                 number = runCatching { mangautils.core.util.ChapterNumber.of(ch, mangaTitle) }.getOrDefault(-1f),
                                 downloaded = runCatching { DownloadManager.isDownloaded(mangaTitle, chName) }.getOrDefault(false),
                             )
-                        },
+                        }),
                         LibraryStore.find(id, url)?.newChapters?.toList() ?: emptyList(),
                     ).also { detailCache[key] = it }
                 }
