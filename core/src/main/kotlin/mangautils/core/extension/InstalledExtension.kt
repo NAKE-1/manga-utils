@@ -33,4 +33,6 @@ data class InstalledExtension(
     /** fully-qualified entry classes (Source or SourceFactory) */
     val classNames: List<String>,
     val sources: List<InstalledSource>,
+    /** true for a locally sideloaded jar (not from a repo) — surfaced as a BETA badge. */
+    val beta: Boolean = false,
 )

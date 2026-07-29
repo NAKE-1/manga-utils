@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, ExtInstalled, ExtAvailable } from '../api'
+import { api, ExtInstalled, ExtAvailable, VrfStatus } from '../api'
 import { IconArrowLeft, IconJetBrains } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
@@ -32,6 +32,13 @@ export function Extensions() {
   const [repoInput, setRepoInput] = useState('')
   const [repoMsg, setRepoMsg] = useState('')
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
+  const [dev] = useState(() => localStorage.getItem('dev.mode') === '1')
+  const [localFile, setLocalFile] = useState<File | null>(null)
+  const [localStatus, setLocalStatus] = useState('')
+  const [betaRepos, setBetaRepos] = useState<Set<string>>(new Set())
+  const [vrf, setVrf] = useState<VrfStatus | null>(null)
+  const [vrfMsg, setVrfMsg] = useState('')
+  const [vrfBusy, setVrfBusy] = useState('')
 
   const loadInstalled = () => api.extensions().then(setInstalled).catch(() => {})
   const loadBrowse = () => { setBrowseLoading(true); api.extAvailable(q).then(setAvail).catch(() => setAvail([])).finally(() => setBrowseLoading(false)) }
@@ -47,7 +54,8 @@ export function Extensions() {
     }
   }
 
-  useEffect(() => { loadInstalled(); api.repos().then(setRepos).catch(() => {}); checkUpdates() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadInstalled(); api.repos().then(setRepos).catch(() => {}); api.betaRepos().then((b) => setBetaRepos(new Set(b))).catch(() => {}); checkUpdates() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (dev) api.vrfStatus().then(setVrf).catch(() => {}) }, [dev])
   useEffect(() => { if (tab === 'browse') loadBrowse() }, [tab, q]) // eslint-disable-line react-hooks/exhaustive-deps
   // Counts need every index fetched, so only pay for it when the Repos tab is actually open.
   useEffect(() => {
@@ -76,6 +84,43 @@ export function Extensions() {
     toast(`Updating ${pkgs.length} extension${pkgs.length === 1 ? '' : 's'}…`, 'info')
     for (const pkg of pkgs) await install(pkg, 'Updating…')
     toast('Updates complete', 'success')
+  }
+  async function installLocal() {
+    if (!localFile) return
+    setLocalStatus(`Uploading ${localFile.name}…`)
+    setBusy((b) => ({ ...b, __local: 'Working…' }))
+    try {
+      const r = await api.extInstallLocal(localFile)
+      const label = `${cleanName(r.name || localFile.name)} (beta)${r.sources ? ` · ${r.sources} source${r.sources === 1 ? '' : 's'}` : ''}`
+      setLocalStatus(`✓ Installed ${label}`)
+      toast(`Sideloaded ${label}`, 'success')
+      setLocalFile(null)
+      loadInstalled()
+    } catch (e) {
+      setLocalStatus(`✗ ${e instanceof Error ? e.message : 'Sideload failed'}`)
+      toast('Sideload failed', 'error')
+    } finally {
+      setBusy((b) => { const n = { ...b }; delete n.__local; return n })
+    }
+  }
+  async function toggleBeta(url: string, beta: boolean) {
+    setBetaRepos(new Set(await api.setBetaRepo(url, beta).catch(() => Array.from(betaRepos))))
+  }
+  async function uploadVrf(file: File) {
+    setVrfBusy('upload'); setVrfMsg(`Uploading ${file.name}…`)
+    try { const s = await api.vrfUpload(await file.text()); setVrf(s); setVrfMsg(`✓ Applied${s.build ? ` ${s.build}` : ''} constants — hit Test`) }
+    catch (e) { setVrfMsg(`✗ ${e instanceof Error ? e.message : 'upload failed'}`) }
+    finally { setVrfBusy('') }
+  }
+  async function testVrf() {
+    setVrfBusy('test'); setVrfMsg('Querying MangaFire…')
+    try { const t = await api.vrfTest(); setVrfMsg(t.ok ? `✓ MangaFire works — ${t.count} results${t.sample ? ` (e.g. ${t.sample})` : ''}` : `✗ ${t.error || 'no results — constants may be wrong'}`) }
+    catch (e) { setVrfMsg(`✗ ${e instanceof Error ? e.message : 'test failed'}`) }
+    finally { setVrfBusy('') }
+  }
+  async function revertVrf() {
+    setVrfBusy('revert'); await api.vrfRevert().catch(() => {}); setVrfMsg('Reverted to built-in constants'); setVrfBusy('')
+    api.vrfStatus().then(setVrf).catch(() => {})
   }
   async function uninstall(pkg: string) {
     setBusy((b) => ({ ...b, [pkg]: 'Removing…' }))
@@ -126,11 +171,31 @@ export function Extensions() {
             </div>
           )}
           <div className="ext-actions"><button className="btn" disabled={checking} onClick={() => checkUpdates(true)}>{checking ? 'Checking…' : 'Check for updates'}</button></div>
+          {dev && (
+            <div className="ext-sideload">
+              <div className="ext-search">
+                <input type="file" accept=".jar" className="ext-file" onChange={(e) => { setLocalFile(e.target.files?.[0] || null); setLocalStatus('') }} />
+                <button className="btn primary" disabled={!localFile || !!busy.__local} onClick={installLocal}>{busy.__local ? 'Working…' : 'Sideload'}</button>
+              </div>
+              {localStatus && <div className={'ext-sideload-status' + (localStatus.startsWith('✗') ? ' err' : localStatus.startsWith('✓') ? ' ok' : ' working')}>{localStatus}</div>}
+            </div>
+          )}
+          {dev && (
+            <div className="ext-sideload">
+              <div className="ext-vrf-head">MangaFire vrf constants: <b>{vrf ? (vrf.present ? (vrf.valid ? `custom${vrf.build ? ` · ${vrf.build}` : ''}` : 'custom (invalid → built-in)') : 'built-in') : '…'}</b></div>
+              <div className="ext-search">
+                <label className={'btn' + (vrfBusy === 'upload' ? ' disabled' : '')}>{vrfBusy === 'upload' ? 'Uploading…' : 'Upload constants (.json)'}<input type="file" accept=".json" hidden disabled={!!vrfBusy} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadVrf(f); e.currentTarget.value = '' }} /></label>
+                <button className="btn" disabled={!!vrfBusy} onClick={testVrf}>{vrfBusy === 'test' ? 'Testing…' : 'Test'}</button>
+                {vrf?.present && <button className="btn sm danger" disabled={!!vrfBusy} onClick={revertVrf}>Revert</button>}
+              </div>
+              {vrfMsg && <div className={'ext-sideload-status' + (vrfMsg.startsWith('✗') ? ' err' : vrfMsg.startsWith('✓') ? ' ok' : ' working')}>{vrfMsg}</div>}
+            </div>
+          )}
           {installed.map((e) => (
             <div className="ext-row" key={e.pkg}>
               <ExtIcon pkg={e.pkg} />
               <div className="ext-info">
-                <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
+                <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{e.beta && <span className="ext-badge beta">BETA</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
                 <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
               </div>
               {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>}
@@ -184,7 +249,7 @@ export function Extensions() {
             return (
               <div className="ext-row" key={url}>
                 <div className="ext-info">
-                  <div className="ext-name">{repoLabel(url)}</div>
+                  <div className="ext-name">{repoLabel(url)}{betaRepos.has(url) && <span className="ext-badge beta">BETA</span>}</div>
                   <div className="ext-sub repo-url">{url}</div>
                   <div className="ext-sub">
                     {st
@@ -193,6 +258,7 @@ export function Extensions() {
                     {count > 0 && ` · ${count} installed`}
                   </div>
                 </div>
+                <button className={'btn sm' + (betaRepos.has(url) ? ' primary' : '')} title="Extensions from a beta repo get a BETA badge" onClick={() => toggleBeta(url, !betaRepos.has(url))}>{betaRepos.has(url) ? 'Beta ✓' : 'Beta'}</button>
                 <button className="btn sm danger" onClick={() => askRemoveRepo(url)}>Remove</button>
               </div>
             )

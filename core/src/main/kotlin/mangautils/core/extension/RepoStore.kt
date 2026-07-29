@@ -47,4 +47,28 @@ object RepoStore {
         file.createParentDirectories()
         file.writeText(json.encodeToString(urls))
     }
+
+    // ---- beta repos ----
+    // A "beta" repo works exactly like a normal one, but extensions installed from it are flagged
+    // beta (BETA badge). Stored as a separate URL set so the existing repos.json format is untouched.
+
+    fun betaList(): List<String> {
+        val file = AppConfig.betaReposFile
+        if (!file.exists()) return emptyList()
+        return runCatching { json.decodeFromString<List<String>>(file.readText()) }.getOrDefault(emptyList())
+    }
+
+    fun isBeta(url: String): Boolean = url in betaList()
+
+    /** Marks/unmarks [url] as a beta repo. Returns the updated beta list. */
+    fun setBeta(url: String, beta: Boolean): List<String> {
+        val current = betaList()
+        val next = if (beta) (current + url).distinct() else current - url
+        if (next != current) {
+            val file = AppConfig.betaReposFile
+            file.createParentDirectories()
+            file.writeText(json.encodeToString(next))
+        }
+        return next
+    }
 }

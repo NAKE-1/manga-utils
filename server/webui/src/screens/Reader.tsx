@@ -146,6 +146,7 @@ export function Reader() {
   const chapter = sp.get('chapter') || ''
   const name = sp.get('name') || ''
   const title = sp.get('title') || ''
+  const scanMarker = localStorage.getItem('dev.scanMarker') === '1' // dev/debug: show the chapter's scanlator
   const nav = useNavigate()
 
   const [count, setCount] = useState<number | null>(null)
@@ -589,7 +590,10 @@ export function Reader() {
           <button className="r-icon" onClick={() => nav('/')} aria-label="Home"><IconHome /></button>
         </div>
 
-        <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}</div>
+        <div className="reader-titlecol">
+          <div className="reader-titlechip" onClick={(e) => e.stopPropagation()}>{title}</div>
+          {scanMarker && cur && <div className="reader-scanchip" onClick={(e) => e.stopPropagation()}>{cur.scanlator || 'unknown scan'}{cur.number > 0 ? ` · Ch. ${cur.number}` : ''}</div>}
+        </div>
 
         <div className="reader-nav" onClick={(e) => e.stopPropagation()}>
           {count ? <div className="reader-progress">{Math.round(progress * 100)}%{totalCh > 0 ? ` · ${curNum}/${totalCh}` : ''}</div> : null}

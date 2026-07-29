@@ -11,10 +11,20 @@ function fmtEta(s: number): string {
   const h = Math.floor(m / 60)
   return `~${h}h ${m % 60}m left`
 }
+// Time until a parked (retrywait) task re-runs. Switches to seconds as it counts down.
+function fmtCountdown(ms: number): string {
+  if (ms <= 0) return 'now'
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m ${(s % 60).toString().padStart(2, '0')}s`
+}
 
 export function Downloads() {
   const [data, setData] = useState<DownloadsT | null>(null)
   const [eta, setEta] = useState(0)
+  const [tab, setTab] = useState('all')       // 'all' or a sourceId — filters the active list
+  const [showDone, setShowDone] = useState(false) // Completed section expanded?
   const rate = useRef({ t: 0, done: 0, rate: 0 })
 
   useEffect(() => {
@@ -56,61 +66,113 @@ export function Downloads() {
     setData(await api.downloads().catch(() => data))
   }
 
+  async function forceRetry(t: DlTask) { setData(await api.forceRetryDownload(t.id).then((r) => r.json()).catch(() => data)) }
   async function move(t: DlTask, dir: 'up' | 'down') { setData(await api.moveDownload(t.id, dir).then((r) => r.json()).catch(() => data)) }
   async function resume(t: DlTask) { setData(await api.resumeDownload(t.id).then((r) => r.json()).catch(() => data)) }
   async function resumeAll() { setData(await api.resumeAllDownloads().then((r) => r.json()).catch(() => data)) }
 
   if (!data) return <div className="spinner" />
   const tasks = data.tasks
-  const queuedIds = tasks.filter((t) => t.state === 'queued').map((t) => t.id)
+  const sourceOf = (t: DlTask) => t.sourceId || t.mangaKey.split('|')[0]
+  // Live work vs history. Interrupted (post-restart, awaiting Resume) counts as live — it needs attention.
+  const active = tasks.filter((t) => t.state === 'running' || t.state === 'queued' || t.state === 'retrywait' || t.state === 'interrupted')
+  const completed = tasks.filter((t) => t.state === 'done' || t.state === 'failed' || t.state === 'stopped')
+  const queuedIds = tasks.filter((t) => t.state === 'queued').map((t) => t.id) // global order — reorder is global
+
+  // One tab per source that has active work, with a count. Only shown when there's live work.
+  const bySource = new Map<string, { id: string; name: string; count: number }>()
+  for (const t of active) {
+    const id = sourceOf(t)
+    const e = bySource.get(id) || { id, name: t.sourceName || id, count: 0 }
+    e.count++; bySource.set(id, e)
+  }
+  const sources = [...bySource.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  const curTab = tab === 'all' || sources.some((s) => s.id === tab) ? tab : 'all' // fall back if a source finished
+  const shown = curTab === 'all' ? active : active.filter((t) => sourceOf(t) === curTab)
+
+  const card = (t: DlTask, reorder: boolean) => {
+    const qi = reorder ? queuedIds.indexOf(t.id) : -1
+    return <TaskCard key={t.id} t={t} onStop={() => stop(t)} onRetry={() => retry(t)} onResume={() => resume(t)}
+      onForce={() => forceRetry(t)} onMove={(dir) => move(t, dir)} canUp={qi > 0} canDown={qi >= 0 && qi < queuedIds.length - 1} />
+  }
 
   return (
     <>
       <div className="list-head">
         <span className="list-title">Downloads{data.active > 0 ? ` · ${data.active} active` : ''}</span>
         <div className="dl-head-actions">
-          {tasks.some((t) => t.state === 'interrupted') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
+          {active.some((t) => t.state === 'interrupted') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
           {data.active > 0 && <button className="dl-link" onClick={stopAll}>Stop all</button>}
-          {tasks.some((t) => t.state === 'done' || t.state === 'failed' || t.state === 'stopped') && <button className="dl-link" onClick={clearFinished}>Clear finished</button>}
         </div>
       </div>
       {(data.totalKbps > 0 || eta > 0) && (
         <div className="update-msg">{data.totalKbps > 0 ? fmtSpeed(data.totalKbps) : ''}{data.totalKbps > 0 && eta > 0 ? ' · ' : ''}{eta > 0 ? fmtEta(eta) : ''}</div>
       )}
 
-      {tasks.length === 0 ? (
+      {/* Per-source tabs. Only worth showing when more than one source is active; a single source is just a list. */}
+      {sources.length > 1 && (
+        <div className="dl-tabs">
+          <button className={'dl-tab' + (curTab === 'all' ? ' on' : '')} onClick={() => setTab('all')}>All<span className="dl-tab-n">{active.length}</span></button>
+          {sources.map((s) => (
+            <button key={s.id} className={'dl-tab' + (curTab === s.id ? ' on' : '')} onClick={() => setTab(s.id)}>{s.name}<span className="dl-tab-n">{s.count}</span></button>
+          ))}
+        </div>
+      )}
+
+      {active.length === 0 && completed.length === 0 ? (
         <div className="center-msg">No downloads. Use the download button on a manga.</div>
       ) : (
-        <div className="dl-list">{tasks.map((t) => {
-          const qi = queuedIds.indexOf(t.id)
-          return <TaskCard key={t.id} t={t} onStop={() => stop(t)} onRetry={() => retry(t)} onResume={() => resume(t)}
-            onMove={(dir) => move(t, dir)} canUp={qi > 0} canDown={qi >= 0 && qi < queuedIds.length - 1} />
-        })}</div>
+        <>
+          {shown.length > 0
+            ? <div className="dl-list">{shown.map((t) => card(t, true))}</div>
+            : active.length === 0 && <div className="dl-empty-active">No active downloads.</div>}
+
+          {completed.length > 0 && (
+            <div className="dl-done">
+              <div className="dl-done-h">
+                <button className="dl-done-toggle" onClick={() => setShowDone((v) => !v)}>
+                  {showDone ? '▾' : '▸'} Completed ({completed.length})
+                </button>
+                <button className="dl-link" onClick={clearFinished}>Clear finished</button>
+              </div>
+              {showDone && <div className="dl-list">{completed.map((t) => card(t, false))}</div>}
+            </div>
+          )}
+        </>
       )}
     </>
   )
 }
 
-function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t: DlTask; onStop: () => void; onRetry: () => void; onResume: () => void; onMove: (dir: 'up' | 'down') => void; canUp: boolean; canDown: boolean }) {
+function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDown }: { t: DlTask; onStop: () => void; onRetry: () => void; onResume: () => void; onForce: () => void; onMove: (dir: 'up' | 'down') => void; canUp: boolean; canDown: boolean }) {
   const running = t.state === 'running' || t.state === 'queued'
   const queued = t.state === 'queued'
   const failed = t.state === 'failed'
   const interrupted = t.state === 'interrupted'
+  // Parked after a transient (rate-limit / busy-source) failure: waiting out a cooldown, then re-runs itself.
+  const parked = t.state === 'retrywait'
+  const retryIn = parked ? (t.retryAt || 0) - Date.now() : 0
+  // Queued behind a source that's resting after a rate-limit — show when it'll get its turn, not just "Queued".
+  const resting = queued ? (t.sourceRestUntil || 0) - Date.now() : 0
   // A failed task isn't uniformly "bad": the source may have just been busy (amber), the chapters may be
   // covered by another scan (green/amber), or genuinely gone (red). Only the last is a real red problem.
   const fc = t.failClass || (failed ? 'gone' : '')
-  const failLabel = fc === 'transient' ? "Couldn't reach source" : fc === 'alternative' ? 'Missing here — covered elsewhere' : fc === 'gone' ? 'Missing — no other copy' : ''
   // Bar = finished chapters + the fraction of the chapter in progress.
   const cur = t.pagesTotal > 0 ? t.pagesDone / t.pagesTotal : 0
   const pct = t.total > 0 ? Math.round(((t.done + (running ? cur : 0)) / t.total) * 100) : 0
   // Which chapter we're on: finished count + the one in progress.
   const chapterNo = Math.min(t.total, t.done + (t.currentChapter ? 1 : 0))
-  const failedNames = t.failedChapters.map((c) => c.name).filter(Boolean)
-  const failedList = failedNames.slice(0, 4).join(', ') + (failedNames.length > 4 ? `, +${failedNames.length - 4} more` : '')
+  // Group failed chapters by what the failure MEANS, so one genuinely-gone chapter doesn't paint every
+  // other (covered / retryable) one the same colour. Each group is labelled and coloured on its own.
+  const FAIL_GROUPS = [
+    { k: 'gone', label: 'No other copy' },
+    { k: 'transient', label: 'Source was busy — retryable' },
+    { k: 'alternative', label: 'Covered by another scan' },
+  ] as const
   return (
     <div className="dlc">
       <div className="dlc-top">
-        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.mangaTitle}{running && (t.autoRetries ?? 0) > 0 && <span className="dlc-retry" title="Retrying chapters the source was too busy for">retrying</span>}</div>
+        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.mangaTitle}{running && (t.reArms ?? 0) > 0 && <span className="dlc-retry" title="Re-running chapters the source was too busy for">retry {t.reArms}</span>}</div>
         <div className="dlc-actions">
           {queued && (
             <span className="dlc-reorder">
@@ -122,27 +184,34 @@ function TaskCard({ t, onStop, onRetry, onResume, onMove, canUp, canDown }: { t:
             ? <button className="dl-link" onClick={onStop}>Stop</button>
             : interrupted
               ? <button className="dl-link dl-resume" onClick={onResume}>Resume</button>
-              : failed && t.failedChapters.length
-                ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
-                : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
+              : parked
+                ? <button className="dl-link dl-resume" onClick={onForce}>Retry now</button>
+                : failed && t.failedChapters.length
+                  ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
+                  : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
         </div>
       </div>
       <div className="dlc-sub">
         <span>
-          {interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : queued ? 'Queued' : running
+          {interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : parked
+            ? `Source was busy · ${t.failed} chapter${t.failed === 1 ? '' : 's'} to retry · in ${fmtCountdown(retryIn)}`
+            : queued ? (resting > 0 ? `Source resting · ready in ${fmtCountdown(resting)}` : 'Queued') : running
             ? `Chapter ${chapterNo} of ${t.total}${t.currentChapter ? ` · ${t.currentChapter}` : ''}`
             : `${t.done}/${t.total} chapter${t.total === 1 ? '' : 's'}${failed ? (t.failed > 0 ? ` · ${t.failed} failed` : ' · failed') : ' done'}`}
         </span>
         {running && t.pagesTotal > 0 && <span className="dlc-count">{t.pagesDone}/{t.pagesTotal}{t.kbps > 0 ? ` · ${fmtSpeed(t.kbps)}` : ''}</span>}
       </div>
-      <div className="dlc-bar"><div className={'dlc-fill ' + (failed ? 'fc-' + fc : '')} style={{ width: pct + '%' }} /></div>
-      {/* Which chapters failed AND why. The reason tells you whether retrying is worth it, and the class
-          tells you whether it's a real problem: red = genuinely missing, amber = busy source or covered. */}
-      {failed && (failedList || t.error) && (
-        <div className={'dlc-foot fc-' + fc}>
-          {failLabel && <div className="dlc-fc">{failLabel}</div>}
-          {failedList && <div>Failed: {failedList}</div>}
-          {t.error && <div className="dlc-why">{t.error}</div>}
+      <div className="dlc-bar"><div className={'dlc-fill ' + (failed || parked ? 'fc-' + fc : '')} style={{ width: pct + '%' }} /></div>
+      {/* Which chapters failed AND why, grouped by meaning: red = genuinely gone, green = we have it via
+          another scan, amber = the source was just busy and it's worth retrying. */}
+      {failed && t.failedChapters.length > 0 && (
+        <div className="dlc-foot">
+          {FAIL_GROUPS.map(({ k, label }) => {
+            const names = t.failedChapters.filter((c) => (c.cls || fc) === k).map((c) => c.name).filter(Boolean)
+            if (!names.length) return null
+            const shown = names.slice(0, 6).join(', ') + (names.length > 6 ? `, +${names.length - 6} more` : '')
+            return <div key={k} className={'dlc-fg fc-' + k}><b>{label}:</b> {shown}</div>
+          })}
         </div>
       )}
     </div>

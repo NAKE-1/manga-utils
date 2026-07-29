@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats, LibraryEntry, VersionInfo, BackupJob, BackupResult, FlareTest } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, VersionInfo, BackupJob, BackupResult, FlareTest } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { THEMES, applyTheme, currentTheme } from '../themes'
+import { toast } from '../components/Toast'
 
 // Browser reader/display prefs live in localStorage (per device). Gather them into the backup, and
 // apply them back on restore, so a restore carries your reader setup — not just server-side state.
@@ -46,10 +47,16 @@ export function Settings() {
   const [clearingNew, setClearingNew] = useState(false)
   const [clearNewMsg, setClearNewMsg] = useState('')
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null)
-  const [library, setLibrary] = useState<LibraryEntry[]>([])
-  const [simManga, setSimManga] = useState('')
-  const [simMsg, setSimMsg] = useState('')
-  const [simRunning, setSimRunning] = useState(false)
+  // Hidden dev mode: triple-click the "Settings" title to reveal the Developer section.
+  const [dev, setDev] = useState(() => localStorage.getItem('dev.mode') === '1')
+  const titleClicks = useRef<number[]>([])
+  function titleClick() {
+    const now = Date.now()
+    titleClicks.current = [...titleClicks.current.filter((t) => now - t < 800), now]
+    if (titleClicks.current.length >= 3 && !dev) { localStorage.setItem('dev.mode', '1'); setDev(true); toast('Dev mode enabled', 'success'); titleClicks.current = [] }
+  }
+  const [homeLimit, setHomeLimit] = useState(() => Number(localStorage.getItem('app.homeSeriesLimit')) || 0)
+  function setHomeLimitVal(n: number) { setHomeLimit(n); if (n > 0) localStorage.setItem('app.homeSeriesLimit', String(n)); else localStorage.removeItem('app.homeSeriesLimit') }
   const [net, setNet] = useState<{ pingMs: number; downMbps: number; upMbps: number } | null>(null)
   const [netRunning, setNetRunning] = useState(false)
   const [stats, setStats] = useState<DevStats | null>(null)
@@ -94,7 +101,6 @@ export function Settings() {
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
     api.version().then(setAbout).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
-    api.library().then(setLibrary).catch(() => {})
   }, [])
 
   async function toggleAutoUpdate() {
@@ -215,16 +221,6 @@ export function Settings() {
     const s = await api.saveSettings({ autoDownloadNew: !info.autoDownloadNew }).catch(() => null)
     if (s) setInfo(s)
   }
-  async function simulate() {
-    const i = simManga.indexOf('|'); if (i < 0) return
-    const sid = simManga.slice(0, i), url = simManga.slice(i + 1)
-    setSimRunning(true); setSimMsg('')
-    const r = await api.simulateUpdate(sid, url).catch(() => null)
-    setSimRunning(false)
-    if (!r) setSimMsg('Failed')
-    else if (r.newChapters < 0) setSimMsg('Open the manga once first (no chapters known yet)')
-    else setSimMsg(`${r.title}: ${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'}${r.autoDownloaded ? ' · auto-downloading' : ''}`)
-  }
 
   // Live server stats — poll while the Settings page is open.
   useEffect(() => {
@@ -325,7 +321,7 @@ export function Settings() {
 
   return (
     <div className="settings">
-      <h2 className="set-h">Settings</h2>
+      <h2 className="set-h" onClick={titleClick}>Settings</h2>
 
       <section className="set-section">
         <div className="set-section-h">Appearance</div>
@@ -347,6 +343,22 @@ export function Settings() {
                 <span className="theme-name">{t.name}{theme === t.id && <span className="tick">✓</span>}</span>
               </button>
             ))}
+          </div>
+        </div>
+        <div className="set-card">
+          <div className="set-inline">
+            <div>
+              <div className="set-row-label">Max series on Home</div>
+              <div className="set-hint">Cap how many library covers the Home screen shows. The rest stay one tap away via “Library →”.</div>
+            </div>
+            <select className="set-select" style={{ width: 'auto' }} value={homeLimit} onChange={(e) => setHomeLimitVal(Number(e.target.value))}>
+              <option value={0}>Unlimited</option>
+              <option value={20}>20</option>
+              <option value={40}>40</option>
+              <option value={60}>60</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+            </select>
           </div>
         </div>
       </section>
@@ -737,23 +749,18 @@ export function Settings() {
         </div>
       </section>
 
+      {dev && (
       <section className="set-section">
-        <div className="set-section-h">Developer</div>
+        <div className="set-section-h set-dev-h">Developer<button className="dl-link set-dev-off" onClick={() => { localStorage.removeItem('dev.mode'); setDev(false) }}>Disable dev mode</button></div>
+
         <div className="set-card">
-          <div className="set-row-label">Simulate a new chapter (test)</div>
-          <div className="set-hint">Makes a library manga look like it got an update — sets its “!” badge, and auto-downloads it if that setting is on.</div>
-          <select className="set-select" value={simManga} onChange={(e) => setSimManga(e.target.value)}>
-            <option value="">Pick a manga…</option>
-            {[...library].sort((a, b) => a.title.localeCompare(b.title)).map((e) => (
-              <option key={e.sourceId + '|' + e.url} value={e.sourceId + '|' + e.url}>{e.title}</option>
-            ))}
-          </select>
-          <div className="set-actions">
-            <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
-            {simMsg && <span className="set-msg">{simMsg}</span>}
-          </div>
+          <div className="set-row-label">Developer tools</div>
+          <div className="set-hint">Runtime stats, storage breakdown, state inspectors, network log, source diagnostics, and a diagnostics bundle.</div>
+          <div className="set-actions"><button className="btn primary" onClick={() => nav('/dev')}>Open developer tools →</button></div>
         </div>
+
       </section>
+      )}
 
       {confirm && <ConfirmDialog spec={confirm} />}
     </div>

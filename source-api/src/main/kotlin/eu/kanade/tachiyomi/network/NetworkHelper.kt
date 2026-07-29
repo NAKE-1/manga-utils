@@ -109,6 +109,19 @@ class NetworkHelper(
                     level = HttpLoggingInterceptor.Level.BASIC
                 }
             builder.addNetworkInterceptor(httpLoggingInterceptor)
+            // Record outbound requests for the Developer network log (dev tool).
+            builder.addNetworkInterceptor { chain ->
+                val req = chain.request()
+                val start = System.nanoTime()
+                var code = -1
+                try {
+                    val resp = chain.proceed(req)
+                    code = resp.code
+                    resp
+                } finally {
+                    RequestLog.record(req.method, req.url.host, req.url.encodedPath, code, (System.nanoTime() - start) / 1_000_000)
+                }
+            }
             // }
 
             // Cloudflare solving is handled by FlareSolverrInterceptor (added above); the no-op

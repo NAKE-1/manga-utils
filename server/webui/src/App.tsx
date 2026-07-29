@@ -19,6 +19,7 @@ import Webhooks from './screens/Webhooks'
 import Migrate from './screens/Migrate'
 import Relocate from './screens/Relocate'
 import ScanVersions from './screens/ScanVersions'
+import { Dev } from './screens/Dev'
 import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher, setReaderActive } from './components/Toast'
 import { PullToRefresh } from './components/PullToRefresh'
@@ -61,6 +62,7 @@ export function App() {
               <Route path="/migrate" element={<Migrate />} />
               <Route path="/relocate" element={<Relocate />} />
               <Route path="/scan-versions" element={<ScanVersions />} />
+              <Route path="/dev" element={<Dev />} />
               <Route path="/manga/:sourceId" element={<Detail />} />
               <Route path="*" element={<Stub name="Not found" />} />
             </Routes>

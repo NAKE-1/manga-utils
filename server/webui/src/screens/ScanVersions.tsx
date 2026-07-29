@@ -24,9 +24,24 @@ export default function ScanVersions() {
   const [busy, setBusy] = useState('')
   const [queued, setQueued] = useState<{ title: string; n: number } | null>(null)
   const [started, setStarted] = useState<Record<string, number>>({}) // title -> versions queued, sticky
+  const [active, setActive] = useState<Set<string>>(new Set()) // mangaKeys with a live download, from the server
 
   useEffect(() => {
     api.scanverPlan().then(setPlan).catch((e) => setErr(String(e?.message || e)))
+  }, [])
+
+  // Which series are already downloading — from the queue, not local state, so a page reload can't offer
+  // Download on a manga that's mid-fetch. Polled so the button frees up once the download finishes.
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      const d = await api.downloads().catch(() => null)
+      if (!alive || !d) return
+      setActive(new Set(d.tasks.filter((t) => t.state === 'running' || t.state === 'queued' || t.state === 'retrywait').map((t) => t.mangaKey)))
+    }
+    tick()
+    const tm = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(tm) }
   }, [])
 
   async function expand(title: string) {
@@ -76,12 +91,15 @@ export default function ScanVersions() {
       {series.length === 0 ? (
         <div className="center-msg">Nothing missing — you have every version your sources list.</div>
       ) : (
-        <div className="sv-list">{series.map((s) => (
+        <div className="sv-list">{series.map((s) => {
+          const downloading = active.has(`${s.sourceId}|${s.mangaUrl}`) || !!started[s.title]
+          return (
           <div className="sv-row" key={s.title}>
             <button className="sv-head" onClick={() => expand(s.title)}>
-              <div className="sv-name">{s.title}<span className="sv-src">{s.sourceName}</span></div>
+              <div className="sv-name">{s.title}<span className="sv-src">{s.sourceName}</span>{downloading && <span className="sv-dl">downloading</span>}</div>
               <div className="sv-nums">
                 <span className="sv-missing">+{s.missing}</span>
+                {!!s.broken && <span className="sv-broken" title="Known-broken scans (delisted / missing images) — skipped, not downloaded">{s.broken} broken</span>}
                 <span className="sv-have">{s.versionsOnDisk}/{s.versionsAtSource} on disk</span>
                 <span className="sv-size">{fmtBytes(s.estBytes)}</span>
                 <span className="sv-caret">{open === s.title ? '▾' : '▸'}</span>
@@ -97,14 +115,15 @@ export default function ScanVersions() {
                         <div className="sv-chap" key={c.number}>
                           <span className="sv-ch-no">Ch. {c.number}</span>
                           <span className="sv-ch-have">{c.have.length ? c.have.join(', ') : '—'}</span>
-                          <span className="sv-ch-miss">+ {c.missing.join(', ')}</span>
+                          <span className="sv-ch-miss">{c.missing.length ? `+ ${c.missing.join(', ')}` : ''}</span>
+                          {!!c.broken?.length && <span className="sv-ch-broken" title="Known-broken — skipped">⨯ {c.broken.join(', ')}</span>}
                         </div>
                       ))}
                     </div>
                     <div className="sv-act">
-                      {started[s.title] ? (
+                      {downloading ? (
                         <div className="sv-started">
-                          ✓ Queued {started[s.title]} version{started[s.title] === 1 ? '' : 's'} — downloading now.
+                          ⬇ {started[s.title] ? `Queued ${started[s.title]} version${started[s.title] === 1 ? '' : 's'} — ` : ''}downloading now.
                           <button className="dl-link" onClick={() => nav('/downloads')}>View →</button>
                         </div>
                       ) : (
@@ -118,7 +137,8 @@ export default function ScanVersions() {
               </div>
             )}
           </div>
-        ))}</div>
+          )
+        })}</div>
       )}
     </>
   )

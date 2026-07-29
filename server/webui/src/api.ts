@@ -36,11 +36,11 @@ export interface Chapter {
 
 export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[]; newVersions?: string[] }
 
-export interface ScanChapterPlan { number: number; name: string; have: string[]; missing: string[]; missingUrls: string[] }
+export interface ScanChapterPlan { number: number; name: string; have: string[]; missing: string[]; missingUrls: string[]; broken?: string[] }
 export interface ScanSeriesPlan {
   sourceId: string; sourceName: string; mangaUrl: string; title: string
   numbers: number; versionsOnDisk: number; versionsAtSource: number
-  missing: number; estBytes: number; chapters: ScanChapterPlan[]
+  missing: number; broken?: number; estBytes: number; chapters: ScanChapterPlan[]
 }
 export interface ScanPlan { series: ScanSeriesPlan[]; totalMissing: number; totalEstBytes: number; scope: string }
 
@@ -249,6 +249,11 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Install failed')
     return r.json()
   },
+  extInstallLocal: async (file: File) => {
+    const r = await fetch('/api/extensions/install-local', { method: 'POST', body: file })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Sideload failed')
+    return r.json() as Promise<{ pkg: string; name: string; sources: number }>
+  },
   extUninstall: (pkg: string) => fetch(`/api/extensions?pkg=${encodeURIComponent(pkg)}`, { method: 'DELETE' }),
   /** Forget that a chapter is unavailable, so it can be downloaded again. */
   clearUnavailable: (url: string) => fetch(`/api/downloads/unavailable?url=${encodeURIComponent(url)}`, { method: 'DELETE' }),
@@ -260,6 +265,25 @@ export const api = {
     return r.json()
   },
   removeRepo: (url: string) => fetch(`/api/repos?url=${encodeURIComponent(url)}`, { method: 'DELETE' }).then((r) => r.json() as Promise<string[]>),
+  betaRepos: () => getJson<string[]>('/api/repos/beta'),
+  setBetaRepo: (url: string, beta: boolean): Promise<string[]> =>
+    fetch('/api/repos/beta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, beta }) }).then((r) => r.json() as Promise<string[]>),
+  vrfStatus: () => getJson<VrfStatus>('/api/extensions/mangafire-vrf'),
+  vrfUpload: async (jsonText: string): Promise<VrfStatus> => {
+    const r = await fetch('/api/extensions/mangafire-vrf', { method: 'POST', body: jsonText })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Upload failed')
+    return r.json()
+  },
+  vrfRevert: () => fetch('/api/extensions/mangafire-vrf', { method: 'DELETE' }),
+  vrfTest: () => fetch('/api/extensions/mangafire-vrf/test', { method: 'POST' }).then((r) => r.json() as Promise<VrfTest>),
+  devStorage: () => getJson<DevStorage>('/api/dev/storage', 0, 120000),
+  devState: () => getJson<DevBucket[]>('/api/dev/state'),
+  devStateContent: (name: string) => getJson<{ name: string; content: string }>(`/api/dev/state/content?name=${encodeURIComponent(name)}`),
+  devRequests: () => getJson<ReqLog[]>('/api/dev/requests'),
+  devRequestsClear: () => fetch('/api/dev/requests/clear', { method: 'POST' }),
+  devSourceDiag: (id: string) => getJson<SourceDiag>(`/api/dev/source/${id}/diag`),
+  devSourceRaw: (id: string, url: string) =>
+    fetch(`/api/dev/source/${id}/raw`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }).then((r) => r.json() as Promise<RawResult>),
 
   downloads: () => getJson<Downloads>('/api/downloads'),
   enqueueDownload: (source: string, manga: string, title: string, chapters: { url: string; name: string }[]) =>
@@ -271,6 +295,12 @@ export const api = {
   moveDownload: (id: string, dir: 'up' | 'down') => fetch(`/api/downloads/move?id=${encodeURIComponent(id)}&dir=${dir}`, { method: 'POST' }),
   resumeDownload: (id: string) => fetch(`/api/downloads/resume?id=${encodeURIComponent(id)}`, { method: 'POST' }),
   resumeAllDownloads: () => fetch('/api/downloads/resume-all', { method: 'POST' }),
+  forceRetryDownload: (id: string) => fetch(`/api/downloads/force-retry?id=${encodeURIComponent(id)}`, { method: 'POST' }),
+  // Whole-instance data migration (dev). manifest = what an export from here contains; preview = what a
+  // package would restore (read-only); import applies it (restart after).
+  dataMigrateManifest: () => getJson<MigManifest>('/api/dev/migrate/manifest'),
+  dataMigratePreview: (file: File) => fetch('/api/dev/migrate/preview', { method: 'POST', body: file }).then(async (r) => { if (!r.ok) throw await r.json().catch(() => ({ error: 'unreadable package' })); return r.json() as Promise<MigManifest> }),
+  dataMigrateImport: (file: File) => fetch('/api/dev/migrate/import', { method: 'POST', body: file }).then(async (r) => { if (!r.ok) throw await r.json().catch(() => ({ error: 'import failed' })); return r.json() as Promise<{ files: number }> }),
 
   stats: () => getJson<Stats>('/api/stats'),
 
@@ -333,17 +363,29 @@ export interface MassPlan { items: MassPlanItem[]; totalMissing: number; seriesW
 export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean }
 export interface ManagedChapter { name: string; pages: number; bytes: number; cbz: boolean; complete: boolean }
 
-export interface DlChapterRef { url: string; name: string }
+export interface MigItem { key: string; label: string; files: number; bytes: number; detail: string }
+export interface MigManifest { files: number; bytes: number; items: MigItem[] }
+export interface DlChapterRef { url: string; name: string; cls?: string } // cls: "" | "gone" | "alternative" | "transient"
 export interface DlTask {
   id: string; mangaKey: string; mangaTitle: string; state: string
   total: number; done: number; failed: number
   currentChapter: string; currentChapterUrl: string; pagesDone: number; pagesTotal: number
   kbps: number; error: string; failedChapters: DlChapterRef[]; tag: string
   failClass?: string; autoRetries?: number // "" | "transient" | "alternative" | "gone"
+  retryAt?: number; reArms?: number // parked-for-retry: epoch ms it re-runs, and re-arm count
+  sourceId?: string; sourceName?: string // for the per-source download tabs
+  sourceRestUntil?: number // queued behind a rate-limited source: epoch ms it resumes (0 = not resting)
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 
-export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean }
+export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean; beta?: boolean }
+export interface VrfStatus { present: boolean; valid: boolean; build: string; mtime: number }
+export interface VrfTest { ok: boolean; count: number; sample?: string | null; error?: string | null }
+export interface DevBucket { label: string; bytes: number; path?: string }
+export interface DevStorage { buckets: DevBucket[]; downloadsTop: DevBucket[]; downloadsDir: string; dataDir: string }
+export interface ReqLog { t: number; method: string; host: string; path: string; code: number; ms: number }
+export interface SourceDiag { id: string; name: string; baseUrl: string; host: string; cfBlocked: boolean; cooldownMs: number; flareUa?: string | null }
+export interface RawResult { status: number; ms: number; contentType?: string | null; snippet: string; error?: string | null }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
 export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig }

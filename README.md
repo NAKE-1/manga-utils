@@ -26,6 +26,24 @@ Multi-module Gradle project (Kotlin / JVM 21):
 All runtime state lives under one data dir (default `./data`): `library.db`,
 `downloads/`, `extensions/`, `logs/`.
 
+### Concurrency
+
+So a big download can't slow browsing/reading, blocking work runs on isolated
+`limitedParallelism` slices of `Dispatchers.IO` (`core/.../async/Pools.kt`) — a stall
+in one lane can't drain the others:
+
+| Lane       | Limit | Handles |
+|------------|------:|---------|
+| `source`   | 16 | browse / search / details |
+| `image`    | 16 | reader page images |
+| `cover`    | 8  | cover thumbnails (grids) |
+| `download` | 12 | download page-fetches (`parallelDownloads` 3 × `downloadConcurrency` 4) |
+
+Separately: OkHttp stays at its default `maxRequestsPerHost = 5` (a per-host dispatcher
+tune was tried and reverted); each extension sets its own throttle via `.rateLimit(N)`
+(e.g. MangaFire 2/s); and the download queue rests a whole source for 3 min after a
+transient failure.
+
 ## Building
 
 Requires a JDK (21+). Uses the Gradle wrapper:

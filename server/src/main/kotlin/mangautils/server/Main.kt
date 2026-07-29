@@ -312,10 +312,28 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 @Volatile private var libUpdateTotal = 0
 @Volatile private var libUpdateRunning = false
 
-@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false)
+@Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false, val beta: Boolean = false)
 
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
 @Serializable private data class InstallReq(val pkg: String)
+@Serializable private data class BetaRepoReq(val url: String, val beta: Boolean)
+@Serializable private data class VrfStageDto(val table: String = "", val key: String = "", val iv: Int = 0)
+@Serializable private data class VrfConstantsDto(val build: String = "", val stages: List<VrfStageDto> = emptyList())
+@Serializable private data class VrfStatusDto(val present: Boolean, val valid: Boolean, val build: String, val mtime: Long)
+@Serializable private data class VrfTestDto(val ok: Boolean, val count: Int, val sample: String? = null, val error: String? = null)
+@Serializable private data class ReqLogDto(val t: Long, val method: String, val host: String, val path: String, val code: Int, val ms: Long)
+@Serializable private data class RawReq(val url: String)
+
+/** True + build-label if [json] is a well-formed vrf-constants file (3 stages, 256-perm tables, keys, iv 0-255). */
+private fun validateVrf(json: String): Pair<Boolean, String> = runCatching {
+    val obj = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(VrfConstantsDto.serializer(), json)
+    val ok = obj.stages.size == 3 && obj.stages.all { st ->
+        val t = java.util.Base64.getDecoder().decode(st.table)
+        t.size == 256 && t.toSet().size == 256 && st.key.isNotBlank() &&
+            java.util.Base64.getDecoder().decode(st.key).isNotEmpty() && st.iv in 0..255
+    }
+    ok to obj.build
+}.getOrDefault(false to "")
 @Serializable private data class IdentSrcDto(val url: String, val name: String, val scanlator: String? = null, val number: Float = -1f)
 @Serializable private data class IdentDiskDto(
     val folder: String, val url: String? = null, val scanlator: String? = null, val resolvedScanlator: String? = null,
@@ -332,7 +350,8 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 @Serializable private data class RepoStatDto(val url: String, val extensions: Int, val sources: Int)
 @Serializable private data class InstallResultDto(val pkg: String, val name: String, val sources: Int)
 
-@Serializable private data class DlChapterReq(val url: String, val name: String = "")
+@Serializable private data class DlChapterReq(val url: String, val name: String = "", val cls: String = "")
+@Serializable private data class MigrateResultDto(val files: Int)
 @Serializable private data class DownloadReq(val source: String, val manga: String, val title: String = "", val chapters: List<DlChapterReq> = emptyList())
 @Serializable private data class DlTaskDto(
     val id: String, val mangaKey: String, val mangaTitle: String, val state: String,
@@ -341,6 +360,12 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
     val kbps: Double, val error: String, val failedChapters: List<DlChapterReq>, val tag: String = "",
     /** What the failures mean, for the card colour: "" | "transient" | "alternative" | "gone". */
     val failClass: String = "", val autoRetries: Int = 0,
+    /** Parked-for-retry state: epoch ms it re-runs, and how many re-arms it's had. */
+    val retryAt: Long = 0, val reArms: Int = 0,
+    /** Source id + human name, for the per-source download tabs. */
+    val sourceId: String = "", val sourceName: String = "",
+    /** If this queued task's source is resting after a rate-limit, the epoch ms it resumes (0 = not resting). */
+    val sourceRestUntil: Long = 0,
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 @Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
@@ -713,8 +738,10 @@ private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
             it.id, "${it.sourceId}|${it.mangaUrl}", it.mangaTitle, it.state,
             it.total, it.doneCount, it.failedCount,
             it.currentChapter, it.currentChapterUrl, it.pagesDone, it.pagesTotal,
-            it.bytesPerSec / 1024.0, it.error, it.failed.map { c -> DlChapterReq(c.url, c.name) }, it.tag,
-            it.failClass, it.autoRetries,
+            it.bytesPerSec / 1024.0, it.error, it.failed.map { c -> DlChapterReq(c.url, c.name, it.failReason[c.url] ?: "") }, it.tag,
+            it.failClass, it.autoRetries, it.retryAt, it.reArms,
+            it.sourceId.toString(), DownloadQueue.sourceName(it.sourceId),
+            if (it.state == "queued") DownloadQueue.sourceRestUntil(it.sourceId) else 0,
         )
     },
     DownloadQueue.activeCount(),
@@ -796,6 +823,9 @@ fun main() {
     // cached JarFile open, which keeps the .jar LOCKED on Windows — so Unload → Update fails. Must run
     // before any extension jar is opened. (No-op-ish on Linux, which never had the lock.)
     runCatching { java.net.URLConnection.setDefaultUseCaches("jar", false) }
+    // Extensions (MangaFire) read their vrf cipher override from this file if present — lets you refresh
+    // the constants remotely (upload a JSON) without rebuilding the jar. Absent/invalid => baked defaults.
+    System.setProperty("mangafire.vrf.file", AppConfig.mangafireVrfFile.toString())
     LogBuffer.install() // capture WARN/ERROR into a ring buffer for the in-app log viewer
     javax.imageio.ImageIO.scanForPlugins() // register twelvemonkeys WebP/JPEG readers+writers
     // Honor a custom downloads directory chosen in Settings.
@@ -1213,6 +1243,10 @@ fun Application.module() {
             DownloadQueue.resume(id); call.respond(downloadsSnapshot())
         }
         post("/api/downloads/resume-all") { DownloadQueue.resumeAll(); call.respond(downloadsSnapshot()) }
+        post("/api/downloads/force-retry") {
+            val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            DownloadQueue.forceRetry(id); call.respond(downloadsSnapshot())
+        }
 
         // ---- Download manager (browse / delete on-disk content) ----
         // Broken-download detection: every series with interrupted/incomplete chapters (missing the
@@ -1581,6 +1615,28 @@ fun Application.module() {
             call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils.tachibk\"")
             call.respondBytes(bytes, ContentType.parse("application/gzip"))
         }
+        // ---- Dev: whole-instance data migration (everything under the data dir EXCEPT downloads) ----
+        get("/api/dev/migrate/manifest") { call.respond(DataMigration.manifest()) } // what an export from here contains
+        get("/api/dev/migrate/export") {
+            val bytes = withContext(Dispatchers.IO) { DataMigration.export() }
+            call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils-data.mudata.zip\"")
+            call.respondBytes(bytes, ContentType.parse("application/zip"))
+        }
+        post("/api/dev/migrate/preview") { // read-only: what restoring this package WOULD do
+            val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
+            runCatching { DataMigration.preview(bytes) }.fold(
+                onSuccess = { call.respond(it) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Not a valid migration package (${it.message})")) },
+            )
+        }
+        post("/api/dev/migrate/import") {
+            val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
+            runCatching { DataMigration.import(bytes) }.fold(
+                onSuccess = { call.respond(MigrateResultDto(it)) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Import failed: ${it.message}")) },
+            )
+        }
+
         // ---- DYNO Phase 0: back up (metadata blob + downloaded chapters) to a mounted USB drive ----
         post("/api/dyno/backup-now") {
             val target = dynoTarget()
@@ -1604,6 +1660,35 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        get("/api/dev/storage") { call.respond(withContext(Dispatchers.IO) { DevTools.storage() }) }
+        get("/api/dev/requests") {
+            call.respond(
+                eu.kanade.tachiyomi.network.RequestLog.snapshot().asReversed().take(250)
+                    .map { ReqLogDto(it.time, it.method, it.host, it.path, it.code, it.ms) },
+            )
+        }
+        post("/api/dev/requests/clear") { eu.kanade.tachiyomi.network.RequestLog.clear(); call.respond(HttpStatusCode.OK) }
+        get("/api/dev/state") { call.respond(withContext(Dispatchers.IO) { DevTools.stateList() }) }
+        get("/api/dev/state/content") {
+            val name = call.queryParam("name") ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val c = withContext(Dispatchers.IO) { DevTools.stateContent(name) }
+            if (c == null) call.respond(HttpStatusCode.NotFound, ErrorDto("not found")) else call.respond(DevTools.StateContentDto(name, c))
+        }
+        get("/api/dev/source/{id}/diag") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
+            withContext(Dispatchers.IO) { runCatching { DevTools.sourceDiag(id) } }
+                .fold({ call.respond(it) }, { call.respond(HttpStatusCode.NotFound, ErrorDto(it.message ?: "not found")) })
+        }
+        post("/api/dev/source/{id}/raw") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val url = call.receive<RawReq>().url
+            call.respond(withContext(Dispatchers.IO) { DevTools.rawRequest(id, url) })
+        }
+        get("/api/dev/diagnostics") {
+            val bytes = withContext(Dispatchers.IO) { DevTools.diagnosticsZip() }
+            call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"manga-utils-diagnostics.zip\"")
+            call.respondBytes(bytes, ContentType.parse("application/zip"))
+        }
 
         /** Chapters the source can't serve, which automatic downloads skip. */
         get("/api/downloads/unavailable") { call.respond(UnavailableChapters.list()) }
@@ -1753,7 +1838,7 @@ fun Application.module() {
         get("/api/extensions") {
             val list = withContext(Dispatchers.IO) {
                 val repoOf = runCatching { availableEntries().associate { it.first.pkg to repoLabel(it.second) } }.getOrDefault(emptyMap())
-                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath)) }
+                InstalledStore.list().map { ExtDto(it.pkg, it.name, it.versionName, it.lang, it.nsfw, it.sources.size, repoOf[it.pkg] ?: "", WebViewDetect.usesWebView(it.jarPath), it.beta) }
             }
             call.respond(list)
         }
@@ -1779,6 +1864,57 @@ fun Application.module() {
                         call.respond(HttpStatusCode.InternalServerError, ErrorDto(it.message ?: "Install failed"))
                     }
                 },
+            )
+        }
+        // Sideload a locally-built jar (dev/beta) — the raw .jar is uploaded as the request body.
+        post("/api/extensions/install-local") {
+            val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
+            if (bytes.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("No file uploaded"))
+            availCache = null
+            val r = withContext(Dispatchers.IO) {
+                val tmp = java.nio.file.Files.createTempFile("sideload-", ".jar")
+                try {
+                    java.nio.file.Files.write(tmp, bytes)
+                    runCatching { ExtensionInstaller().installLocalJar(tmp) }
+                } finally {
+                    java.nio.file.Files.deleteIfExists(tmp) // installLocalJar copies it into place; temp no longer needed
+                }
+            }
+            r.fold(
+                onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
+                onFailure = {
+                    log.warn("local extension sideload failed: {}", it.message, it)
+                    call.respond(HttpStatusCode.InternalServerError, ErrorDto(it.message ?: "Sideload failed"))
+                },
+            )
+        }
+        // ---- MangaFire vrf constants: remote refresh without a rebuild (see mangafire-tests/refresh-tool) ----
+        get("/api/extensions/mangafire-vrf") {
+            val f = AppConfig.mangafireVrfFile
+            val present = java.nio.file.Files.exists(f)
+            val (valid, build) = if (present) validateVrf(java.nio.file.Files.readString(f)) else (false to "")
+            call.respond(VrfStatusDto(present, valid, build, if (present) java.nio.file.Files.getLastModifiedTime(f).toMillis() else 0L))
+        }
+        post("/api/extensions/mangafire-vrf") {
+            val body = withContext(Dispatchers.IO) { call.receiveStream().readBytes().decodeToString() }
+            val (valid, build) = validateVrf(body)
+            if (!valid) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("Invalid vrf constants — need 3 stages, each a 256-byte permutation table + key + iv 0-255."))
+            withContext(Dispatchers.IO) { java.nio.file.Files.writeString(AppConfig.mangafireVrfFile, body) }
+            log.info("MangaFire vrf constants updated (build='{}')", build)
+            call.respond(VrfStatusDto(true, true, build, System.currentTimeMillis()))
+        }
+        delete("/api/extensions/mangafire-vrf") {
+            withContext(Dispatchers.IO) { java.nio.file.Files.deleteIfExists(AppConfig.mangafireVrfFile) }
+            call.respond(HttpStatusCode.OK)
+        }
+        post("/api/extensions/mangafire-vrf/test") {
+            val ext = withContext(Dispatchers.IO) { InstalledStore.list() }.firstOrNull { it.pkg.contains("mangafire", ignoreCase = true) }
+            val id = ext?.sources?.firstOrNull()?.id
+            if (id == null) return@post call.respond(VrfTestDto(false, 0, null, "MangaFire is not installed"))
+            val r = runCatching { SourceBrowser.popularAsync(id, 1) }
+            r.fold(
+                onSuccess = { call.respond(VrfTestDto(it.mangas.isNotEmpty(), it.mangas.size, it.mangas.firstOrNull()?.title, null)) },
+                onFailure = { call.respond(VrfTestDto(false, 0, null, it.message ?: "request failed")) },
             )
         }
         delete("/api/extensions") {
@@ -1811,6 +1947,12 @@ fun Application.module() {
         }
 
         get("/api/repos") { call.respond(RepoStore.list()) }
+        get("/api/repos/beta") { call.respond(RepoStore.betaList()) }
+        post("/api/repos/beta") {
+            val body = call.receive<BetaRepoReq>()
+            withContext(Dispatchers.IO) { RepoStore.setBeta(body.url, body.beta) }
+            call.respond(RepoStore.betaList())
+        }
         // What each repo actually offers. A repo that fails to fetch reports zeroes rather than
         // failing the whole call, so one dead repo can't blank the others' counts.
         get("/api/repos/stats") {

@@ -98,15 +98,84 @@ class ExtensionInstaller(
             "The extension file was not replaced — ${jarPath.fileName} is unchanged, so the update did not apply."
         }
 
+        val nsfw = pkg.nsfwMeta || entry.isNsfw
+        return record(
+            pkgId = entry.pkg,
+            name = entry.name,
+            lang = entry.lang,
+            nsfw = nsfw,
+            jarPath = jarPath.toString(),
+            pkg = pkg,
+            versionFallback = entry.version,
+            codeFallback = entry.code.toLong(),
+            // Extensions from a user-designated beta repo are flagged beta, same as a sideload.
+            beta = RepoStore.isBeta(indexUrl),
+        )
+    }
+
+    /**
+     * Sideload a locally-built jar (e.g. a custom beta build straight off your machine). Same tail as
+     * a repo install — verify, enumerate, record — but no download and no signature check (it's a
+     * local file you built, not something a repo served). Always flagged [beta].
+     */
+    fun installLocalJar(file: java.nio.file.Path): InstalledExtension {
+        ExtensionRuntime.ensureStarted()
+        AppConfig.ensureLayout()
+        require(java.nio.file.Files.exists(file)) { "No such file: $file" }
+
+        val srcManifest = ExtensionLoader.readJarManifest(file.toString())
+            ?: error("$file is not an extension jar (no bundled AndroidManifest.xml).")
+        val pkgId = srcManifest.packageName.ifEmpty { file.fileName.toString().removeSuffix(".jar") }
+
+        val jarPath = AppConfig.extensionsDir.resolve("$pkgId.jar")
+        ExtensionLoader.releaseJar(jarPath.toString())
+        jarPath.createParentDirectories()
+        java.nio.file.Files.copy(file, jarPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+
+        val manifest = ExtensionLoader.readJarManifest(jarPath.toString())
+            ?: error("Copied jar has no readable manifest.")
+        val pkg =
+            Pkg(
+                packageName = pkgId,
+                versionName = manifest.versionName,
+                versionCode = manifest.versionCode,
+                sourceClass = manifest.meta[ExtensionLoader.METADATA_SOURCE_CLASS],
+                nsfwMeta = manifest.meta[ExtensionLoader.METADATA_NSFW] == "1",
+            )
+        val name = pkgId.substringAfterLast('.').replaceFirstChar { it.uppercaseChar() }
+        return record(
+            pkgId = pkgId,
+            name = name,
+            lang = "",
+            nsfw = pkg.nsfwMeta,
+            jarPath = jarPath.toString(),
+            pkg = pkg,
+            versionFallback = manifest.versionName ?: "",
+            codeFallback = manifest.versionCode,
+            beta = true,
+        )
+    }
+
+    /** Shared install tail: verify the jar, enumerate its sources, and record it. */
+    private fun record(
+        pkgId: String,
+        name: String,
+        lang: String,
+        nsfw: Boolean,
+        jarPath: String,
+        pkg: Pkg,
+        versionFallback: String,
+        codeFallback: Long,
+        beta: Boolean,
+    ): InstalledExtension {
         val classMeta =
             pkg.sourceClass
                 ?: error("No ${ExtensionLoader.METADATA_SOURCE_CLASS} metadata; not a Tachiyomi extension?")
         val classNames = classMeta.split(";").map { resolveClassName(pkg.packageName, it.trim()) }
-        val nsfw = pkg.nsfwMeta || entry.isNsfw
 
         // Check the JVM accepts the code before we record the extension as installed. A failure here
         // used to surface much later as an opaque error from whatever first touched the source.
-        val report = runCatching { ExtensionVerifier.verify(jarPath.toString()) }.getOrNull()
+        val report = runCatching { ExtensionVerifier.verify(jarPath) }.getOrNull()
         if (report != null) {
             ExtensionVerifier.log(report)
             // Fatal: an entry class that won't load (nothing can start), or malformed bytecode
@@ -118,14 +187,14 @@ class ExtensionInstaller(
                 }
             check(broken.isEmpty()) {
                 val f = broken.first()
-                "${entry.name} can't run on this build: ${f.name} failed to load (${f.kind}) — ${f.error}"
+                "$name can't run on this build: ${f.name} failed to load (${f.kind}) — ${f.error}"
             }
         }
 
         // instantiate to enumerate sources
         val sources =
             classNames.flatMap { cn ->
-                val instance = ExtensionLoader.loadExtensionInstance(jarPath.toString(), cn)
+                val instance = ExtensionLoader.loadExtensionInstance(jarPath, cn)
                 SourceManager.expand(instance)
             }.map { src ->
                 InstalledSource(id = src.id, name = src.name, lang = SourceManager.langOf(src))
@@ -133,18 +202,19 @@ class ExtensionInstaller(
 
         val installed =
             InstalledExtension(
-                pkg = entry.pkg,
-                name = entry.name,
-                versionName = pkg.versionName ?: entry.version,
-                versionCode = pkg.versionCode.takeIf { it > 0 } ?: entry.code.toLong(),
-                lang = entry.lang,
+                pkg = pkgId,
+                name = name,
+                versionName = pkg.versionName ?: versionFallback,
+                versionCode = pkg.versionCode.takeIf { it > 0 } ?: codeFallback,
+                lang = lang.ifBlank { sources.map { it.lang }.distinct().singleOrNull() ?: "all" },
                 nsfw = nsfw,
-                jarPath = jarPath.toString(),
+                jarPath = jarPath,
                 classNames = classNames,
                 sources = sources,
+                beta = beta,
             )
         InstalledStore.upsert(installed)
-        log.info("Installed {} ({} source(s))", entry.pkg, sources.size)
+        log.info("Installed {} ({} source(s){})", pkgId, sources.size, if (beta) ", beta" else "")
         return installed
     }
 

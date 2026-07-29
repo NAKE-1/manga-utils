@@ -31,6 +31,8 @@ object ScanVersions {
         val have: List<String>,
         val missing: List<String>,
         val missingUrls: List<String>,
+        /** Scans the source lists but that are known-broken (delisted / missing images) — skipped, not fetched. */
+        val broken: List<String> = emptyList(),
     )
 
     @Serializable
@@ -43,6 +45,8 @@ object ScanVersions {
         val versionsOnDisk: Int,
         val versionsAtSource: Int,
         val missing: Int,
+        /** How many listed scans are known-broken and deliberately skipped. */
+        val broken: Int,
         val estBytes: Long,
         val chapters: List<ChapterPlan>,
     )
@@ -77,24 +81,28 @@ object ScanVersions {
         entry: LibraryEntry,
         detail: Boolean,
     ): SeriesPlan {
-        val onDisk = ChapterIdentity.versionsOf(entry.title).filter { it.complete }
-        // Treat unavailable chapters as accounted for: they are not fetchable, so listing them as
-        // missing would overstate the plan and queue guaranteed failures.
-        val haveUrls = onDisk.mapNotNull { it.url }.toSet() + UnavailableChapters.urls()
+        val onDiskUrls = ChapterIdentity.versionsOf(entry.title).filter { it.complete }.mapNotNull { it.url }.toSet()
+        // Three states per listed scan: on disk (have), known-broken (skip, don't re-queue guaranteed
+        // failures), or genuinely fetchable (missing). Broken is split out so it isn't fetched AND isn't
+        // dishonestly shown as "have".
+        val brokenUrls = UnavailableChapters.urls()
         // Group the source's chapters by number so the report reads per chapter, not per URL.
         val byNumber = entry.knownChapters.groupBy { it.number }
         val chapters =
             byNumber.entries.sortedBy { it.key }.map { (number, versions) ->
-                val missing = versions.filterNot { it.url in haveUrls }
+                val missing = versions.filter { it.url !in onDiskUrls && it.url !in brokenUrls }
                 ChapterPlan(
                     number = number,
                     name = versions.firstOrNull()?.name.orEmpty(),
-                    have = versions.filter { it.url in haveUrls }.map { it.scanlator ?: "?" },
+                    have = versions.filter { it.url in onDiskUrls }.map { it.scanlator ?: "?" },
                     missing = missing.map { it.scanlator ?: "?" },
                     missingUrls = missing.map { it.url },
+                    broken = versions.filter { it.url !in onDiskUrls && it.url in brokenUrls }.map { it.scanlator ?: "?" },
                 )
             }
         val missingCount = chapters.sumOf { it.missing.size }
+        val brokenCount = chapters.sumOf { it.broken.size }
+        val onDisk = ChapterIdentity.versionsOf(entry.title).filter { it.complete }
         return SeriesPlan(
             sourceId = entry.sourceId,
             sourceName = sourceName(entry.sourceId),
@@ -104,9 +112,11 @@ object ScanVersions {
             versionsOnDisk = onDisk.size,
             versionsAtSource = entry.knownChapters.size,
             missing = missingCount,
+            broken = brokenCount,
             estBytes = averageChapterBytes(entry.title) * missingCount,
-            // The per-chapter breakdown is only useful for a single series; skip it library-wide.
-            chapters = if (detail) chapters.filter { it.missing.isNotEmpty() } else emptyList(),
+            // The per-chapter breakdown is only useful for a single series; skip it library-wide. Include
+            // broken-only rows so you can see which scans are being skipped and why.
+            chapters = if (detail) chapters.filter { it.missing.isNotEmpty() || it.broken.isNotEmpty() } else emptyList(),
         )
     }
 

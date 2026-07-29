@@ -48,7 +48,7 @@ object DownloadQueue {
         val total = chapters.size
         @Volatile var order = 0 // sort key for the queue; lower runs first (reorderable while queued)
         @Volatile var tag = "" // "" for a normal download, "migration" for one queued by a migration
-        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted
+        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted | retrywait
         @Volatile var doneCount = 0
         @Volatile var failedCount = 0
         @Volatile var currentChapter = ""
@@ -58,7 +58,9 @@ object DownloadQueue {
         @Volatile var bytesPerSec = 0.0
         @Volatile var lastLogAt = 0L // throttle for the live progress log line
         @Volatile var error = ""
-        @Volatile var autoRetries = 0 // automatic transient-retry passes already spent (capped)
+        @Volatile var autoRetries = 0 // legacy; kept for queue-file compat (inline retry was replaced by re-arm)
+        @Volatile var reArms = 0 // how many times a transient failure has parked this task for a later re-run
+        @Volatile var retryAt = 0L // epoch ms this parked task re-runs; 0 = not parked
         // What the remaining failures mean, for the card colour: "" none, "transient" source was busy,
         // "alternative" a 404 we hold under another scan, "gone" a 404 with no other copy. Worst wins.
         @Volatile var failClass = ""
@@ -66,6 +68,9 @@ object DownloadQueue {
         // Keyed by URL, not name: several scanlations of one chapter share a name, so a name-keyed
         // set would mark every version done as soon as any one of them finished.
         val failed = CopyOnWriteArrayList<Chapter>()
+        // Per failed-chapter meaning (url -> "gone" | "alternative" | "transient"), so the card can show
+        // each chapter's own status instead of one worst-wins colour for the whole task.
+        val failReason = ConcurrentHashMap<String, String>()
         val finishedUrls = ConcurrentHashMap.newKeySet<String>()
         val active get() = state == "queued" || state == "running"
         fun nameToUrl(name: String) = chapters.firstOrNull { it.name == name }?.url ?: ""
@@ -73,6 +78,17 @@ object DownloadQueue {
 
     private val tasks = ConcurrentHashMap<String, Task>()
     private val futures = ConcurrentHashMap<String, Future<*>>()
+
+    // sourceId -> epoch ms until which we won't start a NEW task from that source. Set when a source hands
+    // back a transient (rate-limit / busy) failure, so the queue doesn't march the next manga into the same
+    // wall. A success clears it. ponytail: flat cooldown; it self-extends since a re-failure just re-sets it.
+    private val sourceCooldownUntil = ConcurrentHashMap<Long, Long>()
+    private const val SOURCE_COOLDOWN_MS = 3 * 60_000L
+
+    // Fires parked (retrywait) tasks once their cooldown elapses. Cheap 10s tick; a parked task holds no
+    // pool slot, it just waits here for the source's rate-limit window to reset.
+    private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dl-retry").apply { isDaemon = true } }
+    init { ticker.scheduleWithFixedDelay({ runCatching { sweepRetries() } }, 10, 10, java.util.concurrent.TimeUnit.SECONDS) }
 
     @Volatile private var poolSize = parallelism()
     @Volatile private var pool = newPool(poolSize)
@@ -112,10 +128,14 @@ object DownloadQueue {
         var slots = poolSize - running.size
         if (slots <= 0) return
         val busySources = running.map { it.sourceId }.toMutableSet()
+        val now = System.currentTimeMillis()
         for (task in tasks.values.sortedBy { it.order }) {
             if (slots <= 0) break
             if (task.state != "queued") continue
             if (!perSource && task.sourceId in busySources) continue
+            // A source that just rate-limited us is resting: don't start the next manga from it and cascade
+            // the same failure down the whole queue. Other sources keep running; this one waits out its cooldown.
+            if ((sourceCooldownUntil[task.sourceId] ?: 0) > now) continue
             task.state = "running"
             busySources.add(task.sourceId)
             slots--
@@ -176,54 +196,37 @@ object DownloadQueue {
                 .forEach { doneUrls.add(it.url) }
             foldSkips()
 
-            // Auto-retry transient failures. A rate-limited/overloaded chapter reliably succeeds once the
-            // source has had a rest; a 404 never will, so permanent failures are excluded and left for the
-            // colour/notify step. The rest MUST be a real wait: when the whole source is down (502 on the
-            // very first call) nothing else downloads, so without an explicit delay all three retries fire
-            // in ~150ms and fail identically - useless. Escalating backoff gives genuine recovery time,
-            // interruptible by Stop. Bounded so a source that stays down can't loop.
-            while (task.state != "stopped" && task.autoRetries < AUTO_RETRY_CAP) {
-                doneUrls.addAll(task.finishedUrls)
-                val stillFailed = allUrls - doneUrls
-                if (stillFailed.isEmpty()) break
-                val permanentUrls = permanentFailedUrls(task, attempts)
-                val transient = (stillFailed - permanentUrls).toSet()
-                if (transient.isEmpty()) break
-                task.autoRetries++
-                val waitMs = AUTO_RETRY_BACKOFF_MS * task.autoRetries // 20s, 40s, 60s
-                log.info(
-                    "DOWNLOAD auto-retry {}/{} - '{}' ({} transient failure(s), resting the source {}s first)",
-                    task.autoRetries, AUTO_RETRY_CAP, task.mangaTitle, transient.size, waitMs / 1000,
-                )
-                // ponytail: the wait holds this task's pool slot (it stays "running"), so a source that's
-                // down ties up one slot per retrying task for up to ~2min. Bounded and other sources keep
-                // running; re-queue-with-delay instead if that ever starves the pool.
-                var waited = 0L
-                while (waited < waitMs && task.state != "stopped") { Thread.sleep(500); waited += 500 }
-                if (task.state == "stopped") break
-                val rj = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(transient))
-                attempts.addAll(rj.attempts)
-                doneUrls.addAll(task.finishedUrls)
-                foldSkips()
-            }
-
             task.doneCount = doneUrls.size
             task.bytesPerSec = 0.0
             if (task.state == "stopped") {
                 // Stopped by the user: keep the chapters that finished, drop the rest silently
                 // (the in-progress chapter was never written to disk). Don't flag them as "failed".
                 task.failed.clear()
+                task.failReason.clear()
                 task.failedCount = 0
             } else {
                 task.failed.clear()
+                task.failReason.clear()
                 // Anything without a successful outcome is retryable — including chapters the job never
                 // reached because the source's failure breaker tripped part-way through.
                 task.failed.addAll(task.chapters.filter { it.url !in doneUrls })
                 task.failedCount = task.failed.size
-                task.state = if (task.failedCount == 0) "done" else "failed"
-                if (task.failedCount > 0) {
+                if (task.failedCount == 0) {
+                    task.state = "done"
+                    sourceCooldownUntil.remove(task.sourceId) // source is clearly healthy again
+                } else {
                     task.error = explainFailure(task, attempts)
                     task.failClass = classifyFailures(task, attempts)
+                    // A rate limit / busy source is source-wide, not manga-specific: rest the whole source so
+                    // pump() doesn't immediately throw the next queued manga at it and cascade the failure.
+                    if (task.failClass == "transient") sourceCooldownUntil[task.sourceId] = System.currentTimeMillis() + SOURCE_COOLDOWN_MS
+                    // A rate limit / busy source mid-run strands a batch of chapters, all retryable. A quick
+                    // inline retry is the wrong move — it just keeps the source's window hot — and burying it
+                    // as a dead "failed" row forces a manual click. Park it and re-run after a real quiet gap,
+                    // once the window has reset (exactly what a manual Retry does, but on a timer). Permanent
+                    // (404 / missing-images) failures aren't parked — retrying those never helps.
+                    if (task.failClass == "transient" && task.reArms < RE_ARM_CAP) parkForRetry(task)
+                    else task.state = "failed"
                 }
             }
         }.onFailure {
@@ -245,6 +248,10 @@ object DownloadQueue {
                 Notifier.onDownloadFailed(task.sourceId, task.mangaUrl, task.mangaTitle, task.failedCount, task.error, task.failClass)
             }
             "stopped" -> log.info("DOWNLOAD STOPPED - '{}' ({}/{} chapters kept)", task.mangaTitle, task.doneCount, task.total)
+            "retrywait" -> log.info(
+                "DOWNLOAD will retry - '{}' ({} chapter(s) the source was too busy for) in ~{}min",
+                task.mangaTitle, task.failedCount, ((task.retryAt - System.currentTimeMillis()) / 60_000).coerceAtLeast(1),
+            )
         }
         futures.remove(task.id)
         pump() // a slot (and this source) just freed — start the next eligible manga
@@ -296,6 +303,8 @@ object DownloadQueue {
         val order: Int, val tag: String, val state: String,
         val chapters: List<PChap>, val done: List<String>, val failed: List<String>, val error: String,
         val autoRetries: Int = 0, val failClass: String = "",
+        val reArms: Int = 0, val retryAt: Long = 0,
+        val failReason: Map<String, String> = emptyMap(),
     )
     @Serializable private data class PFile(val version: Int = 1, val savedAt: Long, val tasks: List<PTask>)
 
@@ -303,13 +312,19 @@ object DownloadQueue {
     private val queueFile get() = AppConfig.dataDir.resolve("downloadqueue.json")
     private fun srcName(id: Long) = runCatching { SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
 
+    /** Human source name for a task (for the Downloads per-source tabs). */
+    fun sourceName(id: Long): String = srcName(id)
+
+    /** Epoch ms this source is resting until after a rate-limit (0 = not resting) — for the queued-row label. */
+    fun sourceRestUntil(id: Long): Long = sourceCooldownUntil[id] ?: 0
+
     @Synchronized
     private fun persist() {
         runCatching {
             val list = tasks.values.sortedBy { it.order }.map { t ->
                 PTask(t.id, t.sourceId, t.mangaUrl, t.mangaTitle, srcName(t.sourceId), t.order, t.tag, t.state,
                     t.chapters.map { PChap(it.url, it.name) }, t.finishedUrls.toList(), t.failed.map { it.url }, t.error,
-                    t.autoRetries, t.failClass)
+                    t.autoRetries, t.failClass, t.reArms, t.retryAt, t.failReason.toMap())
             }
             queueFile.createParentDirectories()
             queueFile.writeText(pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
@@ -353,13 +368,57 @@ object DownloadQueue {
         return if (distinct.size == 1) "$which: ${distinct.first()}" else "$which: ${reasons.values.first()} (and other errors)"
     }
 
-    /** How many automatic transient-retry passes a task gets. Rate-limited chapters recover reliably on
-     *  retry, so give them real room; 404s are excluded, so this never burns a pass on a dead chapter. */
-    private const val AUTO_RETRY_CAP = 3
+    /** How many times a transient failure re-arms itself before giving up (then it's a plain "failed" row). */
+    private const val RE_ARM_CAP = 4
 
-    /** Base backoff before an auto-retry, multiplied by the attempt number (20s, 40s, 60s). Real rest so a
-     *  down source can recover; without it retries fire instantly and fail identically. */
-    private const val AUTO_RETRY_BACKOFF_MS = 20_000L
+    /** Quiet gap before a parked task re-runs, times the attempt number: 5, 10, 15, 20 min. A single quiet
+     *  gap usually clears a rate limit; escalating covers a source that's genuinely struggling — never a
+     *  tight loop that keeps the limit warm. */
+    private const val RE_ARM_COOLDOWN_MS = 5 * 60_000L
+
+    /** Park a task whose remaining failures are transient: re-run after a real cooldown, no pool slot held. */
+    private fun parkForRetry(task: Task) {
+        task.retryAt = System.currentTimeMillis() + RE_ARM_COOLDOWN_MS * (task.reArms + 1)
+        task.state = "retrywait"
+    }
+
+    /** Re-run a parked task now: back to the queue, re-attempting everything. Already-downloaded chapters
+     *  skip on disk, so only the stranded ones actually re-fetch.
+     *  ponytail: re-lists all chapters (2 requests) and disk-skips the done ones rather than tracking a
+     *  failed-only sub-selection — fine at these sizes; narrow to task.failed if the re-list ever drags. */
+    @Synchronized
+    private fun reArm(task: Task) {
+        task.reArms++
+        task.retryAt = 0
+        task.error = ""
+        task.failClass = ""
+        task.failedCount = 0
+        task.failed.clear()
+        task.failReason.clear()
+        task.state = "queued"
+        pump()
+    }
+
+    /** Timer tick: fire every parked task whose cooldown has elapsed. */
+    @Synchronized
+    private fun sweepRetries() {
+        val now = System.currentTimeMillis()
+        val due = tasks.values.filter { it.state == "retrywait" && it.retryAt in 1..now }
+        if (due.isEmpty()) {
+            // Nothing to re-arm, but a source cooldown may have just elapsed — let its queued tasks start.
+            if (tasks.values.any { it.state == "queued" }) pump()
+            return
+        }
+        due.forEach { reArm(it) }
+        persist()
+    }
+
+    /** "Retry now" button on a parked task — skip the remaining cooldown. */
+    @Synchronized
+    fun forceRetry(id: String) {
+        val t = tasks[id] ?: return
+        if (t.state == "retrywait") { reArm(t); persist() }
+    }
 
     /**
      * Is this failure the source's fault permanently? Only a missing/delisted chapter qualifies —
@@ -385,15 +444,20 @@ object DownloadQueue {
      */
     private fun classifyFailures(task: Task, attempts: List<mangautils.core.status.JobAttempt>): String {
         val permanentUrls = permanentFailedUrls(task, attempts)
-        var gone = false; var alternative = false; var transient = false
+        task.failReason.clear()
         for (ch in task.failed) {
-            if (ch.url !in permanentUrls) { transient = true; continue } // source was busy, not missing
-            if (hasAlternative(task.sourceId, task.mangaUrl, task.mangaTitle, ch.url)) alternative = true else gone = true
+            task.failReason[ch.url] = when {
+                ch.url !in permanentUrls -> "transient" // source was busy, not missing
+                hasAlternative(task.sourceId, task.mangaUrl, task.mangaTitle, ch.url) -> "alternative" // covered
+                else -> "gone" // genuinely missing, no other copy
+            }
         }
+        // Worst-wins for the single bar colour; the per-chapter reasons carry the honest detail.
+        val kinds = task.failReason.values.toSet()
         return when {
-            gone -> "gone"
-            transient -> "transient"
-            alternative -> "alternative"
+            "gone" in kinds -> "gone"
+            "transient" in kinds -> "transient"
+            "alternative" in kinds -> "alternative"
             else -> ""
         }
     }
@@ -435,7 +499,7 @@ object DownloadQueue {
         if (pf.tasks.isEmpty()) return
         var interrupted = 0; var kept = 0
         for (pt in pf.tasks) {
-            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag; autoRetries = pt.autoRetries; failClass = pt.failClass }
+            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag; autoRetries = pt.autoRetries; failClass = pt.failClass; reArms = pt.reArms; retryAt = pt.retryAt }
             // Older queue files stored names here; map them back so a restart doesn't lose progress.
             val urlByName = pt.chapters.associateBy({ it.name }, { it.url })
             pt.done.forEach { task.finishedUrls.add(if (it.startsWith("http") || it in urlByName.values) it else urlByName[it] ?: it) }
@@ -451,6 +515,7 @@ object DownloadQueue {
                         pt.failed.mapNotNull { k -> (byUrl[k] ?: byName[k])?.let { Chapter(it.url, it.name) } },
                     )
                     task.failedCount = task.failed.size
+                    task.failReason.putAll(pt.failReason)
                     task.error = pt.error
                     kept++
                 }

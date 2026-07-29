@@ -64,6 +64,8 @@ object AppConfig {
     val logsDir: Path get() = sub("logs")
     val databaseFile: Path get() = dataDir.resolve("library.db")
     val reposFile: Path get() = dataDir.resolve("repos.json")
+    val betaReposFile: Path get() = dataDir.resolve("beta-repos.json")
+    val mangafireVrfFile: Path get() = dataDir.resolve("mangafire-vrf.json")
 
     private fun sub(name: String): Path = dataDir.resolve(name)
 

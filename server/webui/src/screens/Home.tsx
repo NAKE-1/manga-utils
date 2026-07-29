@@ -4,6 +4,7 @@ import { Carousel, GridSection } from '../components/Section'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
+import { Footer } from '../components/Footer'
 
 export function Home() {
   const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
@@ -42,6 +43,11 @@ export function Home() {
       return true
     })
   const libraryAZ = [...library].sort((a, b) => a.title.localeCompare(b.title))
+  // Cap how many series the Home grid shows (0 = unlimited). Overflow stays reachable via the "Library →"
+  // header link to the full list. Configurable in Settings → Appearance.
+  const limit = Number(localStorage.getItem('app.homeSeriesLimit')) || 0
+  const shownLibrary = limit > 0 ? libraryAZ.slice(0, limit) : libraryAZ
+  const libraryTitle = limit > 0 && libraryAZ.length > limit ? `Library · ${limit} of ${libraryAZ.length}` : 'Library'
 
   if (library.length === 0 && continueReading.length === 0) {
     return <div className="center-msg">Your library is empty.<br />Add manga from Search to see them here.</div>
@@ -66,11 +72,13 @@ export function Home() {
         </Carousel>
       )}
 
-      <GridSection title="Library" to="/list/library">
-        {libraryAZ.map((e) => (
+      <GridSection title={libraryTitle} to="/list/library">
+        {shownLibrary.map((e) => (
           <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} badge={e.newChapters} dl={dlState(e)} />
         ))}
       </GridSection>
+
+      <Footer />
     </>
   )
 }
