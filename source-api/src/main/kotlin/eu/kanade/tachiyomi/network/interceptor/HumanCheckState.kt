@@ -10,13 +10,30 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * It's flagged from the shared network interceptor, so EVERY path routes through it — search, browse,
  * chapter lists, a manual/overnight library update, and downloads all raise the same single prompt.
+ *
+ * [onNeeded] fires once when a host first becomes blocked (used for the Discord ping); [onCleared] fires
+ * when it's resolved (used to resume downloads that were waiting on it). Both fire only on a real
+ * transition, so repeated blocked requests / repeated successes don't spam.
  */
 object HumanCheckState {
     private val pending = ConcurrentHashMap<String, Long>() // host -> first-seen epoch ms
 
-    fun needed(host: String) { pending.putIfAbsent(host, System.currentTimeMillis()) }
+    @Volatile var onNeeded: ((host: String) -> Unit)? = null
+    @Volatile var onCleared: ((host: String) -> Unit)? = null
 
-    fun cleared(host: String) { pending.remove(host) }
+    fun needed(host: String) {
+        if (pending.putIfAbsent(host, System.currentTimeMillis()) == null) {
+            runCatching { onNeeded?.invoke(host) }
+        }
+    }
+
+    fun cleared(host: String) {
+        if (pending.remove(host) != null) {
+            runCatching { onCleared?.invoke(host) }
+        }
+    }
+
+    fun isPending(host: String): Boolean = pending.containsKey(host)
 
     /** host -> since-ms, oldest first. */
     fun snapshot(): List<Pair<String, Long>> = pending.entries.map { it.key to it.value }.sortedBy { it.second }

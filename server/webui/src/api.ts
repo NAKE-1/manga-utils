@@ -375,6 +375,7 @@ export interface DlTask {
   retryAt?: number; reArms?: number // parked-for-retry: epoch ms it re-runs, and re-arm count
   sourceId?: string; sourceName?: string // for the per-source download tabs
   sourceRestUntil?: number // queued behind a rate-limited source: epoch ms it resumes (0 = not resting)
+  vfHost?: string // state==="waitvf": host whose human-check must be solved to resume
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 

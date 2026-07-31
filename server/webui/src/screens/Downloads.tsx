@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, DlTask, Downloads as DownloadsT } from '../api'
+import { WebviewModal } from '../components/WebviewModal'
 
 const fmtSpeed = (kbps: number) => (kbps >= 1024 ? `${(kbps / 1024).toFixed(1)} MB/s` : `${Math.round(kbps)} KB/s`)
 function fmtEta(s: number): string {
@@ -75,7 +76,7 @@ export function Downloads() {
   const tasks = data.tasks
   const sourceOf = (t: DlTask) => t.sourceId || t.mangaKey.split('|')[0]
   // Live work vs history. Interrupted (post-restart, awaiting Resume) counts as live — it needs attention.
-  const active = tasks.filter((t) => t.state === 'running' || t.state === 'queued' || t.state === 'retrywait' || t.state === 'interrupted')
+  const active = tasks.filter((t) => t.state === 'running' || t.state === 'queued' || t.state === 'retrywait' || t.state === 'interrupted' || t.state === 'waitvf')
   const completed = tasks.filter((t) => t.state === 'done' || t.state === 'failed' || t.state === 'stopped')
   const queuedIds = tasks.filter((t) => t.state === 'queued').map((t) => t.id) // global order — reorder is global
 
@@ -149,6 +150,9 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
   const queued = t.state === 'queued'
   const failed = t.state === 'failed'
   const interrupted = t.state === 'interrupted'
+  // Blocked on a "verify you're human" captcha: holds (no timer) until the user solves it in the WebView.
+  const waitvf = t.state === 'waitvf'
+  const [solving, setSolving] = useState(false)
   // Parked after a transient (rate-limit / busy-source) failure: waiting out a cooldown, then re-runs itself.
   const parked = t.state === 'retrywait'
   const retryIn = parked ? (t.retryAt || 0) - Date.now() : 0
@@ -182,7 +186,9 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
           )}
           {running
             ? <button className="dl-link" onClick={onStop}>Stop</button>
-            : interrupted
+            : waitvf
+              ? <button className="dl-link dl-resume" onClick={() => setSolving(true)}>Solve</button>
+              : interrupted
               ? <button className="dl-link dl-resume" onClick={onResume}>Resume</button>
               : parked
                 ? <button className="dl-link dl-resume" onClick={onForce}>Retry now</button>
@@ -193,7 +199,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
       </div>
       <div className="dlc-sub">
         <span>
-          {interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : parked
+          {waitvf ? `🔒 Waiting for verification · solve the human-check for ${t.vfHost || 'the source'}, then it resumes` : interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : parked
             ? `Source was busy · ${t.failed} chapter${t.failed === 1 ? '' : 's'} to retry · in ${fmtCountdown(retryIn)}`
             : queued ? (resting > 0 ? `Source resting · ready in ${fmtCountdown(resting)}` : 'Queued') : running
             ? `Chapter ${chapterNo} of ${t.total}${t.currentChapter ? ` · ${t.currentChapter}` : ''}`
@@ -213,6 +219,17 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
             return <div key={k} className={'dlc-fg fc-' + k}><b>{label}:</b> {shown}</div>
           })}
         </div>
+      )}
+      {solving && (
+        <WebviewModal
+          url={t.vfHost ? `https://${t.vfHost}/` : undefined}
+          source={t.vfHost ? undefined : t.sourceId}
+          onClose={() => {
+            setSolving(false)
+            // Clearing the host fires HumanCheckState.onCleared server-side, which requeues this download.
+            if (t.vfHost) fetch(`/api/webview/pending/clear?host=${encodeURIComponent(t.vfHost)}`, { method: 'POST' }).catch(() => {})
+          }}
+        />
       )}
     </div>
   )

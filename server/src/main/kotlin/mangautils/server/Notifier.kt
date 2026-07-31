@@ -81,6 +81,29 @@ object Notifier {
     )
 
     // ================================ event triggers ================================
+    /** A source is asking the user to solve an interactive human-check. Actionable alert, so it fires
+     *  whenever a webhook is set (not gated on the per-event toggles) — the user explicitly wants to be
+     *  pinged to go solve it. Fires once per host (HumanCheckState only calls this on a fresh block). */
+    fun onHumanCheckNeeded(host: String) {
+        if (webhook().isBlank()) return
+        bg.submit {
+            runCatching {
+                enqueue(
+                    Payload(
+                        embeds = listOf(
+                            Embed(
+                                title = "🔒 Verification needed",
+                                description = "**$host** wants you to verify you're human. Open manga-utils and tap **Solve** " +
+                                    "to clear it — anything waiting on it (search, updates, downloads) resumes automatically.",
+                                color = AMBER,
+                            ),
+                        ),
+                    ),
+                )
+            }.onFailure { log.warn("human-check notify failed: {}", it.message) }
+        }
+    }
+
     fun onLibraryChecked(results: List<UpdateResult>, scheduled: Boolean) {
         val c = cfg() ?: return
         if (!active() || (!c.libraryCheck && !c.newChapters)) return

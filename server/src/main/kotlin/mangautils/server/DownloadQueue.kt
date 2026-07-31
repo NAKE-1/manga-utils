@@ -16,6 +16,8 @@ import mangautils.core.download.DownloadStore
 import mangautils.core.download.ExistingPolicy
 import mangautils.core.download.SourceRef
 import mangautils.core.source.SourceManager
+import eu.kanade.tachiyomi.network.interceptor.HumanCheckState
+import eu.kanade.tachiyomi.source.online.HttpSource
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -48,7 +50,8 @@ object DownloadQueue {
         val total = chapters.size
         @Volatile var order = 0 // sort key for the queue; lower runs first (reorderable while queued)
         @Volatile var tag = "" // "" for a normal download, "migration" for one queued by a migration
-        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted | retrywait
+        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted | retrywait | waitvf
+        @Volatile var vfHost = "" // when state==waitvf: the host whose human-check must be solved to resume
         @Volatile var doneCount = 0
         @Volatile var failedCount = 0
         @Volatile var currentChapter = ""
@@ -217,6 +220,15 @@ object DownloadQueue {
                 } else {
                     task.error = explainFailure(task, attempts)
                     task.failClass = classifyFailures(task, attempts)
+                    // Blocked on an interactive human-check (MangaFire's "click the shapes"): don't fail and
+                    // don't burn retry passes on a timer — no amount of waiting clears a captcha. Park it as
+                    // "waitvf" and resume the moment the user solves it in the WebView (HumanCheckState.onCleared
+                    // → resumeWaitingFor). A Discord ping already fired when the host first got flagged.
+                    val vfHost = sourceHost(task.sourceId)?.takeIf { HumanCheckState.isPending(it) }
+                    if (vfHost != null) {
+                        task.vfHost = vfHost
+                        task.state = "waitvf"
+                    } else {
                     // A rate limit / busy source is source-wide, not manga-specific: rest the whole source so
                     // pump() doesn't immediately throw the next queued manga at it and cascade the failure.
                     if (task.failClass == "transient") sourceCooldownUntil[task.sourceId] = System.currentTimeMillis() + SOURCE_COOLDOWN_MS
@@ -227,6 +239,7 @@ object DownloadQueue {
                     // (404 / missing-images) failures aren't parked — retrying those never helps.
                     if (task.failClass == "transient" && task.reArms < RE_ARM_CAP) parkForRetry(task)
                     else task.state = "failed"
+                    }
                 }
             }
         }.onFailure {
@@ -251,6 +264,10 @@ object DownloadQueue {
             "retrywait" -> log.info(
                 "DOWNLOAD will retry - '{}' ({} chapter(s) the source was too busy for) in ~{}min",
                 task.mangaTitle, task.failedCount, ((task.retryAt - System.currentTimeMillis()) / 60_000).coerceAtLeast(1),
+            )
+            "waitvf" -> log.info(
+                "DOWNLOAD waiting for verification - '{}' ({} chapter(s)) - solve the human-check for {} to resume",
+                task.mangaTitle, task.failedCount, task.vfHost,
             )
         }
         futures.remove(task.id)
@@ -295,6 +312,23 @@ object DownloadQueue {
 
     /** Remove ONE finished/failed/stopped task row (no-op while it's still active). */
     fun remove(id: String) { tasks[id]?.let { if (!it.active) tasks.remove(id) }; persist() }
+
+    /** Host of a source's base URL (e.g. "mangafire.to"), for matching against HumanCheckState. */
+    private fun sourceHost(sourceId: Long): String? = runCatching {
+        (SourceManager.loadSource(sourceId) as? HttpSource)?.baseUrl?.let { java.net.URI(it).host }
+    }.getOrNull()
+
+    /** The user just solved [host]'s human-check (HumanCheckState.onCleared) — requeue every download that
+     *  was parked waiting on it so it starts right away. */
+    @Synchronized
+    fun resumeWaitingFor(host: String) {
+        var any = false
+        tasks.values.filter { it.state == "waitvf" && it.vfHost == host }.forEach {
+            it.state = "queued"; it.error = ""; it.vfHost = ""; any = true
+            log.info("DOWNLOAD resuming after verification - '{}'", it.mangaTitle)
+        }
+        if (any) { pump(); persist() }
+    }
 
     // ---- persistence: survive a restart (Part B) ------------------------------------------------
     @Serializable private data class PChap(val url: String, val name: String)
@@ -505,7 +539,9 @@ object DownloadQueue {
             pt.done.forEach { task.finishedUrls.add(if (it.startsWith("http") || it in urlByName.values) it else urlByName[it] ?: it) }
             task.doneCount = task.finishedUrls.size
             when (pt.state) {
-                "queued", "running", "interrupted" -> { task.state = "interrupted"; interrupted++ }
+                // waitvf too: the in-memory human-check flag is gone after a restart, so there's nothing to
+                // auto-resume against — fall back to a manual Resume like any interrupted task.
+                "queued", "running", "interrupted", "waitvf" -> { task.state = "interrupted"; interrupted++ }
                 else -> {
                     task.state = pt.state
                     // Match on URL, falling back to name for queue files written before this change.

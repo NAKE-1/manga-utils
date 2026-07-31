@@ -378,6 +378,8 @@ private fun validateVrf(json: String): Pair<Boolean, String> = runCatching {
     val sourceId: String = "", val sourceName: String = "",
     /** If this queued task's source is resting after a rate-limit, the epoch ms it resumes (0 = not resting). */
     val sourceRestUntil: Long = 0,
+    /** When state=="waitvf": the host whose human-check must be solved (drives the "Solve" button). */
+    val vfHost: String = "",
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 @Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
@@ -762,6 +764,7 @@ private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
             it.failClass, it.autoRetries, it.retryAt, it.reArms,
             it.sourceId.toString(), DownloadQueue.sourceName(it.sourceId),
             if (it.state == "queued") DownloadQueue.sourceRestUntil(it.sourceId) else 0,
+            it.vfHost,
         )
     },
     DownloadQueue.activeCount(),
@@ -855,6 +858,10 @@ fun main() {
     // Honor a custom downloads directory chosen in Settings.
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
     applyFlareSolverr(SettingsStore.get()) // push the Cloudflare-bypass config into the network layer
+    // Wire interactive human-check events (flagged from the network interceptor) to the two consumers:
+    // ping Discord the moment a source needs solving, and resume any download parked on it once solved.
+    eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onNeeded = { host -> Notifier.onHumanCheckNeeded(host) }
+    eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onCleared = { host -> DownloadQueue.resumeWaitingFor(host) }
     applyVerboseLogging(SettingsStore.get().verboseLogging) // apply saved console-logging level at boot
     autoDetectFlareOnce() // first-ever boot: find a running FlareSolverr on a default endpoint and wire it up
     // Detect Cloudflare-protected sources in the background (loads each source once).
