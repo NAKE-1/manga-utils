@@ -214,6 +214,7 @@ class ExtensionInstaller(
                 beta = beta,
             )
         InstalledStore.upsert(installed)
+        ExtensionIcons.invalidate(pkgId) // re-fetch the icon on (re)install — it may have changed
         log.info("Installed {} ({} source(s){})", pkgId, sources.size, if (beta) ", beta" else "")
         return installed
     }

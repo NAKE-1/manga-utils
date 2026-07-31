@@ -104,6 +104,7 @@ fun ExtensionStoreV2.Extension.toRepoEntry(): ExtensionRepoEntry =
         // apk/jar are absolute here, so the *Url() helpers pass them through untouched.
         apk = resources.apkUrl,
         jar = resources.jarUrl,
+        icon = resources.iconUrl.takeIf { it.isNotBlank() },
         lang = sources.map { it.language }.distinct().singleOrNull() ?: "all",
         code = versionCode.toInt(),
         version = versionName,

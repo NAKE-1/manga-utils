@@ -27,6 +27,8 @@ data class ExtensionRepoEntry(
      * can install without translating any DEX.
      */
     val jar: String? = null,
+    /** Absolute icon URL from the v2 index (e.g. a jsDelivr mipmap). Null on a legacy index. */
+    val icon: String? = null,
     /** extensions-lib version this was built against, e.g. "1.6". Empty on a legacy index. */
     val extensionLib: String = "",
     val sources: List<RepoSource> = emptyList(),
