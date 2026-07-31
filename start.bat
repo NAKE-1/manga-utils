@@ -174,7 +174,11 @@ REM (CEF blocks on the stale helper's cache lock). Kill just those — jcef_help
 REM this can't hit the gradle daemon or the app JVM. (A stale server still on the port surfaces as a
 REM clear "port 8080 in use" message, so we deliberately do NOT kill by port here.)
 taskkill /f /im jcef_helper.exe >nul 2>&1
-call "%GRADLE%" :server:run
+REM --no-daemon: the server blocks its gradle worker for its whole lifetime, and a Windows Ctrl+C often
+REM leaves that daemon marked "busy" forever — they pile up (9+ orphaned 2GB JVMs) until gradle can't
+REM start a fresh one and hangs at "INITIALIZING". Running daemonless makes each launch self-contained,
+REM so Ctrl+C tears it down and nothing accumulates.
+call "%GRADLE%" --no-daemon :server:run
 goto :after
 
 :after
@@ -207,7 +211,7 @@ if /I "%CMD%"=="gui" (
     goto :end
 )
 if /I "%CMD%"=="desktop" ( call "%GRADLE%" :desktop:run & goto :end )
-if /I "%CMD%"=="web" ( call "%GRADLE%" :server:run & goto :end )
+if /I "%CMD%"=="web" ( call "%GRADLE%" --no-daemon :server:run & goto :end )
 if /I "%CMD%"=="run"         ( call "%GRADLE%" -q :cli:run --args="!REST!" & goto :end )
 if /I "%CMD%"=="mu" (
     call "%GRADLE%" -q :cli:installDist || goto :fail
