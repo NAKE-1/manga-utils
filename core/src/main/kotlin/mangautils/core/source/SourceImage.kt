@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.Request
@@ -80,41 +81,56 @@ object SourceImage {
     ): ByteArray? {
         if (SourceCircuits.images.isOpen(sourceId)) return null // breaker open (dead CDN) → instant fail
         val src = SourceManager.loadSource(sourceId) as? HttpSource ?: return null
-        var gone = false // image is permanently missing rather than the source being in trouble
-        return try {
-            val bytes = withTimeout(7_000) {
-                if (page.imageUrl.isNullOrBlank()) page.imageUrl = src.getImageUrl(page)
-                src.getImage(page).use { resp ->
-                    if (resp.isSuccessful) {
-                        resp.body?.bytes()
+        if (page.imageUrl.isNullOrBlank()) {
+            runCatching { withTimeout(7_000) { page.imageUrl = src.getImageUrl(page) } }
+        }
+        // Each MangaFire page is pinned to a specific CDN edge (mfcdn1/2/3); when that edge is dead/blocked,
+        // ONLY its images fail (the site itself shows a single "page error" while the rest of the chapter
+        // loads). MangaFire serves the same /mf/<hash>/… path from sibling hosts, so on failure we retry the
+        // image on a sibling edge. Candidates: the extension's own request first (correct for all sources),
+        // then host-rotated variants (empty for non-mfcdn sources, so this is a no-op for them).
+        val candidates: List<String?> = buildList {
+            add(null) // null → use the extension's getImage(page)
+            page.imageUrl?.let { addAll(siblingHosts(it)) }
+        }
+        var gone = false // image genuinely missing (4xx) → mirrors won't help, stop
+        for ((i, alt) in candidates.withIndex()) {
+            val bytes = try {
+                withTimeout(7_000) {
+                    val resp = if (alt == null) {
+                        src.getImage(page)
                     } else {
-                        log.warn("page {} failed: HTTP {} {}", page.index, resp.code, page.imageUrl)
-                        // A 404/410 means THIS image is gone, not that the source is unhealthy. The breaker
-                        // is source-wide, so counting these lets one dead chapter fast-fail every image from
-                        // the source for 20s - including the chapter you switch to when the dead one fails.
-                        // 429 and 5xx are genuine source trouble and still count.
-                        if (resp.code in 400..499 && resp.code != 429) gone = true
-                        null
+                        src.client.newCall(Request.Builder().url(alt).headers(src.headers).build()).execute()
+                    }
+                    resp.use {
+                        if (it.isSuccessful) {
+                            it.body?.bytes()
+                        } else {
+                            if (it.code in 400..499 && it.code != 429) gone = true
+                            log.warn("page {} failed: HTTP {} {}", page.index, it.code, alt ?: page.imageUrl)
+                            null
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e // navigated away
+                val code = Regex("""HTTP error (\d{3})""").find(e.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+                if (code != null && code in 400..499 && code != 429) gone = true
+                log.warn("page {} failed: {} ({})", page.index, e.message ?: e::class.simpleName, alt ?: page.imageUrl)
+                null
             }
-            if (bytes != null) {
-                SourceCircuits.images.recordSuccess(sourceId)
-            } else if (!gone) {
-                SourceCircuits.images.recordFailure(sourceId)
-            }
-            bytes
-        } catch (e: Exception) {
-            // A plain cancellation (you navigated away) isn't the source's fault — don't trip the breaker.
-            if (e is CancellationException && e !is TimeoutCancellationException) throw e
-            // Extensions raise a missing image as an exception ("HTTP error 404"), not as a response, so
-            // the response-side 4xx check below never sees it. Same reasoning: a gone image is not a sick
-            // source, and counting it lets one dead chapter fast-fail the whole source for 20s.
-            val code = Regex("""HTTP error (\d{3})""").find(e.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
-            if (code != null && code in 400..499 && code != 429) gone = true
-            if (!gone) SourceCircuits.images.recordFailure(sourceId)
-            log.warn("page {} failed: {} ({})", page.index, e.message ?: e::class.simpleName, page.imageUrl)
-            null
+            if (bytes != null) { SourceCircuits.images.recordSuccess(sourceId); return bytes }
+            if (gone) break // permanently missing → don't waste time on mirrors
+            if (i < candidates.lastIndex) delay(200)
         }
+        if (!gone) SourceCircuits.images.recordFailure(sourceId)
+        return null
+    }
+
+    /** MangaFire (and similar) serve the same path from mfcdn1/2/3 — swap the edge number for retries. */
+    internal fun siblingHosts(url: String): List<String> {
+        val m = Regex("""mfcdn(\d)""").find(url) ?: return emptyList()
+        val cur = m.groupValues[1]
+        return listOf("1", "2", "3").filter { it != cur }.map { url.replaceFirst("mfcdn$cur", "mfcdn$it") }
     }
 }

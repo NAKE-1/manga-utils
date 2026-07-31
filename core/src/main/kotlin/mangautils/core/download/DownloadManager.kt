@@ -17,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeout
 import mangautils.core.config.AppConfig
 import mangautils.core.config.SettingsStore
 import mangautils.core.convert.CbzWriter
@@ -24,6 +25,7 @@ import mangautils.core.convert.ComicInfoData
 import mangautils.core.convert.FolderWriter
 import mangautils.core.convert.ImageFormat
 import mangautils.core.convert.PageImage
+import mangautils.core.source.SourceImage
 import mangautils.core.source.SourceManager
 import mangautils.core.status.Job
 import mangautils.core.status.JobAttempt
@@ -303,21 +305,37 @@ class DownloadManager(
     ): PageImage {
         var lastError: Exception? = null
         repeat(retries) { attempt ->
-            try {
-                if (page.imageUrl.isNullOrBlank()) {
-                    page.imageUrl = source.getImageUrl(page)
-                }
-                source.getImage(page).use { response ->
-                    val bytes = response.body?.bytes() ?: ByteArray(0)
+            if (page.imageUrl.isNullOrBlank()) {
+                runCatching { page.imageUrl = source.getImageUrl(page) }
+            }
+            // Try the extension's own request first, then sibling CDN edges (MangaFire mfcdn1/2/3): when
+            // one edge 522/523s (origin down), a sibling usually serves the same /mf/<hash> path. Each
+            // attempt is time-boxed so a hung Cloudflare 52x fails in ~12s, not okhttp's 120s callTimeout
+            // (that was the ~20s-per-page stall re-hitting one dead edge). Siblings are empty for non-mfcdn
+            // sources, so this is a plain time-boxed retry for everyone else.
+            val candidates: List<String?> = buildList {
+                add(null) // null → source.getImage(page)
+                page.imageUrl?.let { addAll(SourceImage.siblingHosts(it)) }
+            }
+            for (alt in candidates) {
+                try {
+                    val bytes = withTimeout(12_000) {
+                        val resp = if (alt == null) {
+                            source.getImage(page)
+                        } else {
+                            source.client.newCall(okhttp3.Request.Builder().url(alt).headers(source.headers).build()).execute()
+                        }
+                        resp.use { it.body?.bytes() ?: ByteArray(0) }
+                    }
                     if (!ImageFormat.looksLikeImage(bytes)) {
                         error("page ${page.index} returned ${bytes.size} bytes (not an image)")
                     }
                     return PageImage(page.index, bytes, ImageFormat.extensionFor(bytes))
+                } catch (e: Exception) {
+                    lastError = e
                 }
-            } catch (e: Exception) {
-                lastError = e
-                if (attempt < retries - 1) delay(backoffMs * (attempt + 1))
             }
+            if (attempt < retries - 1) delay(backoffMs * (attempt + 1))
         }
         throw lastError ?: IllegalStateException("page ${page.index} failed")
     }
