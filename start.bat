@@ -169,9 +169,10 @@ echo     On this PC:        %C%http://localhost:8080%R%
 echo     On your phone:     %C%http://^<this-PC-tailscale-ip^>:8080%R%   %D%(must be on the same tailnet)%R%
 echo     %D%Tip: set MANGA_WEB_PORT to change the port.%R%
 echo.
-REM A previous Ctrl+C can leave the app JVM and its JCEF helpers alive, which makes the next launch
-REM hang on "initializing" (CEF blocks on the stale helper's cache lock). Clear them first.
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8080" ^| findstr LISTENING') do taskkill /f /pid %%p >nul 2>&1
+REM A previous Ctrl+C can orphan JCEF helper processes; the next launch then hangs on "initializing"
+REM (CEF blocks on the stale helper's cache lock). Kill just those — jcef_helper is exclusively JCEF, so
+REM this can't hit the gradle daemon or the app JVM. (A stale server still on the port surfaces as a
+REM clear "port 8080 in use" message, so we deliberately do NOT kill by port here.)
 taskkill /f /im jcef_helper.exe >nul 2>&1
 call "%GRADLE%" :server:run
 goto :after
