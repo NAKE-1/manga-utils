@@ -169,15 +169,9 @@ echo     On this PC:        %C%http://localhost:8080%R%
 echo     On your phone:     %C%http://^<this-PC-tailscale-ip^>:8080%R%   %D%(must be on the same tailnet)%R%
 echo     %D%Tip: set MANGA_WEB_PORT to change the port.%R%
 echo.
-REM A previous Ctrl+C can orphan JCEF helper processes; the next launch then hangs on "initializing"
-REM (CEF blocks on the stale helper's cache lock). Kill just those — jcef_helper is exclusively JCEF, so
-REM this can't hit the gradle daemon or the app JVM. (A stale server still on the port surfaces as a
-REM clear "port 8080 in use" message, so we deliberately do NOT kill by port here.)
+REM Clear orphaned JCEF helpers a prior Ctrl+C left behind; they hold the CEF cache lock and stall init.
 taskkill /f /im jcef_helper.exe >nul 2>&1
-REM --no-daemon: the server blocks its gradle worker for its whole lifetime, and a Windows Ctrl+C often
-REM leaves that daemon marked "busy" forever — they pile up (9+ orphaned 2GB JVMs) until gradle can't
-REM start a fresh one and hangs at "INITIALIZING". Running daemonless makes each launch self-contained,
-REM so Ctrl+C tears it down and nothing accumulates.
+REM --no-daemon: keeps Ctrl+C-ed servers from leaving busy gradle daemons that pile up and stall launch.
 call "%GRADLE%" --no-daemon :server:run
 goto :after
 

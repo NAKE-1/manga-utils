@@ -38,6 +38,7 @@ object JcefRemoteView {
 
     private var client: CefClient? = null
     @Volatile private var browser: CefBrowser? = null
+    @Volatile private var currentUrl = ""
     private val panel = JPanel() // MouseEvent source for input forwarding
 
     private val lock = Any()
@@ -48,8 +49,11 @@ object JcefRemoteView {
     private val renderHandler = object : CefRenderHandlerAdapter() {
         override fun getViewRect(browser: CefBrowser) = Rectangle(0, 0, WIDTH, HEIGHT)
 
-        override fun onPaint(browser: CefBrowser, popup: Boolean, dirtyRects: Array<Rectangle>, buffer: ByteBuffer, width: Int, height: Int) {
-            if (popup) return
+        override fun onPaint(b: CefBrowser, popup: Boolean, dirtyRects: Array<Rectangle>, buffer: ByteBuffer, width: Int, height: Int) {
+            // Drop popups and — crucially — paints from any browser that isn't the current one. When open()
+            // replaces a session, the old browser keeps painting for a moment while it disposes; without this
+            // guard both write into `raw` and you see two challenges flashing back and forth.
+            if (popup || b !== browser) return
             synchronized(lock) {
                 val need = width * height * 4
                 if (raw?.size != need) raw = ByteArray(need)
@@ -63,10 +67,14 @@ object JcefRemoteView {
     /** (Re)open the offscreen browser at [url]. Disposes any previous session. */
     @Synchronized
     fun open(url: String) {
+        // Idempotent: a client re-mount / re-render must NOT spawn a second browser (that's what caused the
+        // two-challenges-flashing + endless re-init). Same URL + a live session → keep it.
+        if (browser != null && url.trimEnd('/') == currentUrl.trimEnd('/')) return
         if (client == null) client = runCatching { runBlocking { CefHelper.createClient() } }.getOrNull()
         val c = client ?: run { log.warn { "JcefRemoteView: CEF client unavailable" }; return }
         closeBrowser()
         synchronized(lock) { raw = null; rw = 0; rh = 0 }
+        currentUrl = url
         browser = c.createBrowser(url, CefRendering.CefRenderingWithHandler(renderHandler, panel), false)
             .apply { createImmediately() }
         log.info { "JcefRemoteView: opened $url" }
@@ -120,6 +128,7 @@ object JcefRemoteView {
     @Synchronized
     fun close() {
         closeBrowser()
+        currentUrl = ""
         synchronized(lock) { raw = null; rw = 0; rh = 0 }
         log.info { "JcefRemoteView: closed" }
     }
