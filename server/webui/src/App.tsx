@@ -20,8 +20,10 @@ import Migrate from './screens/Migrate'
 import Relocate from './screens/Relocate'
 import ScanVersions from './screens/ScanVersions'
 import { Dev } from './screens/Dev'
+import Webview from './screens/Webview'
 import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher, setReaderActive } from './components/Toast'
+import { HumanCheckWatcher } from './components/HumanCheckWatcher'
 import { PullToRefresh } from './components/PullToRefresh'
 
 export function App() {
@@ -36,6 +38,7 @@ export function App() {
     <>
       <DownloadWatcher />
       <Toasts />
+      <HumanCheckWatcher />
       {isReader ? (
         <Routes>
           <Route path="/reader/:sourceId" element={<Reader />} />
@@ -63,6 +66,7 @@ export function App() {
               <Route path="/relocate" element={<Relocate />} />
               <Route path="/scan-versions" element={<ScanVersions />} />
               <Route path="/dev" element={<Dev />} />
+              <Route path="/webview" element={<Webview />} />
               <Route path="/manga/:sourceId" element={<Detail />} />
               <Route path="*" element={<Stub name="Not found" />} />
             </Routes>

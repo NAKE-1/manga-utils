@@ -16,6 +16,9 @@
     <logger name="io.ktor" level="INFO" />
     <logger name="io.netty" level="WARN" />
     <logger name="eu.kanade" level="INFO" />
+    <!-- Network tracing (okhttp request/response BASIC + interceptor decisions) is INFO by default and
+         raised to DEBUG at runtime by the "Verbose logging" dev toggle (applyVerboseLogging). -->
+    <logger name="eu.kanade.tachiyomi.network" level="INFO" />
     <!-- extensions log via android.util.Log; keep the WebView per-navigation spam off the console -->
     <logger name="android.util.Log" level="INFO" />
 

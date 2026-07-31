@@ -10,6 +10,9 @@ import eu.kanade.tachiyomi.source.model.SManga
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.response.respondText
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import io.ktor.serialization.kotlinx.json.json
@@ -73,6 +76,15 @@ private val log = LoggerFactory.getLogger("mangautils.server")
 private fun cloudflareBypassOn(): Boolean = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.enabled
 
 /** Push the app's FlareSolverr settings into the network layer's live config holder. */
+/** Flip the noisy network DEBUG logging on/off at runtime (okhttp BASIC traces + interceptor decisions).
+ *  logback.xml keeps this at INFO by default; this lets the dev toggle raise it without a restart. */
+private fun applyVerboseLogging(enabled: Boolean) {
+    runCatching {
+        val level = if (enabled) ch.qos.logback.classic.Level.DEBUG else ch.qos.logback.classic.Level.INFO
+        (org.slf4j.LoggerFactory.getLogger("eu.kanade.tachiyomi.network") as ch.qos.logback.classic.Logger).level = level
+    }
+}
+
 private fun applyFlareSolverr(s: mangautils.core.config.Settings) {
     val c = eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig
     c.enabled = s.flareSolverrEnabled
@@ -407,7 +419,14 @@ private data class SettingsDto(
     val usbBackupDir: String,
     val discordWebhookUrl: String,
     val notify: mangautils.core.config.NotifyConfig,
+    val verboseLogging: Boolean,
 )
+
+@Serializable
+private data class WebViewInfoDto(val width: Int, val height: Int, val url: String)
+
+@Serializable
+private data class HumanCheckDto(val host: String, val sinceMs: Long)
 
 @Serializable
 private data class RelocatePlanReq(val root: String)
@@ -463,6 +482,7 @@ private data class SettingsPatch(
     val usbBackupDir: String? = null,
     val discordWebhookUrl: String? = null,
     val notify: mangautils.core.config.NotifyConfig? = null,
+    val verboseLogging: Boolean? = null,
 )
 
 @Serializable
@@ -529,7 +549,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
     s.healthCheckEnabled, s.healthCheckHour,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
-    s.usbBackupDir, s.discordWebhookUrl, s.notify,
+    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging,
 )
 
 @Serializable
@@ -823,6 +843,10 @@ fun main() {
     // cached JarFile open, which keeps the .jar LOCKED on Windows — so Unload → Update fails. Must run
     // before any extension jar is opened. (No-op-ish on Linux, which never had the lock.)
     runCatching { java.net.URLConnection.setDefaultUseCaches("jar", false) }
+    // Dispose CEF on exit so its jcef_helper subprocesses don't linger and stall the NEXT launch on
+    // "initializing" (they hold the CEF cache lock). Best-effort — only fires if the JVM gets the signal;
+    // start.bat also clears stragglers before launch as the reliable belt.
+    runCatching { Runtime.getRuntime().addShutdownHook(Thread { runCatching { xyz.nulldev.androidcompat.webkit.CefManager.shutdown() } }) }
     // Extensions (MangaFire) read their vrf cipher override from this file if present — lets you refresh
     // the constants remotely (upload a JSON) without rebuilding the jar. Absent/invalid => baked defaults.
     System.setProperty("mangafire.vrf.file", AppConfig.mangafireVrfFile.toString())
@@ -831,6 +855,7 @@ fun main() {
     // Honor a custom downloads directory chosen in Settings.
     SettingsStore.get().downloadDir?.takeIf { it.isNotBlank() }?.let { AppConfig.downloadDirOverride = java.nio.file.Path.of(it) }
     applyFlareSolverr(SettingsStore.get()) // push the Cloudflare-bypass config into the network layer
+    applyVerboseLogging(SettingsStore.get().verboseLogging) // apply saved console-logging level at boot
     autoDetectFlareOnce() // first-ever boot: find a running FlareSolverr on a default endpoint and wire it up
     // Detect Cloudflare-protected sources in the background (loads each source once).
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
@@ -1534,12 +1559,54 @@ fun Application.module() {
             body.usbBackupDir?.let { s = s.copy(usbBackupDir = it.trim()) }
             body.discordWebhookUrl?.let { s = s.copy(discordWebhookUrl = it.trim()) }
             body.notify?.let { s = s.copy(notify = it) }
+            body.verboseLogging?.let { s = s.copy(verboseLogging = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
+            applyVerboseLogging(s.verboseLogging) // live-apply the console-logging level
             UpdateScheduler.reschedule() // apply any change to the auto-update interval/toggle
             HealthScheduler.reschedule() // apply any change to the health-check schedule
             call.respond(settingsDto(s))
+        }
+
+        // ---- Interactive "Open in WebView" (Stage 1: frame feed) ----
+        // Streams a server-side offscreen JCEF browser to the phone as JPEG frames so a human can solve a
+        // Cloudflare interactive challenge (e.g. mangafire /@waf/challenge). The solved cf_clearance lands
+        // in the global CEF cookie store, which JcefFetch already reads — so /api goes green automatically.
+        post("/api/webview/open") {
+            // ?url=<http…> loads that page directly; ?source=<id> resolves the source's baseUrl server-side
+            // (so a "solve this source's challenge" button doesn't need the base URL on the client).
+            val url = call.request.queryParameters["url"]?.trim()?.takeIf { it.startsWith("http") }
+                ?: call.request.queryParameters["source"]?.toLongOrNull()?.let { sid ->
+                    (mangautils.core.source.SourceManager.loadSource(sid) as? eu.kanade.tachiyomi.source.online.HttpSource)?.baseUrl
+                }
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("a http(s) url or valid source id is required"))
+            withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.open(url) }
+            call.respond(WebViewInfoDto(xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url))
+        }
+        get("/api/webview/frame") {
+            val jpg = withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.frameJpeg() }
+            if (jpg == null) call.respond(HttpStatusCode.NoContent)
+            else call.respondBytes(jpg, ContentType.Image.JPEG)
+        }
+        post("/api/webview/input") {
+            val x = call.request.queryParameters["x"]?.toIntOrNull()
+            val y = call.request.queryParameters["y"]?.toIntOrNull()
+            if (x == null || y == null) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("x and y required"))
+            xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
+            call.respond(HttpStatusCode.OK)
+        }
+        post("/api/webview/close") {
+            xyz.nulldev.androidcompat.webkit.JcefRemoteView.close()
+            call.respond(HttpStatusCode.OK)
+        }
+        // Hosts that hit an interactive human-check (captcha). The UI polls this to prompt "Solve it".
+        get("/api/webview/pending") {
+            call.respond(eu.kanade.tachiyomi.network.interceptor.HumanCheckState.snapshot().map { HumanCheckDto(it.first, it.second) })
+        }
+        post("/api/webview/pending/clear") {
+            call.request.queryParameters["host"]?.let { eu.kanade.tachiyomi.network.interceptor.HumanCheckState.cleared(it) }
+            call.respond(HttpStatusCode.OK)
         }
 
         // ---- Relocate the downloads library to a new root (e.g. an external SSD) ----
@@ -1660,6 +1727,19 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        // Diagnostic: what does our TLS handshake actually look like to a server? Fetches a JA3/JA4 +
+        // HTTP/2 fingerprint reflector THROUGH the real source client, so we can see whether Conscrypt
+        // is producing a Chrome-like fingerprint or Cloudflare is still seeing a JVM/bot handshake.
+        get("/api/dev/tls") {
+            val client = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>().client
+            val out = withContext(Dispatchers.IO) {
+                runCatching {
+                    client.newCall(okhttp3.Request.Builder().url("https://tls.peet.ws/api/all").build())
+                        .execute().use { r -> r.body?.string() ?: "" }
+                }.getOrElse { "ERROR: ${it::class.simpleName}: ${it.message}" }
+            }
+            call.respondText(out, ContentType.Application.Json)
+        }
         get("/api/dev/storage") { call.respond(withContext(Dispatchers.IO) { DevTools.storage() }) }
         get("/api/dev/requests") {
             call.respond(

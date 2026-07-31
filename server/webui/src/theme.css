@@ -481,9 +481,13 @@ img { display: block; }
   position: fixed; left: 12px; right: 12px; bottom: calc(16px + var(--safe-b)); z-index: 50;
   background: #2a1f0a; color: #f5c451; border: 1px solid #5a4a1a; border-radius: 12px;
   padding: 10px 12px 10px 14px; font-size: 13px; font-weight: 600; backdrop-filter: blur(4px);
-  display: flex; align-items: center; gap: 10px;
+  /* Wrap: the message takes the first row, the per-scanlation buttons flow onto rows below and wrap
+     among themselves — so any number of scanlators stays on-screen instead of overflowing sideways.
+     A cap + inner scroll keeps a huge list from growing taller than the viewport. */
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  max-height: 55vh; overflow-y: auto;
 }
-.reader-warn-txt { flex: 1; }
+.reader-warn-txt { flex: 1 1 100%; }
 .reader-warn-x { flex: none; background: rgba(245,196,81,0.16); color: #f5c451; border: 1px solid #6a561f;
   border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
 .reader-warn-x:active { background: rgba(245,196,81,0.28); }
@@ -625,8 +629,10 @@ img { display: block; }
 .src-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-radius: 9px; padding: 11px 8px; cursor: pointer; }
 .src-item.on { background: var(--card-2); }
 @media (hover: hover) { .src-item:hover { background: var(--card-2); } }
-.recents { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.recents { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; max-width: 100%; }
 .recents-h { width: 100%; font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+/* A long recent query mustn't stretch the chip past the viewport (page scrolled sideways). Cap + ellipsize. */
+.recents .chip { max-width: min(280px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Global search — one section per source */
 .gs { padding-top: 6px; }
@@ -1189,8 +1195,9 @@ main > * { animation: fade-up .22s ease backwards; }
 /* "Read <scanlator>" in the reader's failed-pages banner — the way out of a chapter whose images
    are gone from the host, where retrying can't help. */
 .reader-warn-alt {
-  flex: none; background: #b3453c; color: #fff; border: 0; border-radius: 6px;
-  padding: 5px 10px; font-size: 12px; font-weight: 650; cursor: pointer; margin-left: 8px;
+  flex: 0 1 auto; max-width: 100%; background: #b3453c; color: #fff; border: 0; border-radius: 6px;
+  padding: 5px 10px; font-size: 12px; font-weight: 650; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 @media (hover: hover) { .reader-warn-alt:hover { filter: brightness(1.12); } }
 
@@ -1244,3 +1251,22 @@ main > * { animation: fade-up .22s ease backwards; }
   text-transform: uppercase; color: #e0a458; background: rgba(224, 164, 88, .14);
   border-radius: 5px; padding: 1px 6px; vertical-align: middle;
 }
+
+
+/* "Open in WebView" overlay: live JPEG feed of the server-side offscreen browser, tap-to-solve. */
+.wv-overlay { position: fixed; inset: 0; z-index: 200; background: #0b0f13; display: flex; flex-direction: column; }
+.wv-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px calc(10px) 14px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); border-bottom: 1px solid #232a31; }
+.wv-hint { font-size: 12px; color: #8aa0ad; }
+.wv-stage { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 12px; overflow: auto; }
+.wv-frame { width: min(96vw, 460px); height: auto; border-radius: 10px; box-shadow: 0 6px 28px rgba(0,0,0,.5); background: #111; display: block; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.wv-status { position: absolute; margin-top: 44px; font-size: 13px; color: #8aa0ad; }
+
+/* "Verify you're human" prompt banner (from any path that hit an interactive captcha). */
+.humancheck-bar { position: fixed; left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 120;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #2a1f0a; color: #f5c451; border: 1px solid #5a4a1a; border-radius: 12px;
+  padding: 10px 12px; font-size: 13px; font-weight: 600; backdrop-filter: blur(4px); box-shadow: 0 4px 20px rgba(0,0,0,.4); }
+.humancheck-txt { flex: 1 1 auto; min-width: 180px; }
+.humancheck-bar .btn { flex: none; }
+
+.wv-url { flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #8aa0ad; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

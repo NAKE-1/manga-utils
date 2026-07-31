@@ -289,7 +289,7 @@ export function Detail() {
       </div>
     </BackWrap>
   )
-  if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} /></BackWrap>
+  if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} webviewSource={sourceId} /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
 
   const m = data.manga

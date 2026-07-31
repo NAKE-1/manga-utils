@@ -216,7 +216,7 @@ export function Search() {
       {!isGlobal && mode !== 'search' && recent.length > 0 && (
         <div className="recents">
           <div className="recents-h">Recent searches</div>
-          {recent.map((q) => <span key={q} className="chip" onClick={() => submit(q)}>{q}</span>)}
+          {recent.map((q) => <span key={q} className="chip" title={q} onClick={() => submit(q)}>{q}</span>)}
         </div>
       )}
 
@@ -273,7 +273,7 @@ export function Search() {
           <div className="set-hint">This source renders in Chromium — first use downloads/starts it. Hang tight.</div>
         </div>
       )
-        : errorMsg ? <ErrorPanel onRetry={() => fetchPage(1)} message={errorMsg} />
+        : errorMsg ? <ErrorPanel onRetry={() => fetchPage(1)} message={errorMsg} webviewSource={sourceId} />
         : items.length === 0 && loading ? <SkeletonGrid />
         : items.length === 0 ? <div className="center-msg">{mode === 'search' ? 'No results.' : 'Nothing here.'}</div>
         : (

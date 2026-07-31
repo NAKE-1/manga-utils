@@ -103,6 +103,10 @@ data class Settings(
     val discordWebhookUrl: String = "",
     /** Per-event notification toggles + cover style. */
     val notify: NotifyConfig = NotifyConfig(),
+    // ---- Developer ----
+    /** Verbose console logging (okhttp request/response traces + network-interceptor DEBUG). Off by
+     *  default — it's noisy and slows a busy server (every page request logs two lines). */
+    val verboseLogging: Boolean = false,
 )
 
 @Serializable

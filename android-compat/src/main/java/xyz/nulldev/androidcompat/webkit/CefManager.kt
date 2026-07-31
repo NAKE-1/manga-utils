@@ -84,6 +84,12 @@ object CefManager {
         }.apply { isDaemon = true; name = "cef-bootstrap" }.start()
     }
 
+    /** Best-effort CEF teardown on JVM exit — disposes CefApp so its helper subprocesses don't linger and
+     *  stall the next launch. Safe to call when CEF never started. */
+    fun shutdown() {
+        runCatching { CefApp.getInstanceIfAny()?.dispose() }
+    }
+
     private fun initBlocking() {
         System.loadLibrary("jawt")
 
