@@ -15,6 +15,7 @@ dependencies {
     api(libs.injekt)
     api(libs.koin.core)
     api(libs.bundles.okhttp)
+    api(libs.conscrypt) // Chrome-like TLS (JA3) so Cloudflare treats us like a browser, exactly like Android/Mihon
     api(libs.okio)
     api(libs.rxjava)
     api(libs.jsoup)

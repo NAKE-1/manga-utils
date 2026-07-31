@@ -115,24 +115,30 @@ class JsHandler : CefMessageRouterHandlerAdapter {
               ${this.asFunctionBody()}
             }
 
-            try {
-              var result = payload();
-
+            function __deliver_$id(result) {
+              // The Kotlin side (FunctionCall.result) expects a string. Pass strings through untouched
+              // (so existing callers see raw text), and JSON-encode anything else (booleans, objects) so
+              // the decode never fails. Callers that need structured data JSON.stringify in their own JS.
+              var out = (typeof result === "string" || result === null || result === undefined)
+                  ? result : JSON.stringify(result);
               window.${QUERY_FN}({
-                  request: JSON.stringify({ id: "$id", result }),
+                  request: JSON.stringify({ id: "$id", result: out }),
                   onSuccess: function (response) {},
                   onFailure: function (error_code, error_message) {}
+              });
+            }
+
+            try {
+              // Await the result: if payload() returns a Promise (e.g. a fetch), we resolve it before
+              // delivering — otherwise an async caller blocking on a latch would get {} / undefined and
+              // hang until its own timeout. Non-promises pass straight through Promise.resolve.
+              Promise.resolve(payload()).then(__deliver_$id, function (e) {
+                console.error("Failed to eval $id", e);
+                __deliver_$id(null);
               });
             } catch (e) {
-              console.error("Failed to eval $id", e)
-              // Deliver through the normal query fn (not cancel) with a null result, so the Kotlin
-              // callback ALWAYS fires. Otherwise a caller blocking on the result (e.g. a WebView
-              // interceptor awaiting a latch) hangs until its own timeout.
-              window.${QUERY_FN}({
-                  request: JSON.stringify({ id: "$id", result: null }),
-                  onSuccess: function (response) {},
-                  onFailure: function (error_code, error_message) {}
-              });
+              console.error("Failed to eval $id", e);
+              __deliver_$id(null);
             }
             """.trimIndent()
     }

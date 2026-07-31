@@ -1,0 +1,247 @@
+package xyz.nulldev.androidcompat.webkit
+
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import org.cef.browser.CefBrowser
+import org.cef.browser.CefRendering
+import org.cef.callback.CefCookieVisitor
+import org.cef.handler.CefRenderHandlerAdapter
+import org.cef.misc.BoolRef
+import org.cef.network.CefCookie
+import org.cef.network.CefCookieManager
+import java.awt.Rectangle
+import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.JPanel
+
+/**
+ * Runs an HTTP request through a **real Chromium engine** (JCEF), offscreen, instead of OkHttp.
+ *
+ * This is the only thing that gets past Cloudflare on hostile sources (MangaFire): OkHttp on the desktop
+ * JVM can't reproduce Chrome's TLS/JA4 handshake (no GREASE/ALPS via Conscrypt) or Chrome's HTTP/2
+ * fingerprint, so Cloudflare flags it no matter what cookies we hold. JCEF *is* Chrome, so its handshake
+ * is genuine. We keep a small **pool** of offscreen browsers per host (each clears Cloudflare once and
+ * holds the cookies), then run the request as a same-origin `fetch()` from one of them — so it carries the
+ * real fingerprint, the cf_clearance, the Referer, and (crucially) the extension's `vrf` already in the URL.
+ *
+ * The pool exists because a library update fans out ~dozens of concurrent /api calls at once: a single
+ * browser serialises them (and can race its own evaluateJavaScript callbacks), so a leased pool spreads the
+ * load across N real browsers, one in-flight eval each.
+ *
+ * No window — same offscreen rendering the extension WebViews use.
+ */
+object JcefFetch {
+    private val log = KotlinLogging.logger {}
+    private val json = Json { ignoreUnknownKeys = true }
+
+    // ponytail: each browser is a full Chromium (RAM-heavy); 3 covers a library-update fan-out without
+    // exhausting memory. Bump if a very large library still queues on "no free browser".
+    private const val POOL_SIZE = 3
+
+    // A stale cf_clearance makes the same-origin fetch come back as one of these CF interstitials.
+    private val CHALLENGE_MARKERS = listOf("just a moment", "challenge-platform", "cf-mitigated", "cf_chl", "cf-browser-verification", "checking your browser")
+    private val INTERACTIVE_MARKERS = listOf("captcha_required", "@waf/challenge", "verify you're human", "click the shapes")
+    private const val RATE_LIMIT_BACKOFF_MS = 3_000L
+
+    data class Result(val status: Int, val body: String, val headers: Map<String, String>)
+
+    private val pools = ConcurrentHashMap<String, HostPool>()
+
+    private val renderHandler = object : CefRenderHandlerAdapter() {
+        override fun getViewRect(browser: CefBrowser) = Rectangle(0, 0, 1280, 900)
+    }
+
+    /** Fetch [url] (which already includes any vrf/query the extension added) via a real browser. Returns
+     *  null on failure so the caller can fall back. Blocks up to ~[timeoutMs] + the one-time clear. */
+    fun fetch(url: String, method: String, headers: Map<String, String>, body: String?, timeoutMs: Long = 60_000): Result? {
+        val u = runCatching { URI(url) }.getOrNull() ?: return null
+        val host = u.host ?: return null
+        val scheme = u.scheme ?: "https"
+        val pool = pools.computeIfAbsent(host) { HostPool(host, POOL_SIZE) { newBrowser(scheme, host) } }
+
+        val started = System.currentTimeMillis()
+        val browser = pool.borrow(timeoutMs)
+        if (browser == null) {
+            log.info { "JCEF[$host]: no free browser after ${System.currentTimeMillis() - started}ms (${pool.size}/$POOL_SIZE busy) → falling back" }
+            return null
+        }
+        try {
+            val js = buildFetchJs(url, method, headers, body)
+            var res = runFetch(browser, js, host, u.path, timeoutMs)
+            // Self-heal: the browser's cf_clearance can expire while it sits idle. When it does, the
+            // same-origin fetch comes back as Cloudflare's "Just a moment" challenge (or a 1015 rate
+            // limit) instead of data. Reload the root to re-clear, or back off for a rate limit, and
+            // retry once — otherwise EVERY call on a stale browser fails and stampedes the fallback path
+            // (which is what turned one expired cookie into a whole failed library update).
+            val first = res
+            if (first != null && isChallenge(first) && !isInteractive(first)) {
+                log.info { "JCEF[$host]: ${first.status} challenge on ${u.path} — reloading root to re-clear, retry once" }
+                reclear("$scheme://$host/", host, browser)
+                res = runFetch(browser, js, host, u.path, timeoutMs)
+            } else if (first != null && isInteractive(first)) {
+                // A human captcha (e.g. /@waf/challenge "click the shapes") — no reload can auto-solve it, so
+                // return immediately (don't burn the 45s reclear). The interceptor flags it for the UI prompt.
+                log.info { "JCEF[$host]: interactive human-check on ${u.path} — needs the user (WebView)" }
+            } else if (first != null && isRateLimited(first)) {
+                log.info { "JCEF[$host]: ${first.status} rate-limited on ${u.path} — backing off ${RATE_LIMIT_BACKOFF_MS}ms, retry once" }
+                Thread.sleep(RATE_LIMIT_BACKOFF_MS)
+                res = runFetch(browser, js, host, u.path, timeoutMs)
+            }
+            res?.let { log.info { "JCEF[$host]: ${it.status} ${u.path} in ${System.currentTimeMillis() - started}ms (${it.body.length}B)" } }
+            return res
+        } finally {
+            pool.giveBack(browser)
+        }
+    }
+
+    /** One same-origin fetch through the browser's message router. Null on eval failure/timeout/error. */
+    private fun runFetch(browser: CefBrowser, js: String, host: String, path: String, timeoutMs: Long): Result? {
+        val latch = CountDownLatch(1)
+        var out: String? = null
+        runCatching {
+            browser.evaluateJavaScript(js) { r -> out = r; latch.countDown() }
+        }.onFailure { log.info { "JCEF[$host]: eval threw for $path: ${it.message}" }; return null }
+        if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+            log.info { "JCEF[$host]: fetch timed out (${timeoutMs}ms) for $path" }
+            return null
+        }
+        val raw = out ?: return null
+        return runCatching {
+            val o = json.parseToJsonElement(raw).jsonObject
+            val status = o["status"]?.jsonPrimitive?.int ?: 0
+            if (status == 0) { log.info { "JCEF[$host]: fetch error for $path: ${o["error"]?.jsonPrimitive?.contentOrNull}" }; return null }
+            val bodyStr = o["body"]?.jsonPrimitive?.contentOrNull ?: ""
+            val hdrs = o["headers"]?.jsonObject?.mapValues { it.value.jsonPrimitive.contentOrNull ?: "" } ?: emptyMap()
+            Result(status, bodyStr, hdrs)
+        }.getOrElse { log.info(it) { "JCEF[$host]: bad response for $path" }; null }
+    }
+
+    /** A CF interstitial the browser can re-clear by reloading (its clearance went stale) — 403/503 + marker. */
+    private fun isChallenge(r: Result): Boolean =
+        (r.status == 403 || r.status == 503) && CHALLENGE_MARKERS.any { r.body.contains(it, ignoreCase = true) }
+
+    /** Cloudflare rate limit (429 / "Error 1015") — a reload won't help; only backing off does. */
+    private fun isRateLimited(r: Result): Boolean =
+        r.status == 429 || r.body.contains("error 1015", ignoreCase = true)
+
+    /** An interactive human challenge (captcha) — a reload can't solve it; only the user in a WebView can. */
+    private fun isInteractive(r: Result): Boolean =
+        INTERACTIVE_MARKERS.any { r.body.contains(it, ignoreCase = true) }
+
+    /** Reload the site root and wait for a fresh cf_clearance (the browser navigates off the challenge). */
+    private fun reclear(root: String, host: String, browser: CefBrowser) {
+        runCatching { browser.loadURL(root) }
+        waitCleared(host, browser)
+    }
+
+    /** Create one cleared offscreen browser for a host. Called under the pool's growth lock. */
+    private fun newBrowser(scheme: String, host: String): CefBrowser? {
+        val client = runCatching { runBlocking { CefHelper.createClient() } }.getOrNull() ?: return null
+        val root = "$scheme://$host/"
+        val browser = client.createBrowser(root, CefRendering.CefRenderingWithHandler(renderHandler, JPanel()), false)
+            .apply { createImmediately() }
+        waitCleared(host, browser)
+        log.info { "JCEF[$host]: opened offscreen browser (cf_clearance=${hasCfClearance(host)})" }
+        return browser
+    }
+
+    /**
+     * A tiny leased pool of browsers for one host. Grows lazily up to [max] under real concurrency; a
+     * borrowed browser handles exactly one in-flight eval until [giveBack]. After warm-up the hot path is
+     * a lock-free queue poll/offer.
+     */
+    private class HostPool(val host: String, val max: Int, val create: () -> CefBrowser?) {
+        private val available = LinkedBlockingQueue<CefBrowser>()
+        private val count = AtomicInteger(0)
+        val size get() = count.get()
+
+        fun borrow(timeoutMs: Long): CefBrowser? {
+            available.poll()?.let { return it }
+            if (count.get() < max) {
+                synchronized(this) {
+                    if (available.isEmpty() && count.get() < max) {
+                        create()?.let { count.incrementAndGet(); return it }
+                    }
+                }
+            }
+            return available.poll(timeoutMs, TimeUnit.MILLISECONDS)
+        }
+
+        fun giveBack(b: CefBrowser) { available.offer(b) }
+    }
+
+    /** Poll until the site is cleared (cf_clearance present + document loaded), or give up after 45s. */
+    private fun waitCleared(host: String, browser: CefBrowser) {
+        val deadline = System.currentTimeMillis() + 45_000
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(700)
+            if (hasCfClearance(host) && documentReady(browser)) return
+        }
+        log.warn { "JCEF: $host didn't visibly clear Cloudflare within 45s — trying the fetch anyway" }
+    }
+
+    private fun documentReady(browser: CefBrowser): Boolean {
+        val latch = CountDownLatch(1)
+        var ready = false
+        runCatching {
+            browser.evaluateJavaScript("(document.readyState==='complete') && !/just a moment|checking your browser/i.test(document.title||'')") { r ->
+                ready = r == "true"; latch.countDown()
+            }
+        }
+        latch.await(2, TimeUnit.SECONDS)
+        return ready
+    }
+
+    private fun hasCfClearance(host: String): Boolean {
+        val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return false
+        val latch = CountDownLatch(1)
+        var found = false
+        val ok = runCatching {
+            mgr.visitAllCookies(object : CefCookieVisitor {
+                override fun visit(cookie: CefCookie, curr: Int, total: Int, delete: BoolRef): Boolean {
+                    val dom = cookie.domain?.trimStart('.') ?: ""
+                    if (cookie.name == "cf_clearance" && (host.endsWith(dom) || dom.endsWith(host))) found = true
+                    if (curr + 1 >= total) latch.countDown()
+                    return true
+                }
+            })
+        }.getOrDefault(false)
+        if (!ok) return false
+        latch.await(2, TimeUnit.SECONDS)
+        return found
+    }
+
+    private fun buildFetchJs(url: String, method: String, headers: Map<String, String>, body: String?): String {
+        // Only forward safe, meaningful headers — the page/browser sets UA, Referer, Cookie, encoding itself.
+        val skip = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")
+        val hdrObj = headers.filterKeys { it.lowercase() !in skip }
+        val jUrl = Json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(url))
+        val jMethod = Json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(method))
+        val jHeaders = json.encodeToString(
+            kotlinx.serialization.json.JsonObject.serializer(),
+            kotlinx.serialization.json.JsonObject(hdrObj.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }),
+        )
+        val jBody = if (body == null) "null" else Json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(body))
+        // Must `return` the promise: the eval wrapper turns this into a payload() body, and only an
+        // explicit return makes payload() return the promise for Promise.resolve(...) to await.
+        return """
+            var opts = {method:$jMethod, headers:$jHeaders, credentials:'include'};
+            if ($jBody !== null) opts.body = $jBody;
+            return fetch($jUrl, opts).then(function(r){
+              return r.text().then(function(t){
+                var h={}; r.headers.forEach(function(v,k){h[k]=v;});
+                return JSON.stringify({status:r.status, headers:h, body:t});
+              });
+            }).catch(function(e){ return JSON.stringify({status:0, error:String(e)}); });
+        """.trimIndent()
+    }
+}

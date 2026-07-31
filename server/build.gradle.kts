@@ -33,6 +33,12 @@ dependencies {
 
 application {
     mainClass = "mangautils.server.MainKt"
+    // JCEF windowed rendering ("Open in WebView") reflects into sun.awt.AWTAccessor; JDK 17+ blocks that
+    // by default (IllegalAccessError) unless the package is opened to the unnamed module.
+    applicationDefaultJvmArgs = listOf(
+        "--enable-native-access=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+    )
 }
 
 // ---- Frontend build: compile the Vite/React app in webui/ into resources/web -----------------

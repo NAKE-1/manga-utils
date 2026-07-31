@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -223,8 +224,26 @@ abstract class HttpSource : CatalogueSource {
      * @param manga the manga to update.
      * @return the updated manga.
      */
+    override suspend fun getMangaDetails(manga: SManga): SManga =
+        getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
+
+    /**
+     * extensions-lib 1.6 combined details + chapters into one call. Sources built on that lib
+     * (KeiSource: MangaFire, …) implement only this and hard-throw on the old parse methods, so
+     * [getMangaDetails]/[getChapterList] route through here. The default keeps the old RxJava path for
+     * pre-1.6 sources — override points ([mangaDetailsParse] etc.) are unchanged for them.
+     */
     @Suppress("DEPRECATION")
-    override suspend fun getMangaDetails(manga: SManga): SManga = fetchMangaDetails(manga).awaitSingle()
+    open suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        val m = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
+        val c = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
+        return SMangaUpdate(m, c)
+    }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getMangaDetails"))
     override fun fetchMangaDetails(manga: SManga): Observable<SManga> =
@@ -258,13 +277,12 @@ abstract class HttpSource : CatalogueSource {
      * @return the chapters for the manga.
      * @throws LicensedMangaChaptersException if a manga is licensed and therefore no chapters are available.
      */
-    @Suppress("DEPRECATION")
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
         if (manga.status == SManga.LICENSED) {
             throw LicensedMangaChaptersException()
         }
 
-        return fetchChapterList(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getChapterList"))

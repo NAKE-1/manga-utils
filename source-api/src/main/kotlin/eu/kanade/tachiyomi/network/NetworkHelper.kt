@@ -45,14 +45,44 @@ class NetworkHelper(
     }
     // Tachidesk <--
 
+    // Match Mihon's current default. MangaFire (and likely other sources) UA-gate their API: the old
+    // stale Chrome/120 desktop string inherited from Suwayomi gets "Missing token", while Mihon's
+    // current mobile Chrome UA is served normally. Keep this in step with Mihon when they bump it.
     private val userAgent =
         MutableStateFlow(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 10; K) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
         )
     val userAgentFlow = userAgent.asStateFlow()
 
     fun defaultUserAgentProvider(): String = userAgent.value
+
+    companion object {
+        private val log = KotlinLogging.logger {}
+
+        init {
+            // Also register Conscrypt as the JVM's top TLS provider (mirrors Android, where it's the
+            // default) so every client — not just the source client below — speaks a Chrome-like JA3.
+            runCatching { java.security.Security.insertProviderAt(org.conscrypt.Conscrypt.newProvider(), 1) }
+        }
+    }
+
+    // Cloudflare fingerprints the TLS handshake (JA3). Java's default TLS (JSSE) produces a JA3 that
+    // reads as "not a browser" and gets flagged, which is why cf_clearance obtained by a real browser
+    // still gets rejected when replayed over JSSE. Android ships Conscrypt (BoringSSL) as its TLS
+    // provider, giving okhttp a Chrome-identical JA3 for free — which is the whole reason MangaFire
+    // works on Mihon and not here. We add Conscrypt to get the same handshake on the desktop JVM.
+    private val conscryptTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.X509TrustManager>? by lazy {
+        runCatching {
+            val provider = org.conscrypt.Conscrypt.newProvider()
+            val tmf = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm())
+            tmf.init(null as java.security.KeyStore?)
+            val tm = tmf.trustManagers.first { it is javax.net.ssl.X509TrustManager } as javax.net.ssl.X509TrustManager
+            val ctx = javax.net.ssl.SSLContext.getInstance("TLS", provider)
+            ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), null)
+            ctx.socketFactory to tm
+        }.onFailure { log.warn { "Conscrypt TLS unavailable, falling back to JSSE: ${it.message}" } }.getOrNull()
+    }
 
     private val baseClientBuilder: OkHttpClient.Builder
         get() {
@@ -62,9 +92,10 @@ class NetworkHelper(
                     .cookieJar(PersistentCookieJar(cookieStore))
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
-                    // Was 2 min. Some extensions (comix) spin up an in-app WebView that can hang; a
-                    // shorter ceiling makes them fail fast instead of stalling browse/search for 2 min.
-                    .callTimeout(45, TimeUnit.SECONDS)
+                    // 120s (Mihon/Suwayomi's default): a JCEF Cloudflare fetch does a one-time in-browser
+                    // challenge clear on the first hit to a host, which can take up to ~45s; a 45s ceiling
+                    // guillotined it. The per-source circuit breaker still fast-fails genuinely dead sources.
+                    .callTimeout(120, TimeUnit.SECONDS)
                     .cache(
                         Cache(
                             directory = Files.createTempDirectory("tachidesk_network_cache").toFile(),
@@ -81,6 +112,10 @@ class NetworkHelper(
                     // extensions (Asura, Arena, …) validate the default client against Mihon's baseline and
                     // assert `IgnoreGzipInterceptor must not be present`. OkHttp still handles gzip natively
                     // (BridgeInterceptor); we only forgo Brotli, which manga sources rarely use.
+                    // FIRST network interceptor (sees the final request, vrf and all): on a Cloudflare
+                    // challenge, re-run the request through real Chromium (JCEF) whose fingerprint actually
+                    // passes CF. Falls through to FlareSolverr/the original response if JCEF can't do it.
+                    .addNetworkInterceptor(eu.kanade.tachiyomi.network.interceptor.JcefFetchInterceptor())
                     // Force the FlareSolverr-solved User-Agent on cleared hosts LAST (after any
                     // extension interceptor + the cookie bridge), so cf_clearance stays valid.
                     .addNetworkInterceptor { chain ->
@@ -94,6 +129,11 @@ class NetworkHelper(
                             },
                         )
                     }
+
+            // Force Conscrypt (Chrome/Android JA3) for the source client's TLS — the actual fix for
+            // Cloudflare-protected sources like MangaFire. Without this, JSSE's non-browser handshake
+            // is flagged no matter what cookies/UA we send.
+            conscryptTls?.let { (sf, tm) -> builder.sslSocketFactory(sf, tm) }
 
             // if (preferences.verboseLogging().get()) {
             val httpLoggingInterceptor =

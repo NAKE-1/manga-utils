@@ -42,6 +42,7 @@ class FlareSolverrInterceptor(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private val solvedUa = FlareSolverrConfig.solvedUserAgents // shared with the UA network interceptor
+    private val warmedAt = java.util.concurrent.ConcurrentHashMap<String, Long>() // host -> last session-warm attempt
 
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
@@ -68,6 +69,21 @@ class FlareSolverrInterceptor(
 
         val host = request.url.host
         FlareSolverrConfig.recordSolveStart(host) // so the UI can toast "solving…" during the pause
+
+        // FIRST warm a full session via the site ROOT. A per-URL solve of an /api endpoint only yields
+        // cf_clearance; a real page load also sets the SESSION cookie some sites (MangaFire) now require
+        // ("Missing token" without it). Load the root, keep its cookies + UA, and retry the original — if
+        // that clears it we skip the per-URL loop entirely. Rate-limited so it can't thrash.
+        if (shouldWarm(host)) {
+            val warmed = runCatching { warmSessionViaRoot(chain, request) }.getOrNull()
+            if (warmed != null) {
+                if (!isCloudflareChallenge(warmed) && warmed.code != 403) {
+                    FlareSolverrConfig.recordSolveDone(host, 0)
+                    return warmed
+                }
+                warmed.close()
+            }
+        }
 
         // Try up to twice: on a cold start FlareSolverr's browser sometimes comes back with only
         // __cf_bm (no cf_clearance) or a still-challenged retry — a second solve usually clears it,
@@ -106,11 +122,16 @@ class FlareSolverrInterceptor(
             val retry = request.newBuilder()
             if (ua != null) retry.header("User-Agent", ua)
             val retried = chain.proceed(retry.build())
-            if (!isCloudflareChallenge(retried)) return retried // cleared
+            if (!isCloudflareChallenge(retried)) { HumanCheckState.cleared(host); return retried } // cleared
             val retriedCode = retried.code
             val retriedDiag = cfDiag(retried)
             retried.close()
             if (last) {
+                // A managed/Turnstile challenge (cf-mitigated) can't be cleared by cookie replay — a human
+                // must solve it in a WebView. Flag it (any source, not just MangaFire) so the UI prompts.
+                if (retriedDiag.contains("cf-mitigated", ignoreCase = true) || initialDiag.contains("cf-mitigated", ignoreCase = true)) {
+                    HumanCheckState.needed(host)
+                }
                 // Suwayomi PR #990: a managed/Turnstile challenge can't be cleared by cookie replay
                 // (the clearance is bound to the browser's fingerprint), but FlareSolverr's real browser
                 // DID fetch the page — so for TEXT requests (search/browse/details) hand its rendered
@@ -135,6 +156,33 @@ class FlareSolverrInterceptor(
         }
         FlareSolverrConfig.recordSolveFail(host)
         throw IOException("Cloudflare bypass failed for $host.")
+    }
+
+    /** At most one warm attempt per host per [WARM_COOLDOWN_MS], so a persistently-403 host can't thrash. */
+    private fun shouldWarm(host: String): Boolean =
+        System.currentTimeMillis() - (warmedAt[host] ?: 0L) > WARM_COOLDOWN_MS
+
+    /**
+     * Load the site root through FlareSolverr (a real browser that clears Cloudflare), keep its
+     * cf_clearance/session cookies + User-Agent, then retry the original request once. If the warm
+     * fails, we just replay the original — no worse than before.
+     */
+    private fun warmSessionViaRoot(chain: Interceptor.Chain, request: Request): Response {
+        val host = request.url.host
+        warmedAt[host] = System.currentTimeMillis()
+        val root = Request.Builder().url("${request.url.scheme}://$host/").build()
+        val sol = runCatching { solve(root) }.getOrNull()
+        if (sol != null) {
+            val cookies = sol.cookies.mapNotNull { it.toOkHttp() }
+            if (cookies.isNotEmpty()) cookieStore.addAll(root.url, cookies)
+            sol.userAgent?.takeIf { it.isNotBlank() }?.let { setUserAgent(it); solvedUa[host] = it }
+            log.info { "Warmed $host session via root: ${cookies.size} cookie(s) [${cookies.joinToString(", ") { it.name }}]" }
+        } else {
+            log.info { "Session warm for $host failed — FlareSolverr couldn't clear the root" }
+        }
+        val retry = request.newBuilder()
+        solvedUa[host]?.let { retry.header("User-Agent", it) }
+        return chain.proceed(retry.build())
     }
 
     private fun solve(request: Request, returnOnlyCookies: Boolean = true): FsSolution? {
@@ -210,9 +258,17 @@ class FlareSolverrInterceptor(
 
     private fun isCloudflareChallenge(response: Response): Boolean {
         val cfServed = response.header("Server") in SERVER_CHECK
-        if (response.code in ERROR_CODES && cfServed) return true
         if (!cfServed) return false
-        if (response.header("Content-Type")?.contains("text/html", ignoreCase = true) != true) return false
+        if (response.header("cf-mitigated") != null) return true // managed/Turnstile — always a real challenge
+        // Peek only when there's a reason (error code or HTML); a JSON 200 stays on the fast path.
+        val isError = response.code in ERROR_CODES
+        val isHtml = response.header("Content-Type")?.contains("text/html", ignoreCase = true) == true
+        if (!isError && !isHtml) return false
+        // A real challenge carries a marker. MangaFire's origin answers its vrf/API with a plain 403 +
+        // JSON "Missing token" body behind Cloudflare — an app error no cookie/solve can fix — so let it
+        // fall through and fail fast instead of running warm + 2 solves + rendered-body per title
+        // (that was the ~3.5-min "check for updates" hang across a MangaFire-heavy library).
+        // ponytail: marker sniff; a CF challenge shipping none of these markers would slip past — none of ours do.
         return runCatching {
             val body = response.peekBody(256 * 1024).string()
             CHALLENGE_MARKERS.any { body.contains(it, ignoreCase = true) }
@@ -252,6 +308,7 @@ class FlareSolverrInterceptor(
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private val ERROR_CODES = listOf(403, 503)
+        private const val WARM_COOLDOWN_MS = 2 * 60_000L // min gap between session-warm attempts per host
         private val SERVER_CHECK = listOf("cloudflare-nginx", "cloudflare")
         private val CHALLENGE_MARKERS =
             listOf("challenge-platform", "cf-browser-verification", "_cf_chl", "cf_chl_opt", "Just a moment", "cf-mitigated")
