@@ -1257,9 +1257,16 @@ main > * { animation: fade-up .22s ease backwards; }
 .wv-overlay { position: fixed; inset: 0; z-index: 200; background: #0b0f13; display: flex; flex-direction: column; }
 .wv-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px calc(10px) 14px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); border-bottom: 1px solid #232a31; }
 .wv-hint { font-size: 12px; color: #8aa0ad; }
+.wv-cookies { flex: none; font-size: 12px; font-weight: 600; color: #f5c451; background: #2a1f0a; border: 1px solid #5a4a1a; border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
 .wv-stage { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 12px; overflow: auto; }
 .wv-frame { width: min(96vw, 460px); height: auto; border-radius: 10px; box-shadow: 0 6px 28px rgba(0,0,0,.5); background: #111; display: block; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .wv-status { position: absolute; margin-top: 44px; font-size: 13px; color: #8aa0ad; }
+
+/* Dev WebView tester (Settings → Developer). */
+.wv-test-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.wv-test-src { flex: 0 0 auto; min-width: 140px; }
+.wv-test-url { flex: 1 1 220px; min-width: 0; }
+.wv-test-src, .wv-test-url { background: #10161c; color: #dfe7ec; border: 1px solid #232a31; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 
 /* "Verify you're human" prompt banner (from any path that hit an interactive captcha). */
 .humancheck-bar { position: fixed; left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 120;

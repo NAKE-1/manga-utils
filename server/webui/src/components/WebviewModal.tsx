@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react'
 export function WebviewModal({ url, source, onClose }: { url?: string; source?: number | string; onClose: () => void }) {
   const [status, setStatus] = useState('Opening…')
   const [shownUrl, setShownUrl] = useState('')
+  const [cookies, setCookies] = useState<number | null>(null)
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const lastObj = useRef<string | null>(null)
@@ -50,6 +51,18 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
     }
   }, [url, source])
 
+  // Poll the cookie counter for the top bar (visual only) — slow, it just reassures you the session is
+  // capturing cookies (e.g. cf_clearance) as you solve.
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      try { const r = await fetch('/api/webview/status', { cache: 'no-store' }); if (alive && r.ok) setCookies((await r.json()).cookies) } catch { /* ignore */ }
+    }
+    tick()
+    const t = window.setInterval(tick, 1500)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+
   // Map a tap on the displayed frame to OSR-pixel coordinates and forward it as a click.
   function onTap(e: PointerEvent<HTMLImageElement>) {
     const img = imgRef.current
@@ -67,6 +80,7 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
       <div className="wv-bar">
         <button className="btn" onClick={onClose}>← Close &amp; retry</button>
         <span className="wv-url" title={shownUrl}>{shownUrl || 'Tap the shapes to solve, then Close'}</span>
+        {cookies != null && <span className="wv-cookies" title="Cookies stored for this site in the session">🍪 {cookies}</span>}
       </div>
       <div className="wv-stage">
         {status && <div className="wv-status">{status}</div>}

@@ -30,7 +30,16 @@ export function ErrorPanel({
         <WebviewModal
           url={webviewUrl}
           source={webviewSource}
-          onClose={() => { setWv(false); onRetry() }}
+          onClose={() => {
+            setWv(false)
+            // Clear the source's human-check flag first: drops the global "verify" banner and resumes any
+            // downloads parked on that host, then re-run the thing that failed (the search / list load).
+            const q = webviewSource != null ? `source=${encodeURIComponent(String(webviewSource))}`
+              : webviewUrl ? `host=${encodeURIComponent(new URL(webviewUrl).host)}` : ''
+            const done = () => onRetry()
+            if (q) fetch('/api/webview/pending/clear?' + q, { method: 'POST' }).then(done, done)
+            else done()
+          }}
         />
       )}
     </div>

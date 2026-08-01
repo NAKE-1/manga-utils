@@ -196,13 +196,6 @@ export function Settings() {
     const s = await api.saveSettings({ flareSolverrEnabled: !info.flareSolverrEnabled }).catch(() => null)
     if (s) setInfo(s)
   }
-  async function toggleVerboseLogging() {
-    if (!info) return
-    const turningOn = !info.verboseLogging
-    if (turningOn && !window.confirm('Enable verbose logging?\n\nThe server console will trace every network request/response. On a busy server (downloads, library updates) this is very noisy and can slow things down. Leave it off unless you\'re diagnosing an issue.')) return
-    const s = await api.saveSettings({ verboseLogging: turningOn }).catch(() => null)
-    if (s) { setInfo(s); toast(turningOn ? 'Verbose logging on' : 'Verbose logging off', 'success') }
-  }
   async function saveFsUrl() {
     const s = await api.saveSettings({ flareSolverrUrl: fsUrl.trim() }).catch(() => null)
     if (s) setInfo(s)
@@ -764,16 +757,6 @@ export function Settings() {
           <div className="set-row-label">Developer tools</div>
           <div className="set-hint">Runtime stats, storage breakdown, state inspectors, network log, source diagnostics, and a diagnostics bundle.</div>
           <div className="set-actions"><button className="btn primary" onClick={() => nav('/dev')}>Open developer tools →</button></div>
-        </div>
-
-        <div className="set-card">
-          <button className="set-toggle" onClick={toggleVerboseLogging}>
-            <div>
-              <div className="set-row-label">Verbose logging</div>
-              <div className="set-hint">⚠ Traces every network request/response in the server console. Noisy and can slow a busy server — turn on only while diagnosing, then off.</div>
-            </div>
-            <span className={'switch' + (info?.verboseLogging ? ' on' : '')}><span className="knob" /></span>
-          </button>
         </div>
 
       </section>

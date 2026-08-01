@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { api, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
+import { WebviewModal } from '../components/WebviewModal'
+import { toast } from '../components/Toast'
 
 // Hidden Developer screen (opened from Settings → Developer). Home for the dev/debug tools.
 
@@ -55,6 +57,11 @@ export function Dev() {
   const [rawUrl, setRawUrl] = useState('')
   const [rawResult, setRawResult] = useState<RawResult | null>(null)
   const [rawBusy, setRawBusy] = useState(false)
+  const [verbose, setVerbose] = useState(false)
+  const [wvUrl, setWvUrl] = useState('')
+  const [wvSourceId, setWvSourceId] = useState('')
+  const [wvOpen, setWvOpen] = useState<{ url?: string; source?: string } | null>(null)
+  const [lifecycle, setLifecycle] = useState('') // 'restart' | 'shutdown' while in flight
 
   useEffect(() => {
     const load = () => api.devStats().then((d) => { setS(d); setFailed(false) }).catch(() => setFailed(true))
@@ -63,6 +70,7 @@ export function Dev() {
     api.library().then(setLibrary).catch(() => {})
     api.devState().then(setStateFiles).catch(() => {})
     api.sources().then(setSources).catch(() => {})
+    api.getSettings().then((s) => setVerbose(s.verboseLogging)).catch(() => {})
     return () => clearInterval(t)
   }, [])
 
@@ -95,6 +103,17 @@ export function Dev() {
       try { c = JSON.stringify(JSON.parse(r.content), null, 2) } catch { /* keep raw */ }
       setStateContent(c)
     } catch { setStateContent('(failed to load)') } finally { setStateBusy(false) }
+  }
+  async function toggleVerbose() {
+    const v = !verbose; setVerbose(v)
+    const r = await api.saveSettings({ verboseLogging: v }).catch(() => null)
+    if (!r) { setVerbose(!v); toast('Failed to change logging', 'error') }
+  }
+  async function doLifecycle(kind: 'restart' | 'shutdown') {
+    if (!confirm(kind === 'restart' ? 'Restart the server now? Downloads and the WebView will briefly stop.' : 'Shut down the server now? You’ll need to start it again from the machine.')) return
+    setLifecycle(kind)
+    await (kind === 'restart' ? api.devRestart() : api.devShutdown()).catch(() => {})
+    toast(kind === 'restart' ? 'Restarting… reconnecting shortly' : 'Server shutting down', 'info', 8000)
   }
   async function sendRaw() {
     if (!diagSel || !rawUrl) return
@@ -249,6 +268,52 @@ export function Dev() {
             <span className={'switch' + (scanMarker ? ' on' : '')}><span className="knob" /></span>
           </button>
         </div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleVerbose}>
+            <div>
+              <div className="set-row-label">Verbose logging</div>
+              <div className="set-hint">⚠ Traces every network request/response in the server console. Noisy and can slow a busy server — turn on only while diagnosing, then off.</div>
+            </div>
+            <span className={'switch' + (verbose ? ' on' : '')}><span className="knob" /></span>
+          </button>
+        </div>
+      </div>
+
+      <div className="dev-sec">
+        <div className="dev-sec-h">WebView</div>
+        <div className="set-card">
+          <div className="set-row-label">WebView tester</div>
+          <div className="set-hint">Open any site (or a source's homepage) in the streamed Chromium WebView — handy for eyeballing captchas, popups, cookies, and layout while iterating on the WebView.</div>
+          <div className="wv-test-row">
+            <select className="wv-test-src" value={wvSourceId} onChange={(e) => setWvSourceId(e.target.value)}>
+              <option value="">Pick a source…</option>
+              {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <input
+              className="wv-test-url"
+              value={wvUrl}
+              onChange={(e) => setWvUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && wvUrl.trim()) setWvOpen({ url: wvUrl.trim() }) }}
+              placeholder="https://example.com/  (overrides the source)"
+              inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+            />
+          </div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={!wvUrl.trim() && !wvSourceId} onClick={() => setWvOpen(wvUrl.trim() ? { url: wvUrl.trim() } : { source: wvSourceId })}>Open WebView</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="dev-sec">
+        <div className="dev-sec-h">System</div>
+        <div className="set-card">
+          <div className="set-row-label">Server lifecycle</div>
+          <div className="set-hint">Restart cleanly tears down Chromium (JCEF) and relaunches — the reliable fix for a “stuck on initializing” hang from a leftover helper holding the cache lock. Restart only relaunches when the server was started via start.bat.</div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={!!lifecycle} onClick={() => doLifecycle('restart')}>{lifecycle === 'restart' ? 'Restarting…' : 'Restart server'}</button>
+            <button className="btn danger" disabled={!!lifecycle} onClick={() => doLifecycle('shutdown')}>{lifecycle === 'shutdown' ? 'Shutting down…' : 'Shut down server'}</button>
+          </div>
+        </div>
       </div>
 
       <div className="dev-sec">
@@ -278,6 +343,7 @@ export function Dev() {
       </div>
 
       {migOpen && <MigrationModal onClose={() => setMigOpen(false)} />}
+      {wvOpen && <WebviewModal url={wvOpen.url} source={wvOpen.source} onClose={() => setWvOpen(null)} />}
     </div>
   )
 }

@@ -281,6 +281,8 @@ export const api = {
   devStateContent: (name: string) => getJson<{ name: string; content: string }>(`/api/dev/state/content?name=${encodeURIComponent(name)}`),
   devRequests: () => getJson<ReqLog[]>('/api/dev/requests'),
   devRequestsClear: () => fetch('/api/dev/requests/clear', { method: 'POST' }),
+  devRestart: () => fetch('/api/dev/restart', { method: 'POST' }),
+  devShutdown: () => fetch('/api/dev/shutdown', { method: 'POST' }),
   devSourceDiag: (id: string) => getJson<SourceDiag>(`/api/dev/source/${id}/diag`),
   devSourceRaw: (id: string, url: string) =>
     fetch(`/api/dev/source/${id}/raw`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }).then((r) => r.json() as Promise<RawResult>),
@@ -338,7 +340,7 @@ export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryR
 export interface MigrateProgress { running: boolean; finished: boolean; phase: string; error: string; steps: string[] }
 
 export interface WebhookResult { ok: boolean; status: number; rateLimited: boolean; retryAfter?: number; error?: string }
-export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; serviceHealth: boolean; coverStyle: string }
+export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; serviceHealth: boolean; needsVerify: boolean; coverStyle: string }
 
 export interface HealthSource {
   id: string; name: string; lang: string; cfState: 'green' | 'orange' | 'red'
