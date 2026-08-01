@@ -81,11 +81,11 @@ object Notifier {
     )
 
     // ================================ event triggers ================================
-    /** A source is asking the user to solve an interactive human-check. Actionable alert, so it fires
-     *  whenever a webhook is set (not gated on the per-event toggles) — the user explicitly wants to be
-     *  pinged to go solve it. Fires once per host (HumanCheckState only calls this on a fresh block). */
+    /** A source is asking the user to solve an interactive human-check. Gated like every other event
+     *  (master switch + webhook + its own "Needs verification" toggle). Fires once per host
+     *  (HumanCheckState only calls this on a fresh block). */
     fun onHumanCheckNeeded(host: String) {
-        if (webhook().isBlank()) return
+        if (!active() || cfg()?.needsVerify != true) return
         bg.submit {
             runCatching {
                 enqueue(

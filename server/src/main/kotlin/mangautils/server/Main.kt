@@ -426,6 +426,8 @@ private data class SettingsDto(
 
 @Serializable
 private data class WebViewInfoDto(val width: Int, val height: Int, val url: String)
+@Serializable
+private data class WebViewStatusDto(val cookies: Int)
 
 @Serializable
 private data class HumanCheckDto(val host: String, val sinceMs: Long)
@@ -893,6 +895,25 @@ fun main() {
     }
 }
 
+/**
+ * Cleanly tear down and exit — the reliable fix for the "stuck on initializing" hang, which comes from a
+ * hard Ctrl+C leaving a jcef_helper alive holding the CEF cache lock. We dispose CEF (which now also
+ * force-kills strays) FIRST, so the next launch starts clean.
+ *
+ * [restart] drops a `restart.flag` in the data dir before exiting; start.bat's web loop sees it and
+ * relaunches. (A JVM exit code can't be used — gradle :server:run swallows it — so a flag file it is.)
+ */
+private fun initiateRestart(restart: Boolean) {
+    val log = LoggerFactory.getLogger("mangautils.server.Restart")
+    Thread {
+        runCatching { Thread.sleep(350) } // let the HTTP 200 reach the client first
+        if (restart) runCatching { java.nio.file.Files.writeString(AppConfig.dataDir.resolve("restart.flag"), "1") }
+        log.info(if (restart) "Restart requested - tearing down CEF and exiting for relaunch" else "Shutdown requested - tearing down CEF and exiting")
+        runCatching { xyz.nulldev.androidcompat.webkit.CefManager.shutdown() }
+        kotlin.system.exitProcess(0)
+    }.apply { isDaemon = false; name = "restart" }.start()
+}
+
 fun Application.module() {
     install(DefaultHeaders)
     install(CallLogging) {
@@ -903,7 +924,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -1030,6 +1051,12 @@ fun Application.module() {
                     "sourcedown" -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(
                         Notifier.Embed(title = "⚠ $srcName is unreachable", description = "The source stopped responding during a health check.", color = 0xe86e8f, footer = Notifier.Footer(srcName)),
                     )))
+                    "needsverify" -> {
+                        val host = sid?.let { runCatching { (SourceManager.loadSource(it) as? eu.kanade.tachiyomi.source.online.HttpSource)?.baseUrl?.let { u -> java.net.URI(u).host } }.getOrNull() } ?: "example.com"
+                        Notifier.sendNow(url, Notifier.Payload(embeds = listOf(
+                            Notifier.Embed(title = "🔒 Verification needed", description = "**$host** wants you to verify you're human. Open manga-utils and tap **Solve** to clear it — anything waiting on it (search, updates, downloads) resumes automatically.", color = Notifier.AMBER),
+                        )))
+                    }
                     "download" -> Notifier.sendNow(url, Notifier.Payload(embeds = listOf(mangaEmbed("📥 Downloaded 3 chapters\n• Chapter 138\n• Chapter 139\n• Chapter 140"))), cover)
                     "poster" -> {
                         // Full-width "poster" image instead of the small thumbnail, to compare the look.
@@ -1603,6 +1630,11 @@ fun Application.module() {
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
             call.respond(HttpStatusCode.OK)
         }
+        // Lightweight status for the WebView top bar (cookie counter). Visual only.
+        get("/api/webview/status") {
+            val cookies = withContext(Dispatchers.IO) { runCatching { xyz.nulldev.androidcompat.webkit.JcefRemoteView.cookieCount() }.getOrDefault(0) }
+            call.respond(WebViewStatusDto(cookies))
+        }
         post("/api/webview/close") {
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.close()
             call.respond(HttpStatusCode.OK)
@@ -1612,7 +1644,22 @@ fun Application.module() {
             call.respond(eu.kanade.tachiyomi.network.interceptor.HumanCheckState.snapshot().map { HumanCheckDto(it.first, it.second) })
         }
         post("/api/webview/pending/clear") {
-            call.request.queryParameters["host"]?.let { eu.kanade.tachiyomi.network.interceptor.HumanCheckState.cleared(it) }
+            val q = call.request.queryParameters
+            // Clear by explicit host, or by source id (resolve the source's host) — the latter lets the search
+            // error panel, which only knows the source, clear the flag so the banner drops and any downloads
+            // parked on that host resume, exactly like solving from the downloads screen.
+            val sid = q["source"]?.toLongOrNull()
+            val host = q["host"] ?: sid?.let { s ->
+                runCatching {
+                    (mangautils.core.source.SourceManager.loadSource(s) as? eu.kanade.tachiyomi.source.online.HttpSource)
+                        ?.baseUrl?.let { java.net.URI(it).host }
+                }.getOrNull()
+            }
+            host?.let { eu.kanade.tachiyomi.network.interceptor.HumanCheckState.cleared(it) }
+            // The pre-solve captcha failures tripped the API circuit breaker, so the immediate retry would
+            // fast-fail with "temporarily unavailable (recent failures)" even though the source is now clear.
+            // Reset it so the retry actually reaches the source.
+            sid?.let { mangautils.core.source.SourceCircuits.api.recordSuccess(it) }
             call.respond(HttpStatusCode.OK)
         }
 
@@ -1734,6 +1781,9 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        // Clean restart / shutdown (dev). Restart relies on start.bat's web loop seeing restart.flag.
+        post("/api/dev/restart") { call.respond(HttpStatusCode.OK); initiateRestart(restart = true) }
+        post("/api/dev/shutdown") { call.respond(HttpStatusCode.OK); initiateRestart(restart = false) }
         // Diagnostic: what does our TLS handshake actually look like to a server? Fetches a JA3/JA4 +
         // HTTP/2 fingerprint reflector THROUGH the real source client, so we can see whether Conscrypt
         // is producing a Chrome-like fingerprint or Cloudflare is still seeing a JVM/bot handshake.

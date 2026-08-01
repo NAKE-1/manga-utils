@@ -169,10 +169,15 @@ echo     On this PC:        %C%http://localhost:8080%R%
 echo     On your phone:     %C%http://^<this-PC-tailscale-ip^>:8080%R%   %D%(must be on the same tailnet)%R%
 echo     %D%Tip: set MANGA_WEB_PORT to change the port.%R%
 echo.
+set "RESTART_FLAG=%LOCALAPPDATA%\manga-utils\restart.flag"
+:m_web_loop
 REM Clear orphaned JCEF helpers a prior Ctrl+C left behind; they hold the CEF cache lock and stall init.
 taskkill /f /im jcef_helper.exe >nul 2>&1
+if exist "%RESTART_FLAG%" del "%RESTART_FLAG%" >nul 2>&1
 REM --no-daemon: keeps Ctrl+C-ed servers from leaving busy gradle daemons that pile up and stall launch.
 call "%GRADLE%" --no-daemon :server:run
+REM The in-app "Restart server" (dev) drops restart.flag before exiting; relaunch when we see it.
+if exist "%RESTART_FLAG%" ( echo. & echo --- Restart requested - relaunching... --- & goto :m_web_loop )
 goto :after
 
 :after
@@ -205,7 +210,7 @@ if /I "%CMD%"=="gui" (
     goto :end
 )
 if /I "%CMD%"=="desktop" ( call "%GRADLE%" :desktop:run & goto :end )
-if /I "%CMD%"=="web" ( call "%GRADLE%" --no-daemon :server:run & goto :end )
+if /I "%CMD%"=="web" goto :web_direct
 if /I "%CMD%"=="run"         ( call "%GRADLE%" -q :cli:run --args="!REST!" & goto :end )
 if /I "%CMD%"=="mu" (
     call "%GRADLE%" -q :cli:installDist || goto :fail
@@ -214,6 +219,16 @@ if /I "%CMD%"=="mu" (
 )
 echo Unknown command: %CMD%
 echo Run `start.bat` with no args for the interactive menu.
+goto :end
+
+REM web command: same relaunch loop as the menu's [w], but exits the script when done.
+:web_direct
+set "RESTART_FLAG=%LOCALAPPDATA%\manga-utils\restart.flag"
+:web_direct_loop
+taskkill /f /im jcef_helper.exe >nul 2>&1
+if exist "%RESTART_FLAG%" del "%RESTART_FLAG%" >nul 2>&1
+call "%GRADLE%" --no-daemon :server:run
+if exist "%RESTART_FLAG%" ( echo. & echo --- Restart requested - relaunching... --- & goto :web_direct_loop )
 goto :end
 
 :fail
