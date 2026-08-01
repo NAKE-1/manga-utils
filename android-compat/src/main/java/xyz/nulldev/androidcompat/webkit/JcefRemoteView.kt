@@ -125,6 +125,29 @@ object JcefRemoteView {
 
     val isOpen: Boolean get() = browser != null
 
+    /** Cookies currently stored for the open page's host — a visual "cookies captured" indicator for the
+     *  WebView top bar. Bounded blocking (visitor is async); returns 0 if nothing's open. */
+    fun cookieCount(): Int {
+        val host = runCatching { java.net.URI(currentUrl).host }.getOrNull()?.trimStart('.')
+        if (host.isNullOrBlank()) return 0
+        val mgr = runCatching { org.cef.network.CefCookieManager.getGlobalManager() }.getOrNull() ?: return 0
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var n = 0
+        val ok = runCatching {
+            mgr.visitAllCookies(object : org.cef.callback.CefCookieVisitor {
+                override fun visit(cookie: org.cef.network.CefCookie, curr: Int, total: Int, delete: org.cef.misc.BoolRef): Boolean {
+                    val dom = cookie.domain?.trimStart('.') ?: ""
+                    if (dom.isNotEmpty() && (host.endsWith(dom) || dom.endsWith(host))) n++
+                    if (curr + 1 >= total) latch.countDown()
+                    return true
+                }
+            })
+        }.getOrDefault(false)
+        if (!ok) return 0
+        latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+        return n
+    }
+
     @Synchronized
     fun close() {
         closeBrowser()

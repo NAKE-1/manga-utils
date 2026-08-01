@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import org.cef.CefApp
 import org.cef.CefClient
+import org.cef.browser.CefBrowser
+import org.cef.browser.CefFrame
+import org.cef.handler.CefLifeSpanHandlerAdapter
 
 private val logger = KotlinLogging.logger {}
 
@@ -36,6 +39,15 @@ object CefHelper {
         val app = if (isInitialized) cef else waitForInit().first()
         val client = app.createClient()
         JsHandler(client) // This adds itself to a global map
+        // Block ALL popups (window.open, target=_blank new-windows). Piracy sources spray ad popups that
+        // otherwise spawn stray Chromium windows — including the "install this extension" prompt. Returning
+        // true from onBeforePopup cancels the popup; the main frame (captcha, page load) is untouched.
+        client.addLifeSpanHandler(object : CefLifeSpanHandlerAdapter() {
+            override fun onBeforePopup(browser: CefBrowser?, frame: CefFrame?, targetUrl: String?, targetFrameName: String?): Boolean {
+                logger.debug { "JCEF: blocked popup → $targetUrl" }
+                return true
+            }
+        })
         return client
     }
 

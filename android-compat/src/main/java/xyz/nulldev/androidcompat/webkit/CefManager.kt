@@ -88,6 +88,16 @@ object CefManager {
      *  stall the next launch. Safe to call when CEF never started. */
     fun shutdown() {
         runCatching { CefApp.getInstanceIfAny()?.dispose() }
+        // Belt: dispose() sometimes leaves a jcef_helper alive, and it holds the CEF cache lock — the exact
+        // thing that stalls the next launch on "initializing". Force-kill any strays so the lock is freed.
+        runCatching {
+            val cmd = if (Platform.current.os.isWindows) {
+                listOf("taskkill", "/f", "/im", "jcef_helper.exe")
+            } else {
+                listOf("pkill", "-f", "jcef_helper")
+            }
+            ProcessBuilder(cmd).redirectErrorStream(true).start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+        }
     }
 
     private fun initBlocking() {
