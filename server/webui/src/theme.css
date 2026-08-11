@@ -105,7 +105,20 @@ img { display: block; }
 .drawer-items { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .drawer-item { text-align: left; background: none; border: none; color: inherit; font-size: 16px; font-weight: 600; padding: 13px 10px; border-radius: 10px; cursor: pointer; }
 .drawer-item:active { background: var(--card-2); }
-.drawer-foot { color: var(--border); font-size: 12px; padding: 8px 6px; }
+.drawer-foot { color: var(--border); font-size: 12px; padding: 8px 6px; display: flex; flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
+.drawer-mv-wrap { position: relative; }
+.drawer-mv { font-size: 12px; font-weight: 700; padding: 5px 9px; border-radius: 8px; white-space: nowrap; cursor: pointer; }
+.drawer-mv.on { color: #5fce8f; background: rgba(95,206,143,.12); border: 1px solid rgba(95,206,143,.3); }
+.drawer-mv.off { color: #e0a458; background: rgba(224,164,88,.12); border: 1px solid rgba(224,164,88,.3); }
+.drawer-ver { color: var(--border); }
+/* Detail popover that appears ABOVE the badge on click. */
+.drawer-mv-pop { position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 180px; z-index: 5;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px; color: var(--text); font-size: 12px; font-weight: 500;
+  box-shadow: 0 8px 26px rgba(0,0,0,.45); }
+.drawer-mv-pop .mv-state { font-weight: 800; margin-bottom: 2px; }
+.drawer-mv-pop .mv-state.on { color: #5fce8f; }
+.drawer-mv-pop .mv-state.off { color: #e0a458; }
 .iconbtn {
   width: 40px; height: 40px; border-radius: 10px;
   display: grid; place-items: center; color: var(--text);

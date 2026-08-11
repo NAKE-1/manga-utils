@@ -286,6 +286,7 @@ export const api = {
   devCaptcha: () => getJson<DevCaptcha>('/api/dev/captcha/generate', 0, 60000),
   autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),
   captchaStats: () => getJson<CapStats>('/api/dev/captcha/stats'),
+  mullvad: () => getJson<Mullvad>('/api/mullvad', 0, 10000),
   devCaptchaSolve: (imageA: string, imageB: string) =>
     fetch('/api/dev/captcha/solve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageA, imageB }) })
       .then((r) => { if (!r.ok) throw new Error(`solve HTTP ${r.status}`); return r.json() as Promise<CapSolve> }),
@@ -390,6 +391,7 @@ export interface Downloads { tasks: DlTask[]; active: number; queued: number; to
 export interface DevCaptcha { captchaId: string; count: number; imageA: string; imageB: string }
 export interface CapAttempt { at: number; result: string; clicks: number; tries: number; ms: number }
 export interface CapStats { solved: number; failed: number; reloads: number; avgMs: number; recent: CapAttempt[] }
+export interface Mullvad { ip: string; country: string; city: string; mullvad_exit_ip: boolean; mullvad_exit_ip_hostname: string; organization: string }
 export interface CapDet { name: string; conf: number; x0: number; y0: number; x1: number; y1: number }
 export interface CapSolve { aDets: CapDet[]; bDets: CapDet[]; clicks: CapDet[]; missing: string[]; solved: boolean }
 

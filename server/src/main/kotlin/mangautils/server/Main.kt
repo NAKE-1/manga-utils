@@ -440,6 +440,8 @@ private data class CaptchaDto(val captchaId: String, val count: Int, val imageA:
 @Serializable private data class RectDto2(val left: Double = 0.0, val top: Double = 0.0, val width: Double = 0.0, val height: Double = 0.0)
 @Serializable private data class LiveCap(val a: String = "", val b: String = "", val nw: Double = 0.0, val nh: Double = 0.0, val rect: RectDto2 = RectDto2(), val error: String = "")
 @Serializable private data class AutoSolveDto(val solved: Boolean, val detected: Int, val clicked: Int, val tries: Int, val message: String)
+// am.i.mullvad.net/json — reflects the SERVER's egress IP (what source traffic actually uses). snake_case = no @SerialName.
+@Serializable private data class MullvadDto(val ip: String = "", val country: String = "", val city: String = "", val mullvad_exit_ip: Boolean = false, val mullvad_exit_ip_hostname: String = "", val organization: String = "")
 @Serializable private data class AutoSolveEventDto(val id: Long, val phase: String, val detail: String)
 @Serializable private data class AutoSolveEventsDto(val lastId: Long, val events: List<AutoSolveEventDto>)
 @Serializable private data class AttemptDto(val at: Long, val result: String, val clicks: Int, val tries: Int, val ms: Long)
@@ -977,6 +979,7 @@ private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
             eu.kanade.tachiyomi.network.interceptor.HumanCheckState.cleared(host)
             val now = System.currentTimeMillis()
             AutoSolveStats.solvedNow(sol.clicks.size, attempt, now - t0, now)
+            Notifier.onCaptchaSolved(host, now - t0, sol.clicks.size, sol.bDets.size)
             log.info("AUTOSOLVE solved {} in {} clicks (try {})", host, sol.clicks.size, attempt)
             return AutoSolveDto(true, sol.bDets.size, sol.clicks.size, attempt, "solved in ${sol.clicks.size} clicks")
         }
@@ -988,6 +991,20 @@ private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
     AutoSolveStats.failedNow(AUTOSOLVE_TRIES, now - t0, now)
     Notifier.onCaptchaSolverFailed(host, AUTOSOLVE_TRIES)
     return AutoSolveDto(false, lastDetected, 0, AUTOSOLVE_TRIES, "gave up after $AUTOSOLVE_TRIES tries — solve it manually")
+}
+
+// Mullvad connection status (server egress), cached ~30s so opening the menu doesn't hammer their check.
+@Volatile private var mullvadCache: Pair<Long, MullvadDto>? = null
+private fun fetchMullvad(): MullvadDto? {
+    mullvadCache?.let { (t, dto) -> if (System.currentTimeMillis() - t < 30_000) return dto }
+    return runCatching {
+        val client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(6)).build()
+        val req = java.net.http.HttpRequest.newBuilder(java.net.URI.create("https://am.i.mullvad.net/json"))
+            .header("User-Agent", "manga-utils").timeout(java.time.Duration.ofSeconds(8)).build()
+        val resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString())
+        if (resp.statusCode() !in 200..299) return null
+        Json { ignoreUnknownKeys = true }.decodeFromString<MullvadDto>(resp.body()).also { mullvadCache = System.currentTimeMillis() to it }
+    }.getOrNull()
 }
 
 // One-at-a-time background solver for the unattended path (overnight updates / downloads).
@@ -1772,6 +1789,11 @@ fun Application.module() {
         get("/api/webview/autosolve/events") {
             val since = call.queryParam("since")?.toLongOrNull() ?: AutoSolveStats.lastEventId()
             call.respond(AutoSolveEventsDto(AutoSolveStats.lastEventId(), AutoSolveStats.eventsSince(since).map { AutoSolveEventDto(it.id, it.phase, it.detail) }))
+        }
+        get("/api/mullvad") {
+            val r = withContext(Dispatchers.IO) { fetchMullvad() }
+                ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("couldn't reach the Mullvad check"))
+            call.respond(r)
         }
         get("/api/dev/captcha/stats") {
             call.respond(AutoSolveStatsDto(AutoSolveStats.solved, AutoSolveStats.failed, AutoSolveStats.reloads, AutoSolveStats.avgMs(),

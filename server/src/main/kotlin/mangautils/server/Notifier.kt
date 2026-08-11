@@ -126,6 +126,27 @@ object Notifier {
         }
     }
 
+    /** The auto-solver cleared a captcha (manual button or unattended). Reports time + A/B shape counts.
+     *  Same gate as the other verification alerts (webhook + "Needs verification" toggle). */
+    fun onCaptchaSolved(host: String, ms: Long, aShapes: Int, bShapes: Int) {
+        if (!active() || cfg()?.needsVerify != true) return
+        bg.submit {
+            runCatching {
+                enqueue(
+                    Payload(
+                        embeds = listOf(
+                            Embed(
+                                title = "✅ Captcha auto-solved",
+                                description = "**$host** cleared in ${"%.1f".format(ms / 1000.0)}s · clicked **$aShapes** shape(s) of **$bShapes** in the grid.",
+                                color = GREEN,
+                            ),
+                        ),
+                    ),
+                )
+            }.onFailure { log.warn("captcha-solved notify: {}", it.message) }
+        }
+    }
+
     fun onLibraryChecked(results: List<UpdateResult>, scheduled: Boolean) {
         val c = cfg() ?: return
         if (!active() || (!c.libraryCheck && !c.newChapters)) return
