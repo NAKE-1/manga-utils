@@ -124,6 +124,20 @@ object JcefRemoteView {
     }
 
     val isOpen: Boolean get() = browser != null
+    val url: String get() = currentUrl
+
+    /** Evaluate [script] in the live page and return its result string (last expression), or null on
+     *  error/timeout. Used to read the challenge DOM (image data URIs + the click target's bounding rect)
+     *  so the captcha auto-solver can map native-pixel detections onto the rendered viewport. */
+    fun evalJs(script: String, timeoutMs: Long = 6000): String? {
+        val b = browser ?: return null
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var out: String? = null
+        runCatching { b.evaluateJavaScript(script) { r -> out = r; latch.countDown() } }
+            .onFailure { log.warn { "JcefRemoteView.evalJs threw: ${it.message}" }; return null }
+        latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        return out
+    }
 
     /** Cookies currently stored for the open page's host — a visual "cookies captured" indicator for the
      *  WebView top bar. Bounded blocking (visitor is async); returns 0 if nothing's open. */
@@ -147,6 +161,11 @@ object JcefRemoteView {
         latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
         return n
     }
+
+    /** Reload the current page — used by the captcha auto-solver to pull a fresh challenge when a detection
+     *  is incomplete or the click attempt didn't pass. */
+    @Synchronized
+    fun reload() { runCatching { browser?.reload() } }
 
     @Synchronized
     fun close() {
