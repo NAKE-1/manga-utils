@@ -60,6 +60,7 @@ export function Dev() {
   const [rawResult, setRawResult] = useState<RawResult | null>(null)
   const [rawBusy, setRawBusy] = useState(false)
   const [verbose, setVerbose] = useState(false)
+  const [autoSolve, setAutoSolve] = useState(false)
   const [wvUrl, setWvUrl] = useState('')
   const [wvSourceId, setWvSourceId] = useState('')
   const [wvOpen, setWvOpen] = useState<{ url?: string; source?: string } | null>(null)
@@ -82,7 +83,7 @@ export function Dev() {
     api.library().then(setLibrary).catch(() => {})
     api.devState().then(setStateFiles).catch(() => {})
     api.sources().then(setSources).catch(() => {})
-    api.getSettings().then((s) => setVerbose(s.verboseLogging)).catch(() => {})
+    api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha) }).catch(() => {})
     return () => clearInterval(t)
   }, [])
 
@@ -126,6 +127,11 @@ export function Dev() {
     const v = !verbose; setVerbose(v)
     const r = await api.saveSettings({ verboseLogging: v }).catch(() => null)
     if (!r) { setVerbose(!v); toast('Failed to change logging', 'error') }
+  }
+  async function toggleAutoSolve() {
+    const v = !autoSolve; setAutoSolve(v)
+    const r = await api.saveSettings({ autoSolveCaptcha: v }).catch(() => null)
+    if (!r) { setAutoSolve(!v); toast('Failed to change setting', 'error') }
   }
   async function doLifecycle(kind: 'restart' | 'shutdown') {
     if (!confirm(kind === 'restart' ? 'Restart the server now? Downloads and the WebView will briefly stop.' : 'Shut down the server now? You’ll need to start it again from the machine.')) return
@@ -360,6 +366,16 @@ export function Dev() {
           <div className="set-actions">
             <button className="btn primary" disabled={!wvUrl.trim() && !wvSourceId} onClick={() => setWvOpen(wvUrl.trim() ? { url: wvUrl.trim() } : { source: wvSourceId })}>Open WebView</button>
           </div>
+        </div>
+
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleAutoSolve}>
+            <div>
+              <div className="set-row-label">Auto-solve MangaFire captcha</div>
+              <div className="set-hint">When a MangaFire block is hit (incl. unattended overnight updates/downloads), open the challenge and solve it with the ONNX detector automatically. On give-up you still get the Discord ping + manual WebView fallback.</div>
+            </div>
+            <span className={'switch' + (autoSolve ? ' on' : '')}><span className="knob" /></span>
+          </button>
         </div>
 
         <div className="set-card">

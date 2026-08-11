@@ -107,6 +107,9 @@ data class Settings(
     /** Verbose console logging (okhttp request/response traces + network-interceptor DEBUG). Off by
      *  default — it's noisy and slows a busy server (every page request logs two lines). */
     val verboseLogging: Boolean = false,
+    /** Auto-solve MangaFire's interactive shape-captcha with the ONNX detector when a block is hit
+     *  (incl. unattended overnight updates). Off by default. */
+    val autoSolveCaptcha: Boolean = false,
 )
 
 @Serializable

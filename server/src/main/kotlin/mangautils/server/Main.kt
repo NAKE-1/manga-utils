@@ -422,6 +422,7 @@ private data class SettingsDto(
     val discordWebhookUrl: String,
     val notify: mangautils.core.config.NotifyConfig,
     val verboseLogging: Boolean,
+    val autoSolveCaptcha: Boolean,
 )
 
 @Serializable
@@ -504,6 +505,7 @@ private data class SettingsPatch(
     val discordWebhookUrl: String? = null,
     val notify: mangautils.core.config.NotifyConfig? = null,
     val verboseLogging: Boolean? = null,
+    val autoSolveCaptcha: Boolean? = null,
 )
 
 @Serializable
@@ -570,7 +572,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
     s.healthCheckEnabled, s.healthCheckHour,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
-    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging,
+    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha,
 )
 
 @Serializable
@@ -879,7 +881,7 @@ fun main() {
     applyFlareSolverr(SettingsStore.get()) // push the Cloudflare-bypass config into the network layer
     // Wire interactive human-check events (flagged from the network interceptor) to the two consumers:
     // ping Discord the moment a source needs solving, and resume any download parked on it once solved.
-    eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onNeeded = { host -> Notifier.onHumanCheckNeeded(host) }
+    eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onNeeded = { host -> Notifier.onHumanCheckNeeded(host); maybeAutoSolve(host) }
     eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onCleared = { host -> DownloadQueue.resumeWaitingFor(host) }
     applyVerboseLogging(SettingsStore.get().verboseLogging) // apply saved console-logging level at boot
     autoDetectFlareOnce() // first-ever boot: find a running FlareSolverr on a default endpoint and wire it up
@@ -986,6 +988,36 @@ private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
     AutoSolveStats.failedNow(AUTOSOLVE_TRIES, now - t0, now)
     Notifier.onCaptchaSolverFailed(host, AUTOSOLVE_TRIES)
     return AutoSolveDto(false, lastDetected, 0, AUTOSOLVE_TRIES, "gave up after $AUTOSOLVE_TRIES tries — solve it manually")
+}
+
+// One-at-a-time background solver for the unattended path (overnight updates / downloads).
+private val autoSolveExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    Thread(r, "captcha-autosolve").apply { isDaemon = true }
+}
+private val autoSolving = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+/** Phase D: a MangaFire block just got flagged. If the auto-solver is enabled, open the challenge headless
+ *  and solve it in the background — on success the shared cf_clearance unblocks the parked update/download.
+ *  Non-blocking (called from the network interceptor thread). Only MangaFire (the source we have a model for). */
+private fun maybeAutoSolve(host: String) {
+    if (!host.contains("mangafire", ignoreCase = true)) return
+    if (!runCatching { SettingsStore.get().autoSolveCaptcha }.getOrDefault(false)) return
+    if (!autoSolving.add(host)) return // already auto-solving this host
+    autoSolveExec.submit {
+        val wasOpen = RV.isOpen
+        try {
+            log.info("AUTOSOLVE (unattended) triggered for {}", host)
+            RV.open("https://$host/@waf/challenge?return=%2F")
+            Thread.sleep(1500) // let the challenge render its first captcha
+            val res = autoSolveLiveCaptcha(host)
+            log.info("AUTOSOLVE (unattended) {} -> {}", host, res.message)
+        } catch (e: Throwable) {
+            log.warn("AUTOSOLVE (unattended) error for {}: {}", host, e.message)
+        } finally {
+            if (!wasOpen) runCatching { RV.close() } // headless: free the browser we opened
+            autoSolving.remove(host)
+        }
+    }
 }
 
 /** Pull a fresh captcha by reloading the challenge, then wait until its new image has painted. */
@@ -1690,6 +1722,7 @@ fun Application.module() {
             body.discordWebhookUrl?.let { s = s.copy(discordWebhookUrl = it.trim()) }
             body.notify?.let { s = s.copy(notify = it) }
             body.verboseLogging?.let { s = s.copy(verboseLogging = it) }
+            body.autoSolveCaptcha?.let { s = s.copy(autoSolveCaptcha = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
