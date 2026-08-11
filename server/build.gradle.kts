@@ -29,6 +29,9 @@ dependencies {
     implementation("io.ktor:ktor-server-default-headers:$ktorVersion")
 
     implementation(libs.logback.classic) // was runtimeOnly — LogBuffer attaches a logback appender
+
+    // In-JVM ONNX Runtime (CPU) for the MangaFire shape-captcha detector (best.onnx). No torch/ultralytics.
+    implementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
 }
 
 application {
