@@ -91,7 +91,15 @@ object SourcePreferences {
         p: Preference,
     ): SourcePref {
         val type = runCatching { p.defaultValueType }.getOrDefault("String")
-        val value = runCatching { p.currentValue?.toString() }.getOrNull().orEmpty()
+        // A Set<String> (MultiSelectListPreference) must serialize as plain "a,b" — NOT the Java Set's
+        // toString "[a, b]", which the client checkbox parser and set() both fail to match, leaving a
+        // selected multi-pref un-clearable (e.g. MangaFire content-rating stuck once you tick one).
+        val current = runCatching { p.currentValue }.getOrNull()
+        val value = when (current) {
+            is Set<*> -> current.joinToString(",") { it.toString() }
+            null -> ""
+            else -> current.toString()
+        }
         // entries/entryValues live on List/MultiSelect subclasses — read reflectively to avoid hard casts.
         val entries = readCharSeqArray(p, "getEntries")
         val entryValues = readCharSeqArray(p, "getEntryValues")
