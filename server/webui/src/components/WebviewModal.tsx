@@ -7,6 +7,8 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
   const [status, setStatus] = useState('Opening…')
   const [shownUrl, setShownUrl] = useState('')
   const [cookies, setCookies] = useState<number | null>(null)
+  const [solveMsg, setSolveMsg] = useState('')
+  const [solving, setSolving] = useState(false)
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const lastObj = useRef<string | null>(null)
@@ -63,6 +65,18 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
     return () => { alive = false; clearInterval(t) }
   }, [])
 
+  // Fire the ONNX auto-solver against whatever challenge is currently in the WebView.
+  async function autoSolve() {
+    setSolving(true); setSolveMsg('🧩 solving…')
+    let host = ''
+    try { host = new URL(shownUrl).host } catch { /* no url yet */ }
+    try {
+      const r = await fetch('/api/webview/autosolve' + (host ? `?host=${encodeURIComponent(host)}` : ''), { method: 'POST' }).then((x) => x.json())
+      setSolveMsg((r.solved ? '✓ ' : '✗ ') + (r.message || (r.solved ? 'solved' : 'not solved')))
+    } catch { setSolveMsg('✗ auto-solve failed') }
+    finally { setSolving(false) }
+  }
+
   // Map a tap on the displayed frame to OSR-pixel coordinates and forward it as a click.
   function onTap(e: PointerEvent<HTMLImageElement>) {
     const img = imgRef.current
@@ -80,6 +94,8 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
       <div className="wv-bar">
         <button className="btn" onClick={onClose}>← Close &amp; retry</button>
         <span className="wv-url" title={shownUrl}>{shownUrl || 'Tap the shapes to solve, then Close'}</span>
+        <button className="btn wv-solve" disabled={solving} onClick={autoSolve}>{solving ? '🧩 solving…' : '🧩 Auto-solve'}</button>
+        {solveMsg && <span className="wv-solvemsg" title={solveMsg}>{solveMsg}</span>}
         {cookies != null && <span className="wv-cookies" title="Cookies stored for this site in the session">🍪 {cookies}</span>}
       </div>
       <div className="wv-stage">

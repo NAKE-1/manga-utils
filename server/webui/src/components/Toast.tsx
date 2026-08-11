@@ -65,6 +65,7 @@ export function Toasts() {
 // Module-level so the poll cursor survives a DownloadWatcher remount (otherwise re-syncing swallows
 // the events we want to toast).
 let flareCursor: number | null = null
+let mfCursor: number | null = null // MangaFire captcha auto-solver event cursor
 let notifyRateAt = -1 // last-seen Discord rate-limit timestamp (-1 = not yet synced)
 
 export function DownloadWatcher() {
@@ -88,8 +89,24 @@ export function DownloadWatcher() {
         flareCursor = r.lastId
       } catch { /* ignore */ }
     }
+    // MangaFire captcha auto-solver activity → toasts (mirrors the FS toast, branded "MF").
+    const mfTick = async () => {
+      try {
+        const r = await api.autosolveEvents(mfCursor ?? undefined)
+        if (mfCursor == null) { mfCursor = r.lastId; return } // first poll: sync only, no backlog
+        for (const e of r.events) {
+          const key = 'mf:solve' // one toast, updated in place
+          if (e.phase === 'solving') toast('MF · solving captcha…', 'info', 8000, key, { bg: true })
+          else if (e.phase === 'retrying') toast(`MF · retrying — ${e.detail || 'new captcha'}`, 'info', 8000, key, { bg: true })
+          else if (e.phase === 'solved') toast(`MF · captcha solved${e.detail ? ` (${e.detail})` : ''}`, 'success', 2800, key, { bg: true })
+          else if (e.phase === 'failed') toast('MF · captcha failed — solve manually', 'error', 5000, key, { bg: true })
+        }
+        mfCursor = r.lastId
+      } catch { /* ignore */ }
+    }
     const tick = async () => {
       flareTick()
+      mfTick()
       try {
         const d = await api.downloads()
         for (const t of d.tasks) {

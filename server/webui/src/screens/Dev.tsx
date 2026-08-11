@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult } from '../api'
 import { IconArrowLeft } from '../components/icons'
@@ -9,6 +9,8 @@ import { toast } from '../components/Toast'
 // Hidden Developer screen (opened from Settings → Developer). Home for the dev/debug tools.
 
 const mb = (n: number) => `${n.toFixed(0)} MB`
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const CAP_MAX_TRIES = 6 // refresh-and-retry cap when a captcha can't be fully detected/matched
 function fmtBytes(n: number) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`
   if (n >= 1e6) return `${(n / 1e6).toFixed(0)} MB`
@@ -62,6 +64,16 @@ export function Dev() {
   const [wvSourceId, setWvSourceId] = useState('')
   const [wvOpen, setWvOpen] = useState<{ url?: string; source?: string } | null>(null)
   const [lifecycle, setLifecycle] = useState('') // 'restart' | 'shutdown' while in flight
+  const [cap, setCap] = useState<import('../api').DevCaptcha | null>(null)
+  const [capBusy, setCapBusy] = useState(false)
+  const [capErr, setCapErr] = useState('')
+  const [capClicks, setCapClicks] = useState<{ x: number; y: number }[]>([]) // in B's natural pixel coords, in order
+  const [capBDim, setCapBDim] = useState<{ w: number; h: number }>({ w: 1, h: 1 })
+  const [capADim, setCapADim] = useState<{ w: number; h: number }>({ w: 1, h: 1 })
+  const [solve, setSolve] = useState<import('../api').CapSolve | null>(null)
+  const [solving, setSolving] = useState(false)
+  const [solveAttempt, setSolveAttempt] = useState(0)
+  const [capStats, setCapStats] = useState<import('../api').CapStats | null>(null)
 
   useEffect(() => {
     const load = () => api.devStats().then((d) => { setS(d); setFailed(false) }).catch(() => setFailed(true))
@@ -104,6 +116,12 @@ export function Dev() {
       setStateContent(c)
     } catch { setStateContent('(failed to load)') } finally { setStateBusy(false) }
   }
+  useEffect(() => {
+    const cs = () => { if (!document.hidden) api.captchaStats().then(setCapStats).catch(() => {}) }
+    cs(); const t = setInterval(cs, 3000)
+    return () => clearInterval(t)
+  }, [])
+
   async function toggleVerbose() {
     const v = !verbose; setVerbose(v)
     const r = await api.saveSettings({ verboseLogging: v }).catch(() => null)
@@ -114,6 +132,47 @@ export function Dev() {
     setLifecycle(kind)
     await (kind === 'restart' ? api.devRestart() : api.devShutdown()).catch(() => {})
     toast(kind === 'restart' ? 'Restarting… reconnecting shortly' : 'Server shutting down', 'info', 8000)
+  }
+  async function genCaptcha() {
+    setCapBusy(true); setCapErr(''); setCapClicks([]); setSolve(null)
+    try { setCap(await api.devCaptcha()) }
+    catch (e) { setCap(null); setCapErr(e instanceof Error ? e.message : 'failed to fetch captcha') }
+    finally { setCapBusy(false) }
+  }
+  // Solve loop: detect A+B; if not every shape is detected/matched, REFRESH a new captcha and re-detect
+  // (bounded), then reveal the click order one dot/second — emulating the real 1s-between-clicks pacing.
+  async function attemptSolve() {
+    setSolving(true); setCapErr(''); setCapClicks([])
+    try {
+      let current = cap
+      let win: import('../api').CapSolve | null = null
+      for (let attempt = 1; attempt <= CAP_MAX_TRIES; attempt++) {
+        if (!current) { current = await api.devCaptcha(); setCap(current) }
+        setSolveAttempt(attempt); setCapClicks([])
+        const s = await api.devCaptchaSolve(current.imageA, current.imageB)
+        setSolve(s)
+        // "complete" = every A shape detected AND matched in B (no missing). count = shapes A asks for.
+        const complete = s.solved && (current.count > 0 ? s.aDets.length === current.count : true)
+        if (complete) { win = s; break }
+        if (attempt < CAP_MAX_TRIES) { await sleep(500); current = await api.devCaptcha(); setCap(current) } // refresh + re-detect
+      }
+      if (win) {
+        const pts = win.clicks.map((c) => ({ x: Math.round((c.x0 + c.x1) / 2), y: Math.round((c.y0 + c.y1) / 2) }))
+        for (let i = 0; i < pts.length; i++) { setCapClicks(pts.slice(0, i + 1)); if (i < pts.length - 1) await sleep(1000) }
+      } else {
+        setCapErr(`couldn't fully detect/match after ${CAP_MAX_TRIES} refreshes`)
+      }
+    } catch (e) { setCapErr(e instanceof Error ? e.message : 'solve failed') }
+    finally { setSolving(false); setSolveAttempt(0) }
+  }
+  // Map a click on the (scaled) B image back to its native pixel coords and record it, in order.
+  function clickB(e: ReactMouseEvent<HTMLImageElement>) {
+    const img = e.currentTarget
+    const rect = img.getBoundingClientRect()
+    if (!rect.width || !rect.height || !img.naturalWidth) return
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * img.naturalWidth)
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * img.naturalHeight)
+    setCapClicks((c) => [...c, { x, y }])
   }
   async function sendRaw() {
     if (!diagSel || !rawUrl) return
@@ -301,6 +360,90 @@ export function Dev() {
           <div className="set-actions">
             <button className="btn primary" disabled={!wvUrl.trim() && !wvSourceId} onClick={() => setWvOpen(wvUrl.trim() ? { url: wvUrl.trim() } : { source: wvSourceId })}>Open WebView</button>
           </div>
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">MangaFire captcha tester</div>
+          <div className="set-hint">Pulls a fresh shape-captcha from <code>/@waf/generate</code> through JCEF. A = the order to click; B = the grid — click the shapes on B in order (this is where the solver will click). Coordinates are shown in B's native pixels.</div>
+          <div className="set-actions">
+            <button className="btn primary" disabled={capBusy} onClick={genCaptcha}>{capBusy ? 'Fetching…' : cap ? 'New captcha' : 'Generate captcha'}</button>
+            {cap && <button className="btn primary" disabled={solving} onClick={attemptSolve}>{solving ? (solveAttempt ? `Solving… (try ${solveAttempt})` : 'Solving…') : 'Attempt solve'}</button>}
+            {cap && capClicks.length > 0 && <button className="btn" onClick={() => { setCapClicks([]); setSolve(null) }}>Clear</button>}
+            {cap && <span className="cap-meta">id {cap.captchaId || '?'} · need {cap.count} · clicked {capClicks.length}</span>}
+          </div>
+          {solve && (
+            <div className={'cap-verdict ' + (solve.solved ? 'ok' : 'bad')}>
+              {solve.solved ? '✓ solvable' : `✗ missing: ${solve.missing.join(', ') || '(nothing matched)'}`}
+              <div className="cap-diag">
+                A ({solve.aDets.length}): {solve.aDets.map((d) => `${d.name} ${(d.conf * 100).toFixed(0)}%`).join('  →  ') || '(no shapes detected)'}
+              </div>
+              <div className="cap-diag">
+                B ({solve.bDets.length}): {solve.bDets.map((d) => d.name).join(', ') || '(no shapes detected)'} · will click {solve.clicks.length}
+              </div>
+            </div>
+          )}
+          {capErr && <div className="cap-err">⚠ {capErr}</div>}
+          {capStats && (capStats.solved + capStats.failed > 0) && (
+            <div className="cap-stats">
+              <div className="cap-stats-row">
+                <span><b>{capStats.solved}</b> solved</span>
+                <span><b>{capStats.failed}</b> failed</span>
+                <span><b>{capStats.reloads}</b> reloads</span>
+                <span>avg <b>{(capStats.avgMs / 1000).toFixed(1)}s</b></span>
+                <span>rate <b>{Math.round((capStats.solved / (capStats.solved + capStats.failed)) * 100)}%</b></span>
+              </div>
+              {capStats.recent.length > 0 && (
+                <div className="cap-stats-recent">
+                  {capStats.recent.slice(0, 6).map((a, i) => (
+                    <span key={i} className={'cap-att ' + a.result}>{a.result === 'solved' ? `✓ ${a.clicks}clk/${a.tries}try ${(a.ms / 1000).toFixed(1)}s` : `✗ ${a.tries}try`}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {cap && (
+            <div className="cap-wrap">
+              <div className="cap-col">
+                <div className="cap-label">A — order (detected)</div>
+                <div className="cap-bwrap">
+                  <img
+                    className="cap-a" src={cap.imageA} alt="order" draggable={false}
+                    onLoad={(e) => setCapADim({ w: e.currentTarget.naturalWidth || 1, h: e.currentTarget.naturalHeight || 1 })}
+                  />
+                  {solve?.aDets.map((d, i) => (
+                    <span key={'abox' + i} className="cap-box" title={`${d.name} ${(d.conf * 100).toFixed(0)}%`}
+                      style={{ left: `${(d.x0 / capADim.w) * 100}%`, top: `${(d.y0 / capADim.h) * 100}%`, width: `${((d.x1 - d.x0) / capADim.w) * 100}%`, height: `${((d.y1 - d.y0) / capADim.h) * 100}%` }} />
+                  ))}
+                  {solve?.aDets.map((d, i) => (
+                    <span key={'adot' + i} className="cap-dot" style={{ left: `${(((d.x0 + d.x1) / 2) / capADim.w) * 100}%`, top: `${(((d.y0 + d.y1) / 2) / capADim.h) * 100}%` }}>{i + 1}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="cap-col">
+                <div className="cap-label">B — click in order</div>
+                <div className="cap-bwrap">
+                  <img
+                    className="cap-b" src={cap.imageB} alt="grid" draggable={false} onClick={clickB}
+                    onLoad={(e) => setCapBDim({ w: e.currentTarget.naturalWidth || 1, h: e.currentTarget.naturalHeight || 1 })}
+                  />
+                  {solve?.bDets.map((d, i) => (
+                    <span
+                      key={'box' + i}
+                      className="cap-box"
+                      title={`${d.name} ${(d.conf * 100).toFixed(0)}%`}
+                      style={{ left: `${(d.x0 / capBDim.w) * 100}%`, top: `${(d.y0 / capBDim.h) * 100}%`, width: `${((d.x1 - d.x0) / capBDim.w) * 100}%`, height: `${((d.y1 - d.y0) / capBDim.h) * 100}%` }}
+                    />
+                  ))}
+                  {capClicks.map((c, i) => (
+                    <span key={i} className="cap-dot" style={{ left: `${(c.x / capBDim.w) * 100}%`, top: `${(c.y / capBDim.h) * 100}%` }}>{i + 1}</span>
+                  ))}
+                </div>
+                {capClicks.length > 0 && (
+                  <div className="cap-coords">{capClicks.map((c, i) => `${i + 1}:(${c.x},${c.y})`).join('  ')}</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

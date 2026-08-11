@@ -283,6 +283,12 @@ export const api = {
   devRequestsClear: () => fetch('/api/dev/requests/clear', { method: 'POST' }),
   devRestart: () => fetch('/api/dev/restart', { method: 'POST' }),
   devShutdown: () => fetch('/api/dev/shutdown', { method: 'POST' }),
+  devCaptcha: () => getJson<DevCaptcha>('/api/dev/captcha/generate', 0, 60000),
+  autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),
+  captchaStats: () => getJson<CapStats>('/api/dev/captcha/stats'),
+  devCaptchaSolve: (imageA: string, imageB: string) =>
+    fetch('/api/dev/captcha/solve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageA, imageB }) })
+      .then((r) => { if (!r.ok) throw new Error(`solve HTTP ${r.status}`); return r.json() as Promise<CapSolve> }),
   devSourceDiag: (id: string) => getJson<SourceDiag>(`/api/dev/source/${id}/diag`),
   devSourceRaw: (id: string, url: string) =>
     fetch(`/api/dev/source/${id}/raw`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }).then((r) => r.json() as Promise<RawResult>),
@@ -380,6 +386,12 @@ export interface DlTask {
   vfHost?: string // state==="waitvf": host whose human-check must be solved to resume
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
+// Dev captcha tester: A = order strip, B = clickable grid. Both are data-URI images. count = shapes to click.
+export interface DevCaptcha { captchaId: string; count: number; imageA: string; imageB: string }
+export interface CapAttempt { at: number; result: string; clicks: number; tries: number; ms: number }
+export interface CapStats { solved: number; failed: number; reloads: number; avgMs: number; recent: CapAttempt[] }
+export interface CapDet { name: string; conf: number; x0: number; y0: number; x1: number; y1: number }
+export interface CapSolve { aDets: CapDet[]; bDets: CapDet[]; clicks: CapDet[]; missing: string[]; solved: boolean }
 
 export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean; beta?: boolean }
 export interface VrfStatus { present: boolean; valid: boolean; build: string; mtime: number }
