@@ -104,6 +104,28 @@ object Notifier {
         }
     }
 
+    /** The MangaFire captcha auto-solver gave up after N tries — the user must solve it manually. Same
+     *  gate as [onHumanCheckNeeded] (webhook + the "Needs verification" toggle). */
+    fun onCaptchaSolverFailed(host: String, tries: Int) {
+        if (!active() || cfg()?.needsVerify != true) return
+        bg.submit {
+            runCatching {
+                enqueue(
+                    Payload(
+                        embeds = listOf(
+                            Embed(
+                                title = "🔒 Verification needed — auto-solver failed",
+                                description = "The MangaFire captcha auto-solver couldn't clear **$host** after $tries tries. " +
+                                    "Open manga-utils and solve it manually to resume.",
+                                color = RED,
+                            ),
+                        ),
+                    ),
+                )
+            }.onFailure { log.warn("solver-failed notify: {}", it.message) }
+        }
+    }
+
     fun onLibraryChecked(results: List<UpdateResult>, scheduled: Boolean) {
         val c = cfg() ?: return
         if (!active() || (!c.libraryCheck && !c.newChapters)) return

@@ -428,6 +428,23 @@ private data class SettingsDto(
 private data class WebViewInfoDto(val width: Int, val height: Int, val url: String)
 @Serializable
 private data class WebViewStatusDto(val cookies: Int)
+// MangaFire /@waf/generate response — snake_case field names match the JSON so no @SerialName needed.
+@Serializable
+private data class WafGenResp(val captcha_id: String = "", val count: Int = 0, val image_base64: String = "", val thumb_base64: String = "")
+/** For the dev captcha tester: A = the order strip, B = the clickable grid. */
+@Serializable
+private data class CaptchaDto(val captchaId: String, val count: Int, val imageA: String, val imageB: String)
+@Serializable private data class SolveReq(val imageA: String, val imageB: String)
+// Live challenge DOM read (from JcefRemoteView.evalJs) + the auto-solve result.
+@Serializable private data class RectDto2(val left: Double = 0.0, val top: Double = 0.0, val width: Double = 0.0, val height: Double = 0.0)
+@Serializable private data class LiveCap(val a: String = "", val b: String = "", val nw: Double = 0.0, val nh: Double = 0.0, val rect: RectDto2 = RectDto2(), val error: String = "")
+@Serializable private data class AutoSolveDto(val solved: Boolean, val detected: Int, val clicked: Int, val tries: Int, val message: String)
+@Serializable private data class AutoSolveEventDto(val id: Long, val phase: String, val detail: String)
+@Serializable private data class AutoSolveEventsDto(val lastId: Long, val events: List<AutoSolveEventDto>)
+@Serializable private data class AttemptDto(val at: Long, val result: String, val clicks: Int, val tries: Int, val ms: Long)
+@Serializable private data class AutoSolveStatsDto(val solved: Int, val failed: Int, val reloads: Int, val avgMs: Long, val recent: List<AttemptDto>)
+@Serializable private data class DetDto(val name: String, val conf: Double, val x0: Double, val y0: Double, val x1: Double, val y1: Double)
+@Serializable private data class SolveDto(val aDets: List<DetDto>, val bDets: List<DetDto>, val clicks: List<DetDto>, val missing: List<String>, val solved: Boolean)
 
 @Serializable
 private data class HumanCheckDto(val host: String, val sinceMs: Long)
@@ -914,6 +931,85 @@ private fun initiateRestart(restart: Boolean) {
     }.apply { isDaemon = false; name = "restart" }.start()
 }
 
+// ---------------- Live MangaFire shape-captcha auto-solver (drives the streamed JcefRemoteView) ----------
+private val RV get() = xyz.nulldev.androidcompat.webkit.JcefRemoteView
+private const val AUTOSOLVE_TRIES = 6
+// Reads the challenge's A/B images + the click-target's viewport rect straight from the live DOM.
+private const val CAPTCHA_READ_JS =
+    "(function(){var m=document.getElementById('main'),t=document.getElementById('thumb');" +
+        "if(!m||!t||!m.naturalWidth)return JSON.stringify({error:'no shape-captcha on this page'});" +
+        "var r=m.getBoundingClientRect();return JSON.stringify({a:t.src,b:m.src," +
+        "rect:{left:r.left,top:r.top,width:r.width,height:r.height},nw:m.naturalWidth,nh:m.naturalHeight});})()"
+
+/** Detect → match → click the live challenge, refreshing on an incomplete/failed attempt (bounded). On a
+ *  pass, clears the host so parked downloads/searches resume. Blocking — call on Dispatchers.IO. */
+private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
+    val ljson = Json { ignoreUnknownKeys = true }
+    val t0 = System.currentTimeMillis()
+    AutoSolveStats.solving()
+    var lastDetected = 0
+    for (attempt in 1..AUTOSOLVE_TRIES) {
+        val raw = RV.evalJs(CAPTCHA_READ_JS)
+            ?: return AutoSolveDto(false, 0, 0, attempt, "couldn't read the WebView (open it on the challenge first)")
+        val dom = runCatching { ljson.decodeFromString<LiveCap>(raw) }.getOrNull()
+            ?: return AutoSolveDto(false, 0, 0, attempt, "page returned no JSON")
+        if (dom.error.isNotBlank()) return AutoSolveDto(false, 0, 0, attempt, dom.error)
+        if (dom.a.isBlank() || dom.b.isBlank() || dom.nw <= 0 || dom.nh <= 0) { refreshCaptcha(); continue }
+        val sol = runCatching { CaptchaSolver.solve(CaptchaSolver.decode(dom.a), CaptchaSolver.decode(dom.b)) }.getOrNull()
+            ?: return AutoSolveDto(false, 0, 0, attempt, "detect/solve failed — see log")
+        lastDetected = sol.bDets.size
+        if (!sol.solved || sol.clicks.isEmpty()) {
+            log.info("AUTOSOLVE try {}/{}: incomplete (missing {}) — refreshing", attempt, AUTOSOLVE_TRIES, sol.missing)
+            AutoSolveStats.retrying(if (sol.missing.isNotEmpty()) "missing ${sol.missing.joinToString()}" else "no shapes")
+            refreshCaptcha(); continue
+        }
+        // Click each shape's box centre in order — ~1s apart with small position/timing jitter (human pacing).
+        for (c in sol.clicks) {
+            val cx = (c.x0 + c.x1) / 2.0; val cy = (c.y0 + c.y1) / 2.0
+            val vx = dom.rect.left + (cx / dom.nw) * dom.rect.width + (-2..2).random()
+            val vy = dom.rect.top + (cy / dom.nh) * dom.rect.height + (-2..2).random()
+            RV.click(vx.toInt(), vy.toInt())
+            Thread.sleep((1000L..1300L).random())
+        }
+        if (waitSolved(8_000)) {
+            eu.kanade.tachiyomi.network.interceptor.HumanCheckState.cleared(host)
+            val now = System.currentTimeMillis()
+            AutoSolveStats.solvedNow(sol.clicks.size, attempt, now - t0, now)
+            log.info("AUTOSOLVE solved {} in {} clicks (try {})", host, sol.clicks.size, attempt)
+            return AutoSolveDto(true, sol.bDets.size, sol.clicks.size, attempt, "solved in ${sol.clicks.size} clicks")
+        }
+        log.info("AUTOSOLVE try {}/{}: clicked {} but didn't pass — refreshing", attempt, AUTOSOLVE_TRIES, sol.clicks.size)
+        AutoSolveStats.retrying("clicked ${sol.clicks.size}, no pass")
+        refreshCaptcha()
+    }
+    val now = System.currentTimeMillis()
+    AutoSolveStats.failedNow(AUTOSOLVE_TRIES, now - t0, now)
+    Notifier.onCaptchaSolverFailed(host, AUTOSOLVE_TRIES)
+    return AutoSolveDto(false, lastDetected, 0, AUTOSOLVE_TRIES, "gave up after $AUTOSOLVE_TRIES tries — solve it manually")
+}
+
+/** Pull a fresh captcha by reloading the challenge, then wait until its new image has painted. */
+private fun refreshCaptcha() {
+    RV.reload()
+    val ready = "(function(){var m=document.getElementById('main');return (m&&m.naturalWidth>0)?'1':'0';})()"
+    val deadline = System.currentTimeMillis() + 8_000
+    while (System.currentTimeMillis() < deadline) {
+        Thread.sleep(500)
+        if (RV.evalJs(ready) == "1") return
+    }
+}
+
+/** True once the page navigates away from /@waf/challenge (the challenge passed). */
+private fun waitSolved(ms: Long): Boolean {
+    val deadline = System.currentTimeMillis() + ms
+    while (System.currentTimeMillis() < deadline) {
+        Thread.sleep(500)
+        val path = RV.evalJs("(function(){return location.pathname;})()") ?: continue
+        if (!path.contains("@waf/challenge")) return true
+    }
+    return false
+}
+
 fun Application.module() {
     install(DefaultHeaders)
     install(CallLogging) {
@@ -924,7 +1020,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -1630,6 +1726,24 @@ fun Application.module() {
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
             call.respond(HttpStatusCode.OK)
         }
+        // Auto-solve the shape-captcha currently shown in the streamed WebView (detect→match→click→refresh
+        // →verify loop). host= drives which host gets cleared on success (defaults to mangafire.to).
+        post("/api/webview/autosolve") {
+            val host = call.request.queryParameters["host"]?.takeIf { it.isNotBlank() } ?: "mangafire.to"
+            val res = withContext(Dispatchers.IO) {
+                runCatching { autoSolveLiveCaptcha(host) }.onFailure { log.warn("autosolve error: {}", it.message) }.getOrNull()
+            } ?: return@post call.respond(HttpStatusCode.InternalServerError, ErrorDto("auto-solve error — see log"))
+            call.respond(res)
+        }
+        // Live auto-solver phase events (for the MF toast) + running stats (for the dev panel).
+        get("/api/webview/autosolve/events") {
+            val since = call.queryParam("since")?.toLongOrNull() ?: AutoSolveStats.lastEventId()
+            call.respond(AutoSolveEventsDto(AutoSolveStats.lastEventId(), AutoSolveStats.eventsSince(since).map { AutoSolveEventDto(it.id, it.phase, it.detail) }))
+        }
+        get("/api/dev/captcha/stats") {
+            call.respond(AutoSolveStatsDto(AutoSolveStats.solved, AutoSolveStats.failed, AutoSolveStats.reloads, AutoSolveStats.avgMs(),
+                AutoSolveStats.recent().map { AttemptDto(it.at, it.result, it.clicks, it.tries, it.ms) }))
+        }
         // Lightweight status for the WebView top bar (cookie counter). Visual only.
         get("/api/webview/status") {
             val cookies = withContext(Dispatchers.IO) { runCatching { xyz.nulldev.androidcompat.webkit.JcefRemoteView.cookieCount() }.getOrDefault(0) }
@@ -1784,6 +1898,36 @@ fun Application.module() {
         // Clean restart / shutdown (dev). Restart relies on start.bat's web loop seeing restart.flag.
         post("/api/dev/restart") { call.respond(HttpStatusCode.OK); initiateRestart(restart = true) }
         post("/api/dev/shutdown") { call.respond(HttpStatusCode.OK); initiateRestart(restart = false) }
+        // Dev captcha tester: pull a fresh MangaFire shape-captcha through real Chromium (JCEF handles CF +
+        // the mangafire session), decode the JSON, and hand back A (order) + B (clickable grid) as data URIs.
+        get("/api/dev/captcha/generate") {
+            val r = withContext(Dispatchers.IO) {
+                runCatching {
+                    xyz.nulldev.androidcompat.webkit.JcefFetch.fetch(
+                        "https://mangafire.to/@waf/generate", "GET",
+                        mapOf("Accept" to "application/json", "X-Requested-With" to "XMLHttpRequest"), null,
+                    )
+                }.getOrNull()
+            }
+            if (r == null || r.status !in 200..299) {
+                return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("couldn't fetch captcha (status ${r?.status ?: 0}) — mangafire may need a WebView solve first"))
+            }
+            val gen = runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<WafGenResp>(r.body) }.getOrNull()
+            if (gen == null || gen.image_base64.isBlank()) {
+                return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("captcha response wasn't the expected JSON"))
+            }
+            call.respond(CaptchaDto(gen.captcha_id, gen.count, imageA = gen.thumb_base64, imageB = gen.image_base64))
+        }
+        // Run the ONNX detector on A + B and return the §7 match: detections + ordered click centres + verdict.
+        post("/api/dev/captcha/solve") {
+            val body = call.receive<SolveReq>()
+            val sol = withContext(Dispatchers.IO) {
+                runCatching { CaptchaSolver.solve(CaptchaSolver.decode(body.imageA), CaptchaSolver.decode(body.imageB)) }
+                    .onFailure { log.warn("captcha solve failed: {}", it.message) }.getOrNull()
+            } ?: return@post call.respond(HttpStatusCode.InternalServerError, ErrorDto("solve failed — see server log"))
+            fun d(x: CaptchaSolver.Det) = DetDto(x.name, x.conf.toDouble(), x.x0.toDouble(), x.y0.toDouble(), x.x1.toDouble(), x.y1.toDouble())
+            call.respond(SolveDto(sol.aOrder.map(::d), sol.bDets.map(::d), sol.clicks.map(::d), sol.missing, sol.solved))
+        }
         // Diagnostic: what does our TLS handshake actually look like to a server? Fetches a JA3/JA4 +
         // HTTP/2 fingerprint reflector THROUGH the real source client, so we can see whether Conscrypt
         // is producing a Chrome-like fingerprint or Cloudflare is still seeing a JVM/bot handshake.
