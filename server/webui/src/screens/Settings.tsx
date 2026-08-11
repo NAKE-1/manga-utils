@@ -237,9 +237,12 @@ export function Settings() {
 
   async function toggleLang(code: string) {
     if (!info) return
-    const set = new Set(info.visibleLanguages)
-    set.has(code) ? set.delete(code) : set.add(code)
-    const s = await api.saveSettings({ visibleLanguages: [...set] }).catch(() => null)
+    // Case-insensitive: the server stores languages lowercased ("zh-hans") but the chips come from the
+    // source list with original case ("zh-Hans"), so an exact match would never hit for mixed-case codes.
+    const lc = code.toLowerCase()
+    const has = info.visibleLanguages.some((l) => l.toLowerCase() === lc)
+    const next = has ? info.visibleLanguages.filter((l) => l.toLowerCase() !== lc) : [...info.visibleLanguages, code]
+    const s = await api.saveSettings({ visibleLanguages: next }).catch(() => null)
     if (s) setInfo(s)
   }
 
@@ -425,7 +428,7 @@ export function Settings() {
           <div className="set-hint">Show sources in these languages. None selected = all.</div>
           <div className="lang-chips">
             {languages.map((code) => (
-              <button key={code} className={'chip' + (info?.visibleLanguages.includes(code) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
+              <button key={code} className={'chip' + (info?.visibleLanguages.some((l) => l.toLowerCase() === code.toLowerCase()) ? ' on' : '')} onClick={() => toggleLang(code)}>{code.toUpperCase()}</button>
             ))}
           </div>
         </div>
