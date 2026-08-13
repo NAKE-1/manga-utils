@@ -5,6 +5,7 @@
  */
 package mangautils.server
 
+import eu.kanade.tachiyomi.network.interceptor.HumanCheckState
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
 import io.ktor.http.ContentType
@@ -883,7 +884,15 @@ fun main() {
     applyFlareSolverr(SettingsStore.get()) // push the Cloudflare-bypass config into the network layer
     // Wire interactive human-check events (flagged from the network interceptor) to the two consumers:
     // ping Discord the moment a source needs solving, and resume any download parked on it once solved.
-    eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onNeeded = { host -> Notifier.onHumanCheckNeeded(host); maybeAutoSolve(host) }
+    // Auto-solve gets first crack. Only surface the in-app "verify" banner + the "needs verification" Discord
+    // ping when auto-solve ISN'T handling it (disabled / non-MangaFire). If it takes the job, it shows the
+    // banner itself only on failure (via needManual in its finally), and the solve fires its own success/fail ping.
+    HumanCheckState.onNeeded = { host ->
+        if (!maybeAutoSolve(host)) {
+            HumanCheckState.needManual(host)
+            Notifier.onHumanCheckNeeded(host)
+        }
+    }
     eu.kanade.tachiyomi.network.interceptor.HumanCheckState.onCleared = { host -> DownloadQueue.resumeWaitingFor(host) }
     applyVerboseLogging(SettingsStore.get().verboseLogging) // apply saved console-logging level at boot
     autoDetectFlareOnce() // first-ever boot: find a running FlareSolverr on a default endpoint and wire it up
@@ -1019,10 +1028,10 @@ private val autoSolving = java.util.concurrent.ConcurrentHashMap.newKeySet<Strin
 /** Phase D: a MangaFire block just got flagged. If the auto-solver is enabled, open the challenge headless
  *  and solve it in the background — on success the shared cf_clearance unblocks the parked update/download.
  *  Non-blocking (called from the network interceptor thread). Only MangaFire (the source we have a model for). */
-private fun maybeAutoSolve(host: String) {
-    if (!host.contains("mangafire", ignoreCase = true)) return
-    if (!runCatching { SettingsStore.get().autoSolveCaptcha }.getOrDefault(false)) return
-    if (!autoSolving.add(host)) return // already auto-solving this host
+private fun maybeAutoSolve(host: String): Boolean {
+    if (!host.contains("mangafire", ignoreCase = true)) return false // no model for this source
+    if (!runCatching { SettingsStore.get().autoSolveCaptcha }.getOrDefault(false)) return false // disabled
+    if (!autoSolving.add(host)) return true // already solving this host — that run will surface the banner if it fails
     autoSolveExec.submit {
         val wasOpen = RV.isOpen
         try {
@@ -1036,8 +1045,11 @@ private fun maybeAutoSolve(host: String) {
         } finally {
             if (!wasOpen) runCatching { RV.close() } // headless: free the browser we opened
             autoSolving.remove(host)
+            // Didn't clear (gave up / errored) → a human is needed: surface the in-app banner now.
+            if (HumanCheckState.isPending(host)) HumanCheckState.needManual(host)
         }
     }
+    return true
 }
 
 /** Pull a fresh captcha by reloading the challenge, then wait until its new image has painted. */
@@ -1811,9 +1823,10 @@ fun Application.module() {
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.close()
             call.respond(HttpStatusCode.OK)
         }
-        // Hosts that hit an interactive human-check (captcha). The UI polls this to prompt "Solve it".
+        // Hosts that need a HUMAN to solve (auto-solve off/declined, or it gave up). Drives the "verify"
+        // banner — deliberately the manual set, NOT all pending, so it stays hidden while auto-solve works.
         get("/api/webview/pending") {
-            call.respond(eu.kanade.tachiyomi.network.interceptor.HumanCheckState.snapshot().map { HumanCheckDto(it.first, it.second) })
+            call.respond(HumanCheckState.manualSnapshot().map { HumanCheckDto(it.first, it.second) })
         }
         post("/api/webview/pending/clear") {
             val q = call.request.queryParameters
@@ -2483,16 +2496,31 @@ private suspend fun browse(
 private fun sourceErrorMessage(e: Throwable): String =
     e.message?.takeIf { it.isNotBlank() } ?: (e::class.simpleName ?: "The source is unavailable")
 
-/** Record a failure: Cloudflare blocks stay "up but blocked"; anything else marks the source down. */
+/** Record a failure: Cloudflare / captcha blocks stay "up but blocked"; anything else marks down. */
 private fun markFailure(sourceId: Long, e: Throwable) {
     log.warn("source {} call failed: {}", sourceId, e.message ?: e::class.simpleName) // visible so 5xx can be troubleshot
     if (e.message?.contains("Cloudflare", ignoreCase = true) == true) {
         CloudflareState.mark(sourceId)
         SourceHealth.markUp(sourceId)
+    } else if (isGatedNotDown(hostOf(sourceId), e.message)) {
+        // A human-check captcha (possibly mid-auto-solve) is a gate, not an outage — don't flip to "down".
     } else {
         SourceHealth.markDown(sourceId)
     }
 }
+
+/** Host of a source's base URL (e.g. "mangafire.to"), or null. */
+private fun hostOf(sourceId: Long): String? = runCatching {
+    (mangautils.core.source.SourceManager.loadSource(sourceId) as? eu.kanade.tachiyomi.source.online.HttpSource)
+        ?.baseUrl?.let { java.net.URI(it).host }
+}.getOrNull()
+
+/** A failure that means the source is GATED (Cloudflare or a human-check captcha), NOT offline — so it must
+ *  never flip the source to "down". Shared by markFailure and the health sweep. */
+internal fun isGatedNotDown(host: String?, error: String?): Boolean =
+    error?.contains("Cloudflare", ignoreCase = true) == true ||
+        (host != null && HumanCheckState.isPending(host)) ||       // interceptor flags the host before the call returns
+        (error != null && HumanCheckState.isHumanChallenge(error)) // belt: markers in the message
 
 /** green = no Cloudflare seen; red = behind Cloudflare, no bypass; orange = behind CF + bypass. */
 private fun cfState(sourceId: Long): String =
