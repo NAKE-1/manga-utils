@@ -948,7 +948,7 @@ private const val CAPTCHA_READ_JS =
 /** Detect → match → click the live challenge, refreshing on an incomplete/failed attempt (bounded). On a
  *  pass, clears the host so parked downloads/searches resume. Blocking — call on Dispatchers.IO. */
 private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
-    val ljson = Json { ignoreUnknownKeys = true }
+    val ljson = sharedJson
     val t0 = System.currentTimeMillis()
     AutoSolveStats.solving()
     var lastDetected = 0
@@ -993,6 +993,9 @@ private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
     return AutoSolveDto(false, lastDetected, 0, AUTOSOLVE_TRIES, "gave up after $AUTOSOLVE_TRIES tries — solve it manually")
 }
 
+// Shared lenient JSON parser (avoids per-call Json{} allocation in the captcha/mullvad paths).
+private val sharedJson = Json { ignoreUnknownKeys = true }
+
 // Mullvad connection status (server egress), cached ~30s so opening the menu doesn't hammer their check.
 @Volatile private var mullvadCache: Pair<Long, MullvadDto>? = null
 private fun fetchMullvad(): MullvadDto? {
@@ -1003,7 +1006,7 @@ private fun fetchMullvad(): MullvadDto? {
             .header("User-Agent", "manga-utils").timeout(java.time.Duration.ofSeconds(8)).build()
         val resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString())
         if (resp.statusCode() !in 200..299) return null
-        Json { ignoreUnknownKeys = true }.decodeFromString<MullvadDto>(resp.body()).also { mullvadCache = System.currentTimeMillis() to it }
+        sharedJson.decodeFromString<MullvadDto>(resp.body()).also { mullvadCache = System.currentTimeMillis() to it }
     }.getOrNull()
 }
 
@@ -1967,7 +1970,7 @@ fun Application.module() {
             if (r == null || r.status !in 200..299) {
                 return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("couldn't fetch captcha (status ${r?.status ?: 0}) — mangafire may need a WebView solve first"))
             }
-            val gen = runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<WafGenResp>(r.body) }.getOrNull()
+            val gen = runCatching { sharedJson.decodeFromString<WafGenResp>(r.body) }.getOrNull()
             if (gen == null || gen.image_base64.isBlank()) {
                 return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("captcha response wasn't the expected JSON"))
             }
