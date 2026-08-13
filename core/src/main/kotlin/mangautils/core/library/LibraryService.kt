@@ -5,8 +5,10 @@
  */
 package mangautils.core.library
 
+import eu.kanade.tachiyomi.network.interceptor.HumanCheckState
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.runBlocking
 import mangautils.core.source.SourceManager
 import mangautils.core.util.ChapterNumber
@@ -19,6 +21,8 @@ data class UpdateResult(
     val newChapters: List<ChapterRef>,
     /** New scans of numbers already tracked. Downloaded like the rest, but not counted as new chapters. */
     val newVersions: List<ChapterRef> = emptyList(),
+    /** The check errored (source down, or a human-check 403). Eligible for a retry-after-clear pass. */
+    val failed: Boolean = false,
 )
 
 /** Follow/unfollow series and detect new chapters (the tracker core). */
@@ -110,12 +114,44 @@ object LibraryService {
         onProgress: ((done: Int, total: Int) -> Unit)? = null,
     ): List<UpdateResult> {
         val total = entries.size
-        return entries.mapIndexed { i, entry ->
-            val result = updateOne(entry)
-            onProgress?.invoke(i + 1, total)
-            result
-        }
+        val results = entries.mapIndexed { i, entry ->
+            updateOne(entry).also { onProgress?.invoke(i + 1, total) }
+        }.toMutableList()
+        retryAfterHumanCheckCleared(results)
+        return results
     }
+
+    /**
+     * A captcha can pop mid-run: the first blocked title triggers the (background) auto-solver, but the
+     * update races on and fails a handful of titles with 403 before the clearance lands. Once the host
+     * clears, re-check just those — otherwise a mid-run captcha silently drops titles from the update.
+     * Gated on auto-solve so a manual-only setup doesn't stall the run waiting for a clear that won't come.
+     */
+    private fun retryAfterHumanCheckCleared(results: MutableList<UpdateResult>) {
+        val failed = results.withIndex().filter { it.value.failed }
+        if (failed.isEmpty()) return
+        val hosts = failed.mapNotNull { hostOf(it.value.entry.sourceId) }.toSet()
+        val autoSolve = runCatching { mangautils.core.config.SettingsStore.get().autoSolveCaptcha }.getOrDefault(false)
+        if (autoSolve) {
+            // Wait (bounded) for any in-progress solve to clear the blocked host(s).
+            val deadline = System.currentTimeMillis() + 25_000
+            while (hosts.any { HumanCheckState.isPending(it) } && System.currentTimeMillis() < deadline) {
+                runCatching { Thread.sleep(1000) }
+            }
+        }
+        var recovered = 0
+        for ((idx, res) in failed) {
+            val host = hostOf(res.entry.sourceId)
+            if (host != null && HumanCheckState.isPending(host)) continue // still blocked → leave it failed
+            val retry = updateOne(res.entry)
+            if (!retry.failed) { results[idx] = retry; recovered++ }
+        }
+        if (recovered > 0) log.info("Update recovered {} title(s) after the captcha cleared", recovered)
+    }
+
+    private fun hostOf(sourceId: Long): String? = runCatching {
+        (SourceManager.loadSource(sourceId) as? HttpSource)?.baseUrl?.let { java.net.URI(it).host }
+    }.getOrNull()
 
     private fun updateOne(entry: LibraryEntry): UpdateResult {
         val source = SourceManager.loadSource(entry.sourceId) ?: run {
@@ -126,7 +162,7 @@ object LibraryService {
             runCatching { runBlocking { source.getChapterList(seed(entry.mangaUrl)) } }
                 .getOrElse {
                     log.warn("Update failed for '{}': {}", entry.title, it.message)
-                    return UpdateResult(entry, emptyList())
+                    return UpdateResult(entry, emptyList(), failed = true)
                 }
         val knownUrls = entry.knownChapters.map { it.url }.toSet()
         // Group by chapter number so a new URL can be told apart: a number we've never had (a real new
