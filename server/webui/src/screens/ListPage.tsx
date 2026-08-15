@@ -47,14 +47,11 @@ export function ListPage() {
 
   async function checkUpdates() {
     setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatePct(0)
-    const poll = setInterval(() => {
-      api.updateProgress().then((p) => { if (p.total > 0) setUpdatePct(Math.round((p.done / p.total) * 100)) }).catch(() => {})
-    }, 400)
-    const r = await api.updateLibrary().catch(() => null)
-    clearInterval(poll)
+    // Starts the update and polls to completion — no long-held request to drop → no false "Update failed".
+    const r = await api.runLibraryUpdate((pct) => setUpdatePct(pct)).catch(() => null)
     await api.library().then(setLibrary).catch(() => {})
     setUpdating(false); setUpdatePct(0)
-    if (!r) { setUpdateMsg('Update failed'); setUpdatedTitles([]) }
+    if (!r) { setUpdateMsg('Update failed'); setUpdatedTitles([]) } // only a genuine server error now
     else if (r.titles.length === 0) { setUpdateMsg('No new chapters found'); setUpdatedTitles([]) }
     else { setUpdateMsg(''); setUpdatedTitles(r.titles) }
   }

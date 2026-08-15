@@ -144,8 +144,23 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not start')
     return r.json() as Promise<{ queued: number }>
   },
-  updateLibrary: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json() as Promise<{ newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }>),
-  updateProgress: () => getJson<{ done: number; total: number; running: boolean }>('/api/library/update/progress'),
+  updateProgress: () => getJson<UpdateProgress>('/api/library/update/progress'),
+  // Start a library update (or join one already running) and resolve with the summary when it finishes —
+  // polling /progress rather than holding a long POST open (which dropped over Tailscale → false "failed").
+  runLibraryUpdate: (onPct?: (pct: number) => void): Promise<UpdateSummary | null> =>
+    fetch('/api/library/update', { method: 'POST' }).catch(() => null).then(
+      () =>
+        new Promise<UpdateSummary | null>((resolve) => {
+          let fails = 0
+          const t = setInterval(async () => {
+            const p = await getJson<UpdateProgress>('/api/library/update/progress').catch(() => null)
+            if (!p) { if (++fails > 20) { clearInterval(t); resolve(null) } return } // ~10s unreachable → give up
+            fails = 0
+            if (p.total > 0) onPct?.(Math.round((p.done / p.total) * 100))
+            if (!p.running) { clearInterval(t); resolve(p.summary ?? null) }
+          }, 500)
+        }),
+    ),
   // Resolve a pasted source URL (e.g. https://atsu.moe/manga/-tya) to an installed source's manga.
   resolve: async (url: string) => {
     const r = await fetch(`/api/resolve?url=${encodeURIComponent(url)}`)
@@ -317,7 +332,6 @@ export const api = {
   massPlan: () => getJson<MassPlan>('/api/downloads/mass/plan'),
   massStart: (items: { sourceId: string; mangaUrl: string }[]) =>
     fetch('/api/downloads/mass/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then((r) => r.json() as Promise<{ count: number }>),
-  libraryUpdate: () => fetch('/api/library/update', { method: 'POST' }).then((r) => r.json()),
 
   // Download manager (on-disk content)
   manageDownloads: () => getJson<ManagedSeries[]>('/api/downloads/manage'),
@@ -387,6 +401,8 @@ export interface DlTask {
   vfHost?: string // state==="waitvf": host whose human-check must be solved to resume
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
+export interface UpdateSummary { newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }
+export interface UpdateProgress { done: number; total: number; running: boolean; summary?: UpdateSummary | null }
 // Dev captcha tester: A = order strip, B = clickable grid. Both are data-URI images. count = shapes to click.
 export interface DevCaptcha { captchaId: string; count: number; imageA: string; imageB: string }
 export interface CapAttempt { at: number; result: string; clicks: number; tries: number; ms: number }

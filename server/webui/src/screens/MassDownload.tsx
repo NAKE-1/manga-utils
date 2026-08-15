@@ -24,8 +24,8 @@ export default function MassDownload() {
 
   async function scanFirst() {
     setScanning(true)
-    try { await api.libraryUpdate() } catch { /* ignore */ }
-    await load()
+    await api.runLibraryUpdate().catch(() => null) // waits for the update to finish (joins one already running)
+    await load() // now the plan reflects the freshly-found chapters
     setScanning(false)
     toast('Library rescanned for new chapters', 'success')
   }

@@ -244,7 +244,7 @@ private data class LibraryDto(
 
 @Serializable private data class UpdatedTitleDto(val title: String, val count: Int)
 @Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int, val titles: List<UpdatedTitleDto> = emptyList())
-@Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean)
+@Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean, val summary: UpdateSummaryDto? = null)
 @Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
 // Mass-download: a per-series preview (downloaded/total + how many would queue) and the grand total.
@@ -324,6 +324,11 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
 @Volatile private var libUpdateRunning = false
+@Volatile private var libUpdateSummary: UpdateSummaryDto? = null // last completed manual-update result (for the poll)
+// Serializes manual library updates so a second click joins the running one instead of double-running.
+private val libUpdateExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    Thread(r, "library-update").apply { isDaemon = true }
+}
 
 @Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false, val beta: Boolean = false)
 
@@ -1363,21 +1368,32 @@ fun Application.module() {
         }
 
         // Scan the whole library for new chapters (like the desktop). Updates per-manga newChapters.
+        // Fire-and-forget: kick the update off on a background thread and return immediately, so the UI
+        // polls /progress for the result instead of holding a minute-long request open (which used to drop
+        // over Tailscale/phone and show a false "Update failed" even though the server finished fine).
         post("/api/library/update") {
-            val results = withContext(Dispatchers.IO) {
-                libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0
-                try {
-                    LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
-                } finally { libUpdateRunning = false }
+            if (!libUpdateRunning) {
+                libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0; libUpdateSummary = null
+                libUpdateExec.submit {
+                    try {
+                        val results = LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
+                        Notifier.onLibraryChecked(results, scheduled = false) // notify on manual checks too
+                        UpdateScheduler.autoDownloadNew(results) // honor auto-download on manual checks too
+                        val titles = results.filter { it.newChapters.isNotEmpty() }
+                            .sortedByDescending { it.newChapters.size }
+                            .map { UpdatedTitleDto(it.entry.title, it.newChapters.size) }
+                        libUpdateSummary = UpdateSummaryDto(titles.sumOf { it.count }, titles.size, titles)
+                    } catch (e: Throwable) {
+                        log.warn("manual library update failed: {}", e.message)
+                    } finally { libUpdateRunning = false }
+                }
             }
-            Notifier.onLibraryChecked(results, scheduled = false) // notify on manual checks too
-            UpdateScheduler.autoDownloadNew(results) // honor the auto-download setting for manual checks too
-            val titles = results.filter { it.newChapters.isNotEmpty() }
-                .sortedByDescending { it.newChapters.size }
-                .map { UpdatedTitleDto(it.entry.title, it.newChapters.size) }
-            call.respond(UpdateSummaryDto(titles.sumOf { it.count }, titles.size, titles))
+            // Whether we started it or joined one already running, the client polls /progress for the result.
+            call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, true))
         }
-        get("/api/library/update/progress") { call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning)) }
+        get("/api/library/update/progress") {
+            call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning, if (!libUpdateRunning) libUpdateSummary else null))
+        }
         // Clear every series' "new chapters" flag (the ! badges) at once.
         post("/api/library/clear-new") {
             val n = withContext(Dispatchers.IO) {
