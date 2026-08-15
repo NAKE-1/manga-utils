@@ -133,6 +133,11 @@ object CefManager {
                                 "--off-screen-rendering-enabled",
                                 "--disable-dev-shm-usage",
                                 "--change-stack-guard-on-fork=disable",
+                                // Silence background-service log spam we never use: GCM push
+                                // ("ConnectionHandler failed with net error: -2") and Cast/media-router
+                                // cert checks ("CRL - Verification failed"). Cosmetic only.
+                                "--disable-background-networking",
+                                "--disable-features=MediaRouter,OptimizationHints,Translate",
                             ),
                         )
                         cefSettings.apply {
