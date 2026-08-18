@@ -270,6 +270,10 @@ export function Settings() {
     const s = await api.saveSettings({ perSourceParallel: !info.perSourceParallel }).catch(() => null)
     if (s) setInfo(s)
   }
+  async function setPerSourceLimit(n: number) {
+    const s = await api.saveSettings({ perSourceLimit: n }).catch(() => null)
+    if (s) setInfo(s)
+  }
   function clearContinue() {
     setConfirm({
       title: 'Clear continue reading?', message: 'Remove every item from Continue reading (your reading history)?',
@@ -418,6 +422,17 @@ export function Settings() {
             </div>
             <span className={'switch' + (info?.perSourceParallel ? ' on' : '')}><span className="knob" /></span>
           </button>
+          {info?.perSourceParallel && (
+            <>
+              <div className="set-row-label" style={{ marginTop: 12 }}>Same-source parallel downloads</div>
+              <div className="set-hint">How many manga download at once from ONE source. Higher = faster, but more likely to trip rate limits.</div>
+              <div className="stepper">
+                <button className="step-btn" disabled={(info?.perSourceLimit ?? 2) <= 1} onClick={() => setPerSourceLimit((info?.perSourceLimit ?? 2) - 1)}>−</button>
+                <span className="step-val">{info?.perSourceLimit ?? 2}</span>
+                <button className="step-btn" disabled={(info?.perSourceLimit ?? 2) >= 8} onClick={() => setPerSourceLimit((info?.perSourceLimit ?? 2) + 1)}>+</button>
+              </div>
+            </>
+          )}
         </div>
       </section>
 

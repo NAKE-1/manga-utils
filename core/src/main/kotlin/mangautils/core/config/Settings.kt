@@ -36,6 +36,8 @@ data class Settings(
     val parallelDownloads: Int = 3,
     /** Allow more than one manga from the SAME source to download at once. Off = gentle (one per source). */
     val perSourceParallel: Boolean = false,
+    /** When perSourceParallel is on, how many manga from one source may download at once. Ignored when off. */
+    val perSourceLimit: Int = 2,
     /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
     val downloadDir: String? = null,
     /** Languages whose sources are shown in the web UI (codes like "en", "fr"). Empty = all;

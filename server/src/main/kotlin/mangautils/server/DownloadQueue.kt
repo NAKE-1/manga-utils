@@ -99,6 +99,7 @@ object DownloadQueue {
 
     private fun parallelism() = runCatching { SettingsStore.get().parallelDownloads }.getOrDefault(3).coerceIn(1, 8)
     private fun perSourceParallel() = runCatching { SettingsStore.get().perSourceParallel }.getOrDefault(false)
+    private fun perSourceLimit() = runCatching { SettingsStore.get().perSourceLimit }.getOrDefault(2).coerceIn(1, 8)
     private fun newPool(n: Int) = Executors.newFixedThreadPool(n) { r -> Thread(r, "dl-worker").apply { isDaemon = true } }
 
     @Synchronized
@@ -126,21 +127,23 @@ object DownloadQueue {
     @Synchronized
     private fun pump() {
         ensurePool()
-        val perSource = perSourceParallel()
+        // How many manga may run from ONE source at once: 1 (gentle, default) or perSourceLimit when the
+        // same-source-parallel toggle is on.
+        val perSourceCap = if (perSourceParallel()) perSourceLimit() else 1
         val running = tasks.values.filter { it.state == "running" }
         var slots = poolSize - running.size
         if (slots <= 0) return
-        val busySources = running.map { it.sourceId }.toMutableSet()
+        val perSourceCount = running.groupingBy { it.sourceId }.eachCount().toMutableMap()
         val now = System.currentTimeMillis()
         for (task in tasks.values.sortedBy { it.order }) {
             if (slots <= 0) break
             if (task.state != "queued") continue
-            if (!perSource && task.sourceId in busySources) continue
+            if ((perSourceCount[task.sourceId] ?: 0) >= perSourceCap) continue
             // A source that just rate-limited us is resting: don't start the next manga from it and cascade
             // the same failure down the whole queue. Other sources keep running; this one waits out its cooldown.
             if ((sourceCooldownUntil[task.sourceId] ?: 0) > now) continue
             task.state = "running"
-            busySources.add(task.sourceId)
+            perSourceCount[task.sourceId] = (perSourceCount[task.sourceId] ?: 0) + 1
             slots--
             futures[task.id] = pool.submit { run(task) }
         }
