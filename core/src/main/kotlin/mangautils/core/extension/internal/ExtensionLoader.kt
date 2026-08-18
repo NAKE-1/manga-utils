@@ -202,14 +202,24 @@ object ExtensionLoader {
 
     private val jarLoaderMap = mutableMapOf<String, URLClassLoader>()
 
+    private val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+
     /**
-     * Close and evict the cached class loader for [jarPath] so the .jar can be overwritten or deleted.
-     * On Windows an open URLClassLoader keeps the file locked, which otherwise breaks extension updates
-     * ("the process cannot access the file"). The jar is reopened fresh on the next load.
+     * Evict the cached class loader for [jarPath] so the next load reopens the (new) jar.
+     *
+     * On Windows we must also close() it: an open URLClassLoader locks the file there, so the new jar
+     * can't be written otherwise ("the process cannot access the file"). The cost is that a still-live
+     * source instance built from this loader can no longer lazily load a not-yet-touched class (e.g. a
+     * coroutine continuation) → NoClassDefFoundError until restart.
+     *
+     * On POSIX we DON'T close: you can replace an open file (ExtensionInstaller writes a temp then
+     * atomic-moves it in), so in-flight instances keep running on the old loader/inode while the next
+     * load builds a fresh loader on the new jar. GC reclaims the old loader once nothing references it.
      */
     @Synchronized
     fun releaseJar(jarPath: String) {
-        jarLoaderMap.remove(jarPath)?.let { runCatching { it.close() } }
+        val cl = jarLoaderMap.remove(jarPath) ?: return
+        if (isWindows) runCatching { cl.close() }
     }
 
     /**

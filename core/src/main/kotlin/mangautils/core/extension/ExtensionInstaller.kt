@@ -316,8 +316,22 @@ class ExtensionInstaller(
             val body = response.body ?: error("Empty body for $url")
             val dest = java.nio.file.Path.of(destPath)
             dest.createParentDirectories()
-            body.byteStream().use { input ->
-                dest.outputStream().use { output -> input.copyTo(output) }
+            // Write to a temp sibling, then swap it into place. On POSIX the move re-points the directory
+            // entry to a NEW inode, so a live source still reading the old jar keeps working (the old inode
+            // survives until it's done) instead of having its bytes truncated mid-read — the atsumaru `q`
+            // regression. On Windows releaseJar has already closed the loader, so the move isn't blocked.
+            val tmp = java.nio.file.Path.of("$destPath.part")
+            try {
+                body.byteStream().use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+                try {
+                    java.nio.file.Files.move(tmp, dest, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                    java.nio.file.Files.move(tmp, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                java.nio.file.Files.deleteIfExists(tmp)
             }
         }
     }
