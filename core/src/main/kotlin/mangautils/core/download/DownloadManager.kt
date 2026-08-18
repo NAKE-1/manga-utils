@@ -163,6 +163,12 @@ class DownloadManager(
 
             job.state = if (anySuccess) JobState.DONE else JobState.FAILED
             if (!anySuccess) job.error = "All chapters failed across all candidate sources"
+        } catch (e: InterruptedException) {
+            // The user stopped the queue (the worker thread was interrupted) — a normal stop, not a crash.
+            // Record it quietly; the queue keeps whatever chapters already finished.
+            job.state = JobState.FAILED
+            job.error = "stopped"
+            log.info("Job {} stopped", job.id)
         } catch (e: Exception) {
             job.state = JobState.FAILED
             job.error = e.message ?: e.toString()
