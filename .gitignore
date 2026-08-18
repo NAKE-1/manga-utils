@@ -22,3 +22,6 @@ Thumbs.db
 
 # Local env
 local.properties
+
+# Personal doc archives (local only)
+docs/*.rar
