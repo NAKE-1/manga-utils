@@ -28,31 +28,49 @@ object DownloadStore {
 
     private val root: Path get() = AppConfig.downloadsDir
 
-    // Building the series list stats every page file on disk, so it's cached. Every change the app makes
-    // (download finished, chapter deleted) calls invalidate() for instant correctness; the TTL is only a
-    // safety net for files changed OUTSIDE the app (e.g. deleted in a file explorer).
+    // Building the series list stats every page file on disk (heavy on a big library), so it's cached and
+    // served STALE-WHILE-REVALIDATE: a request gets the last snapshot instantly while a background pass
+    // recomputes when it's gone dirty (a download landed / a chapter was deleted) or past the TTL. Only a
+    // cold start (no snapshot yet) blocks — the server warms it at boot. This is what stops a mass-download
+    // (which marks the list dirty on every finished chapter) from forcing a ~20s full re-walk on every
+    // /downloads request → phone/Tailscale timeouts that showed as "nothing downloaded".
     @Volatile private var seriesCache: List<Series>? = null
     @Volatile private var cachedAt = 0L
+    @Volatile private var seriesDirty = false
     private val cacheLock = Any()
+    private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val refreshExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "dl-series-refresh").apply { isDaemon = true }
+    }
     private const val CACHE_TTL_MS = 60_000L
 
-    /** Drop the cached series list so the next [listSeries] re-scans disk. */
+    /** Mark the cached series list stale — the next [listSeries] serves the old snapshot and refreshes in
+     *  the background. (Marking, not dropping, so a burst of finished downloads can't force blocking walks.) */
     fun invalidate() {
-        seriesCache = null
+        seriesDirty = true
     }
 
     /** Every downloaded series (a sub-folder of the downloads dir), title-sorted. Cached (see above). */
     fun listSeries(): List<Series> {
         val hit = seriesCache
-        if (hit != null && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) return hit
-        // Only one thread re-walks at a time; the rest wait and reuse its result (no thundering herd).
+        if (hit != null) {
+            if (seriesDirty || System.currentTimeMillis() - cachedAt >= CACHE_TTL_MS) refreshSeriesAsync()
+            return hit // instant — never block a request on the full walk once we have any snapshot
+        }
+        // Cold: nothing cached yet (first call / boot warmer) — compute once, guarded so only one thread walks.
         return synchronized(cacheLock) {
-            val again = seriesCache
-            if (again != null && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) {
-                again
-            } else {
-                computeSeries().also { seriesCache = it; cachedAt = System.currentTimeMillis() }
-            }
+            seriesCache ?: computeSeries().also { seriesCache = it; cachedAt = System.currentTimeMillis(); seriesDirty = false }
+        }
+    }
+
+    /** Single-flight background recompute that swaps in a fresh snapshot without blocking callers. */
+    private fun refreshSeriesAsync() {
+        if (!refreshing.compareAndSet(false, true)) return
+        refreshExec.submit {
+            seriesDirty = false // clear first — a change during the walk re-marks it → another refresh follows
+            try { computeSeries().also { seriesCache = it; cachedAt = System.currentTimeMillis() } }
+            catch (_: Throwable) { /* keep serving the previous snapshot */ }
+            finally { refreshing.set(false) }
         }
     }
 

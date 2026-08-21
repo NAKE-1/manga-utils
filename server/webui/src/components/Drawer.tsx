@@ -25,11 +25,10 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
     if (open && !ver) api.version().then((v) => setVer(`v${v.version} · ${v.commit}`)).catch(() => {})
   }, [open, ver])
   // Mullvad status (server egress) — re-fetch each open so it reflects a VPN drop/reconnect.
-  useEffect(() => {
-    if (!open) return
-    setMvErr(false)
-    api.mullvad().then(setMv).catch(() => setMvErr(true))
-  }, [open])
+  // Returns egress data (IP/country/city/org) whether or not Mullvad is on, so the popup is useful
+  // either way; only a fetch failure leaves mv null.
+  const loadMv = () => { setMvErr(false); api.mullvad().then(setMv).catch(() => setMvErr(true)) }
+  useEffect(() => { if (open) loadMv() }, [open])
   const go = (to: string) => { onClose(); nav(to) }
   // Close on Escape (desktop).
   useEffect(() => {
@@ -73,10 +72,10 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
                 )}
                 <button
                   className={'drawer-mv ' + (mv?.mullvad_exit_ip ? 'on' : 'off')}
-                  onClick={() => mv && setMvOpen((o) => !o)}
-                  title="Server VPN egress"
+                  onClick={() => (mv ? setMvOpen((o) => !o) : loadMv())}
+                  title={mv ? 'Server VPN egress' : 'Tap to retry'}
                 >
-                  {mv ? (mv.mullvad_exit_ip ? '🔒 Mullvad ▴' : '⚠ No VPN ▴') : '⚠ VPN?'}
+                  {mv ? (mv.mullvad_exit_ip ? '🔒 Mullvad ▴' : '⚠ No VPN ▴') : '⚠ VPN? · retry'}
                 </button>
               </div>
             )}

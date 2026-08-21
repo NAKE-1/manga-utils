@@ -330,11 +330,6 @@ img { display: block; }
   background: var(--card); border-radius: 999px; padding: 8px 13px; }
 .ch-sort .pi { width: 15px; height: 15px; }
 
-/* Read checkbox on chapter rows */
-.ch-check { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--muted-2); background: transparent; }
-.ch-check.on { background: var(--accent); border-color: var(--accent); position: relative; }
-.ch-check.on::after { content: ''; position: absolute; left: 6px; top: 3px; width: 5px; height: 9px;
-  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 
 /* Grouped chapters (duplicate chapters from different scanlators under one "CH. N") */
 .ch-group { background: var(--card); border-radius: var(--radius-sm); margin-bottom: 8px; padding: 4px 0 4px; }

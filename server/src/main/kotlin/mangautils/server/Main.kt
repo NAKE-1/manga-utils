@@ -914,6 +914,12 @@ private fun printStartupBanner(port: Int) {
 }
 
 fun main() {
+    // Prefer IPv4. The JDK HttpClient (used by the Mullvad egress check) grabs the first resolved address
+    // and does NOT Happy-Eyeballs to v4 the way okhttp/browsers do — so on a box with a configured-but-
+    // firewalled IPv6 route (Mullvad/VPN setups block v6 to stop leaks) it picks the AAAA and fails instantly
+    // with "ConnectException: Permission denied: getsockopt". Forcing v4 fixes it and also prevents v6 leaks.
+    // Must be set before the net stack initializes, i.e. before any socket use. (Sources use okhttp/v4 already.)
+    System.setProperty("java.net.preferIPv4Stack", "true")
     // Disable the JVM's JAR URL cache. Without this, closing an extension's URLClassLoader still leaves a
     // cached JarFile open, which keeps the .jar LOCKED on Windows — so Unload → Update fails. Must run
     // before any extension jar is opened. (No-op-ish on Linux, which never had the lock.)
@@ -1051,20 +1057,35 @@ private fun autoSolveLiveCaptcha(host: String): AutoSolveDto {
 }
 
 // Shared lenient JSON parser (avoids per-call Json{} allocation in the captcha/mullvad paths).
-private val sharedJson = Json { ignoreUnknownKeys = true }
+// coerceInputValues: am.i.mullvad.net sends city/country as JSON null when you're NOT on Mullvad — coerce
+// those to the DTO's "" defaults instead of throwing, so the widget still shows the rest (IP/org).
+private val sharedJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
 // Mullvad connection status (server egress), cached ~30s so opening the menu doesn't hammer their check.
 @Volatile private var mullvadCache: Pair<Long, MullvadDto>? = null
+@Volatile private var mullvadFailAt = 0L // negative-cache: don't re-hit am.i.mullvad on every poll after a blip
+@Volatile private var mullvadFailWhy = "" // last failure reason, surfaced in the 502 body for diagnosis
 private fun fetchMullvad(): MullvadDto? {
     mullvadCache?.let { (t, dto) -> if (System.currentTimeMillis() - t < 30_000) return dto }
+    if (System.currentTimeMillis() - mullvadFailAt < 30_000) return null
     return runCatching {
-        val client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(6)).build()
+        // Pin HTTP/1.1: am.i.mullvad.net (plain nginx) is reliable over 1.1 but flaky over the JDK client's
+        // default HTTP/2, which was the intermittent fast-fail behind the /api/mullvad 502s.
+        val client = java.net.http.HttpClient.newBuilder()
+            .version(java.net.http.HttpClient.Version.HTTP_1_1)
+            .connectTimeout(java.time.Duration.ofSeconds(6)).build()
         val req = java.net.http.HttpRequest.newBuilder(java.net.URI.create("https://am.i.mullvad.net/json"))
             .header("User-Agent", "manga-utils").timeout(java.time.Duration.ofSeconds(8)).build()
         val resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString())
-        if (resp.statusCode() !in 200..299) return null
+        if (resp.statusCode() !in 200..299) {
+            mullvadFailAt = System.currentTimeMillis(); mullvadFailWhy = "HTTP ${resp.statusCode()}"; return null
+        }
         sharedJson.decodeFromString<MullvadDto>(resp.body()).also { mullvadCache = System.currentTimeMillis() to it }
-    }.getOrNull()
+    }.getOrElse { e ->
+        mullvadFailAt = System.currentTimeMillis()
+        mullvadFailWhy = "${e.javaClass.simpleName}: ${e.message}"
+        null
+    }
 }
 
 // One-at-a-time background solver for the unattended path (overnight updates / downloads).
@@ -1978,8 +1999,10 @@ fun Application.module() {
             call.respond(AutoSolveEventsDto(AutoSolveStats.lastEventId(), AutoSolveStats.eventsSince(since).map { AutoSolveEventDto(it.id, it.phase, it.detail) }))
         }
         get("/api/mullvad") {
-            val r = withContext(Dispatchers.IO) { fetchMullvad() }
-                ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("couldn't reach the Mullvad check"))
+            val r = withContext(Dispatchers.IO) { fetchMullvad() } ?: run {
+                log.warn("mullvad check failed: {}", mullvadFailWhy)
+                return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("couldn't reach the Mullvad check — $mullvadFailWhy"))
+            }
             call.respond(r)
         }
         get("/api/dev/captcha/stats") {

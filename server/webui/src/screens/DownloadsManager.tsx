@@ -18,9 +18,12 @@ export function DownloadsManager() {
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanning, setScanning] = useState(false)
   const [repairingCorrupt, setRepairingCorrupt] = useState(false)
+  const [loadErr, setLoadErr] = useState(false)
 
   const load = () => {
-    api.manageDownloads().then(setSeries).catch(() => setSeries([]))
+    // On failure keep series null + flag the error, so a timeout shows "Couldn't load" rather than
+    // masquerading as an empty library ("Nothing downloaded yet").
+    api.manageDownloads().then((s) => { setSeries(s); setLoadErr(false) }).catch(() => setLoadErr(true))
     api.brokenDownloads().then(setBroken).catch(() => setBroken(null))
   }
   useEffect(() => { load() }, [])
@@ -137,7 +140,11 @@ export function DownloadsManager() {
         </div>
       )}
 
-      {series === null ? <div className="spinner" /> : series.length === 0 ? (
+      {series === null ? (
+        loadErr
+          ? <div className="center-msg">Couldn’t load downloads — <button onClick={() => { setLoadErr(false); load() }} style={{ background: 'none', border: 0, color: 'var(--accent)', font: 'inherit', cursor: 'pointer', padding: 0 }}>retry</button></div>
+          : <div className="spinner" />
+      ) : series.length === 0 ? (
         <div className="center-msg">Nothing downloaded yet.</div>
       ) : (
         <>
