@@ -38,8 +38,19 @@ object ImageFormat {
             b(0) == 0x52 && b(1) == 0x49 && b(2) == 0x46 && b(3) == 0x46 &&
                 b(8) == 0x57 && b(9) == 0x45 && b(10) == 0x42 && b(11) == 0x50 -> true // RIFF…WEBP
             b(4) == 0x66 && b(5) == 0x74 && b(6) == 0x79 && b(7) == 0x70 -> true // ftyp… avif/heic
+            // An error page (Cloudflare 403, JSON blob) starts with '<' or '{' after any leading
+            // whitespace — never an image. Reject it so the page fails loudly instead of a 3-5KB
+            // HTML "image" landing on disk and the chapter looking complete.
+            looksLikeText(bytes) -> false
             bytes.size >= 1024 -> true // unknown format but substantial — accept rather than fail
             else -> false
         }
+    }
+
+    /** First non-whitespace byte is '<' (HTML/XML) or '{'/'[' (JSON) → an error page, not an image. */
+    private fun looksLikeText(bytes: ByteArray): Boolean {
+        val c = bytes.firstOrNull { it.toInt() and 0xFF !in intArrayOf(0x20, 0x09, 0x0A, 0x0D, 0xEF, 0xBB, 0xBF) }
+            ?.toInt()?.and(0xFF) ?: return false
+        return c == 0x3C || c == 0x7B || c == 0x5B // '<' '{' '['
     }
 }

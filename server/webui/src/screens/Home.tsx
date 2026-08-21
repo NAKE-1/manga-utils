@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, coverUrl, dlState, LibraryEntry, HistoryItem } from '../api'
+import { api, coverUrl, dlState, pageSize, LibraryEntry, HistoryItem } from '../api'
 import { Carousel, GridSection } from '../components/Section'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
@@ -15,14 +15,15 @@ export function Home() {
   function load() {
     setFailed(false); setLibrary(null)
     api.library().then(setLibrary).catch(() => setFailed(true))
-    api.history().then(setHistory).catch(() => {})
+    // Only the recent slice — the carousel doesn't need the whole (now server-deduped) history.
+    api.history(0, pageSize()).then((r) => setHistory(r.items)).catch(() => {})
   }
   useEffect(load, [])
 
   async function removeContinue(h: HistoryItem) {
     setHistory((hs) => hs.filter((x) => !(x.sourceId === h.sourceId && x.mangaUrl === h.mangaUrl)))
     await api.deleteHistory(h.sourceId, h.mangaUrl).catch(() => {})
-    api.history().then(setHistory).catch(() => {})
+    api.history(0, pageSize()).then((r) => setHistory(r.items)).catch(() => {})
   }
 
   if (failed) return <ErrorPanel onRetry={load} message="Couldn't load your library." />

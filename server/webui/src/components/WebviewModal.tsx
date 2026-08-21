@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react'
 // Full-screen overlay that streams the server-side offscreen browser (JPEG feed) and forwards taps back
 // to it, so a human can solve a source's "verify you're human" challenge. On close, cookies solved here
 // are already in the shared cookie store, so the caller just retries. Opens by ?url or by source id.
-export function WebviewModal({ url, source, onClose }: { url?: string; source?: number | string; onClose: () => void }) {
+export function WebviewModal({ url, source, path, onClose }: { url?: string; source?: number | string; path?: string; onClose: () => void }) {
   const [status, setStatus] = useState('Opening…')
   const [shownUrl, setShownUrl] = useState('')
   const [cookies, setCookies] = useState<number | null>(null)
@@ -16,7 +16,7 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
   useEffect(() => {
     let alive = true
     let timer: number | undefined
-    const q = url ? 'url=' + encodeURIComponent(url) : 'source=' + encodeURIComponent(String(source ?? ''))
+    const q = url ? 'url=' + encodeURIComponent(url) : 'source=' + encodeURIComponent(String(source ?? '')) + (path ? '&path=' + encodeURIComponent(path) : '')
     ;(async () => {
       try {
         const r = await fetch('/api/webview/open?' + q, { method: 'POST' })
@@ -51,7 +51,7 @@ export function WebviewModal({ url, source, onClose }: { url?: string; source?: 
       if (lastObj.current) URL.revokeObjectURL(lastObj.current)
       fetch('/api/webview/close', { method: 'POST' }).catch(() => {})
     }
-  }, [url, source])
+  }, [url, source, path])
 
   // Poll the cookie counter for the top bar (visual only) — slow, it just reassures you the session is
   // capturing cookies (e.g. cf_clearance) as you solve.

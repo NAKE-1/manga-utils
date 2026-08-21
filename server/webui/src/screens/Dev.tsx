@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult } from '../api'
+import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
@@ -41,6 +41,12 @@ export function Dev() {
   const [failed, setFailed] = useState(false)
   const [migOpen, setMigOpen] = useState(false)
   const [scanMarker, setScanMarker] = useState(() => localStorage.getItem('dev.scanMarker') === '1')
+  const [pgSize, setPgSize] = useState(() => pageSize())
+  const [cookieBusy, setCookieBusy] = useState(false)
+  const [cookieMsg, setCookieMsg] = useState('')
+  const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
+  const [scanBusy, setScanBusy] = useState(false)
+  const [scanMsg, setScanMsg] = useState('')
   const [library, setLibrary] = useState<LibraryEntry[]>([])
   const [simManga, setSimManga] = useState('')
   const [simMsg, setSimMsg] = useState('')
@@ -138,6 +144,40 @@ export function Dev() {
     setLifecycle(kind)
     await (kind === 'restart' ? api.devRestart() : api.devShutdown()).catch(() => {})
     toast(kind === 'restart' ? 'Restarting… reconnecting shortly' : 'Server shutting down', 'info', 8000)
+  }
+  async function clearCookies(host?: string) {
+    const msg = host
+      ? `Clear cookies for ${host}? This dumps its cf_clearance so the next request re-challenges fresh.`
+      : 'Clear ALL WebView cookies? This dumps cf_clearance (forces a fresh challenge) and logs you out of any WebView source you signed into. Library, downloads and settings are unaffected.'
+    if (!confirm(msg)) return
+    setCookieBusy(true); setCookieMsg('')
+    const r = await api.clearWebviewCookies(host).catch(() => null)
+    setCookieBusy(false)
+    setCookieMsg(r ? `Cleared ${r.cleared} cookie${r.cleared === 1 ? '' : 's'}` : 'Clear failed')
+  }
+  async function runScan() {
+    setScanBusy(true); setScanMsg('Scanning every downloaded page…')
+    const r = await api.scanCorrupt().catch(() => null)
+    setScanBusy(false); setCorrupt(r)
+    setScanMsg(!r ? 'Scan failed' : r.totalBadPages > 0 ? `${r.totalBadPages} bad image(s) in ${r.totalChapters} chapter(s) across ${r.series.length} series` : 'No corrupt images found')
+  }
+  async function repairScan(title?: string) {
+    const targets = title ? [title] : (corrupt?.series.map((s) => s.title) ?? [])
+    if (!targets.length) return
+    setScanBusy(true)
+    let n = 0
+    let notInLib = false
+    for (const t of targets) { const r = await api.repairCorrupt(t).catch(() => ({ count: 0 })); if (r.count < 0) notInLib = true; n += Math.max(0, r.count) }
+    setScanBusy(false)
+    setScanMsg(n > 0 ? `Queued ${n} chapter(s) for re-download — open Downloads to watch them`
+      : notInLib ? 'Not in your library — can’t map these folders to source chapters to re-fetch'
+      : 'Nothing queued — the library may not know these chapters yet (run a Library update first)')
+    // Drop the repaired series from the list (no full re-scan — that would re-walk the whole library).
+    setCorrupt((c) => {
+      if (!c) return c
+      const series = c.series.filter((s) => !targets.includes(s.title))
+      return { series, totalChapters: series.reduce((a, s) => a + s.chapters.length, 0), totalBadPages: series.reduce((a, s) => a + s.chapters.reduce((b, ch) => b + ch.badPages, 0), 0) }
+    })
   }
   async function genCaptcha() {
     setCapBusy(true); setCapErr(''); setCapClicks([]); setSolve(null)
@@ -334,6 +374,15 @@ export function Dev() {
           </button>
         </div>
         <div className="set-card">
+          <div className="set-row-label">Entries per page</div>
+          <div className="set-hint">How many items each page shows in Library and Continue reading. Lower = faster loads on a big library.</div>
+          <div className="stepper">
+            <button className="step-btn" disabled={pgSize <= 10} onClick={() => { const v = pgSize - 10; setPgSize(v); localStorage.setItem('dev.pageSize', String(v)) }}>−</button>
+            <span className="step-val">{pgSize}</span>
+            <button className="step-btn" disabled={pgSize >= 200} onClick={() => { const v = pgSize + 10; setPgSize(v); localStorage.setItem('dev.pageSize', String(v)) }}>+</button>
+          </div>
+        </div>
+        <div className="set-card">
           <button className="set-toggle" onClick={toggleVerbose}>
             <div>
               <div className="set-row-label">Verbose logging</div>
@@ -472,6 +521,38 @@ export function Dev() {
             <button className="btn primary" disabled={!!lifecycle} onClick={() => doLifecycle('restart')}>{lifecycle === 'restart' ? 'Restarting…' : 'Restart server'}</button>
             <button className="btn danger" disabled={!!lifecycle} onClick={() => doLifecycle('shutdown')}>{lifecycle === 'shutdown' ? 'Shutting down…' : 'Shut down server'}</button>
           </div>
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">WebView cookies</div>
+          <div className="set-hint">Clearing MangaFire's cookies dumps its cf_clearance so the next request re-challenges fresh — the fix for a stuck “Just a moment…” loop. Clearing all also logs you out of any WebView source. Library, downloads and settings are untouched.</div>
+          <div className="set-actions">
+            <button className="btn" disabled={cookieBusy} onClick={() => clearCookies('mangafire.to')}>Clear MangaFire cookies</button>
+            <button className="btn danger" disabled={cookieBusy} onClick={() => clearCookies()}>Clear all cookies</button>
+          </div>
+          {cookieMsg && <div className="set-hint" style={{ marginTop: 6 }}>{cookieMsg}</div>}
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Corrupt image scan</div>
+          <div className="set-hint">Walks every downloaded page and flags files that aren’t real images (e.g. a saved Cloudflare “you have been blocked” page). Uses the same magic-byte check the downloader accepts by, so a flagged page is one it would now reject. Heavy — reads the head of every page on disk. Repair deletes the flagged chapters and re-queues them (needs the series in your library).</div>
+          <div className="set-actions">
+            <button className="btn" disabled={scanBusy} onClick={runScan}>{scanBusy ? 'Working…' : corrupt ? 'Re-scan' : 'Scan library'}</button>
+            {corrupt && corrupt.totalBadPages > 0 && <button className="btn primary" disabled={scanBusy} onClick={() => repairScan()}>Repair all ({corrupt.totalChapters})</button>}
+          </div>
+          {scanMsg && <div className="set-hint" style={{ marginTop: 6 }}>{scanMsg}</div>}
+          {corrupt && corrupt.series.length > 0 && (
+            <div style={{ marginTop: 8, maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {corrupt.series.map((s) => (
+                <div key={s.title} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</div>
+                    <div className="set-hint">{s.chapters.map((c) => `${c.name} (${c.badPages}/${c.pages})`).join(', ')}</div>
+                  </div>
+                  <button className="btn sm" disabled={scanBusy} onClick={() => repairScan(s.title)}>Repair</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

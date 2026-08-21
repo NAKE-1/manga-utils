@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, ExtInstalled, ExtAvailable, VrfStatus } from '../api'
+import { api, ExtInstalled, ExtAvailable, VrfStatus, Changelog } from '../api'
 import { IconArrowLeft, IconJetBrains } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
@@ -22,6 +22,8 @@ export function Extensions() {
   const [tab, setTab] = useState<Tab>('installed')
   const [installed, setInstalled] = useState<ExtInstalled[]>([])
   const [updates, setUpdates] = useState<Set<string>>(new Set())
+  const [openCl, setOpenCl] = useState<string | null>(null)
+  const [cls, setCls] = useState<Record<string, Changelog | 'loading' | 'error'>>({})
   const [checking, setChecking] = useState(false)
   const [busy, setBusy] = useState<Record<string, string>>({})
   const [q, setQ] = useState('')
@@ -42,6 +44,16 @@ export function Extensions() {
 
   const loadInstalled = () => api.extensions().then(setInstalled).catch(() => {})
   const loadBrowse = () => { setBrowseLoading(true); api.extAvailable(q).then(setAvail).catch(() => setAvail([])).finally(() => setBrowseLoading(false)) }
+
+  async function toggleChangelog(pkg: string) {
+    if (openCl === pkg) { setOpenCl(null); return }
+    setOpenCl(pkg)
+    if (!cls[pkg] || cls[pkg] === 'error') {
+      setCls((m) => ({ ...m, [pkg]: 'loading' }))
+      const r = await api.extChangelog(pkg).catch(() => null)
+      setCls((m) => ({ ...m, [pkg]: r ?? 'error' }))
+    }
+  }
 
   async function checkUpdates(manual = false) {
     setChecking(true)
@@ -191,17 +203,38 @@ export function Extensions() {
               {vrfMsg && <div className={'ext-sideload-status' + (vrfMsg.startsWith('✗') ? ' err' : vrfMsg.startsWith('✓') ? ' ok' : ' working')}>{vrfMsg}</div>}
             </div>
           )}
-          {installed.map((e) => (
-            <div className="ext-row" key={e.pkg}>
-              <ExtIcon pkg={e.pkg} />
-              <div className="ext-info">
-                <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{e.beta && <span className="ext-badge beta">BETA</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
-                <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
+          {installed.map((e) => {
+            const cl = cls[e.pkg]
+            return (
+            <div className="ext-row-wrap" key={e.pkg}>
+              <div className="ext-row">
+                <ExtIcon pkg={e.pkg} />
+                <div className="ext-info">
+                  <div className="ext-name">{cleanName(e.name)}{e.usesWebView && <IconJetBrains className="src-wv" />}{e.nsfw && <span className="src-18">18+</span>}{e.beta && <span className="ext-badge beta">BETA</span>}{updates.has(e.pkg) && <span className="ext-badge">UPDATE</span>}</div>
+                  <div className="ext-sub">v{e.version} · {e.lang.toUpperCase()} · {e.sources} source{e.sources === 1 ? '' : 's'}{e.repo ? ` · ${e.repo}` : ''}</div>
+                </div>
+                {updates.has(e.pkg) && <button className={'btn sm' + (openCl === e.pkg ? ' on' : '')} title="What's new" aria-label="What's new" onClick={() => toggleChangelog(e.pkg)}>?</button>}
+                {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] ? 'Upd…' : 'Upd'}</button>}
+                <button className="btn sm danger" disabled={!!busy[e.pkg]} onClick={() => uninstall(e.pkg)}>{busy[e.pkg] === 'Removing…' ? '…' : 'Remove'}</button>
               </div>
-              {updates.has(e.pkg) && <button className="btn primary sm" disabled={!!busy[e.pkg]} onClick={() => install(e.pkg, 'Updating…')}>{busy[e.pkg] || 'Update'}</button>}
-              <button className="btn sm danger" disabled={!!busy[e.pkg]} onClick={() => uninstall(e.pkg)}>{busy[e.pkg] === 'Removing…' ? '…' : 'Remove'}</button>
+              {openCl === e.pkg && (
+                <div className="ext-changelog">
+                  {cl === 'loading' || !cl ? <div className="ext-cl-msg">Loading…</div>
+                    : cl === 'error' ? <div className="ext-cl-msg">Couldn't load changes.</div>
+                    : (<>
+                        {cl.commits.map((c, i) => (
+                          <div className="ext-cl-item" key={i}>
+                            <a className="ext-cl-title" href={c.url} target="_blank" rel="noreferrer">{c.title}</a>
+                            {c.body && <div className="ext-cl-body">{c.body}</div>}
+                          </div>
+                        ))}
+                        {cl.commits.length === 0 && <div className="ext-cl-msg">No inline changelog for this extension.</div>}
+                        <a className="ext-cl-gh" href={cl.githubUrl} target="_blank" rel="noreferrer">View on GitHub →</a>
+                      </>)}
+                </div>
+              )}
             </div>
-          ))}
+          )})}
           {installed.length === 0 && <div className="center-msg">No extensions installed.</div>}
         </>
       )}

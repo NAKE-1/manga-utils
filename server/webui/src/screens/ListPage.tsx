@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { api, coverUrl, dlState, LibraryEntry, HistoryItem } from '../api'
+import { api, coverUrl, dlState, pageSize, LibraryEntry, HistoryItem } from '../api'
 import { CoverCard } from '../components/CoverCard'
+import { Pager } from '../components/Pager'
 
 const TITLES: Record<string, string> = {
   library: 'Library',
@@ -37,13 +38,24 @@ export function ListPage() {
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<'title' | 'updated' | 'new' | 'number'>('title')
   const [filter, setFilter] = useState<'all' | 'new' | 'downloaded' | 'notdl'>('all')
+  const [contPage, setContPage] = useState(0)
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [libPage, setLibPage] = useState(0)
+  const PS = pageSize()
 
+  // Reset to the first page whenever the visible library set changes.
+  useEffect(() => { setLibPage(0) }, [q, sort, filter, kind])
+
+  // Library loads once. Library/Updates paint as soon as it arrives — never gated on the 1.5 MB history.
   useEffect(() => {
-    Promise.all([
-      api.library().then(setLibrary).catch(() => {}),
-      api.history().then(setHistory).catch(() => {}),
-    ]).finally(() => setReady(true))
-  }, [])
+    api.library().then(setLibrary).catch(() => {}).finally(() => { if (kind !== 'continue') setReady(true) })
+  }, [kind])
+
+  // Continue: fetch the current history page server-side (deduped there), one page at a time.
+  useEffect(() => {
+    if (kind !== 'continue') return
+    api.history(contPage * PS, PS).then((r) => { setHistory(r.items); setHistoryTotal(r.total) }).catch(() => {}).finally(() => setReady(true))
+  }, [kind, contPage, PS])
 
   async function checkUpdates() {
     setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatePct(0)
@@ -59,6 +71,7 @@ export function ListPage() {
   if (!ready) return <div className="spinner" />
 
   let cards
+  let libTotal = 0
   if (kind === 'continue') {
     const coverByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.thumbnailUrl]))
     const newByKey = new Map(library.map((e) => [e.sourceId + '|' + e.url, e.newChapters]))
@@ -90,7 +103,8 @@ export function ListPage() {
     } else {
       entries.sort((a, b) => a.title.localeCompare(b.title))
     }
-    cards = entries.map((e) => (
+    libTotal = entries.length
+    cards = entries.slice(libPage * PS, libPage * PS + PS).map((e) => (
       <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} subtitle={lastLine(e)} badge={e.newChapters} dl={dlState(e)} />
     ))
   }
@@ -132,6 +146,9 @@ export function ListPage() {
         </div>
       )}
       {cards.length ? <div className="grid">{cards}</div> : <div className="center-msg">Nothing here yet.</div>}
+      {kind === 'continue'
+        ? <Pager page={contPage} total={historyTotal} size={PS} onPage={(p) => { setContPage(p); window.scrollTo(0, 0) }} />
+        : <Pager page={libPage} total={libTotal} size={PS} onPage={(p) => { setLibPage(p); window.scrollTo(0, 0) }} />}
     </>
   )
 }

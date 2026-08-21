@@ -899,6 +899,17 @@ img { display: block; }
 .ext-info { flex: 1; min-width: 0; }
 .ext-name { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .ext-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.ext-changelog { padding: 10px 16px 12px; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 13px; }
+.ext-cl-item { margin-bottom: 10px; }
+.ext-cl-title { display: block; font-weight: 600; color: var(--text); text-decoration: none; }
+.ext-cl-title:hover { text-decoration: underline; }
+.ext-cl-body { color: var(--muted); white-space: pre-wrap; margin-top: 3px; line-height: 1.4; }
+.ext-cl-msg { color: var(--muted); }
+.ext-cl-gh { display: inline-block; margin-top: 2px; color: var(--accent); text-decoration: none; font-weight: 600; font-size: 12px; }
+.pager { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 16px 12px 24px; }
+.pager-btn { width: 36px; height: 36px; border-radius: 9px; border: 1px solid var(--border); background: var(--card); color: var(--accent); font-size: 20px; line-height: 1; cursor: pointer; }
+.pager-btn:disabled { color: var(--muted-2); opacity: .5; cursor: default; }
+.pager-label { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ext-sub.repo-url { word-break: break-all; }
 .ext-installed { font-size: 12px; font-weight: 700; color: var(--muted); flex: 0 0 auto; }
 .btn.sm { padding: 7px 12px; font-size: 13px; cursor: pointer; }

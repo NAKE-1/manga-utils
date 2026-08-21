@@ -12,6 +12,7 @@ import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import xyz.nulldev.androidcompat.webkit.JcefFetch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A **network** interceptor (so it sees the fully-built request — including the extension's `vrf` query,
@@ -26,6 +27,10 @@ import xyz.nulldev.androidcompat.webkit.JcefFetch
  */
 class JcefFetchInterceptor : Interceptor {
     private val log = KotlinLogging.logger {}
+
+    // Consecutive un-clearable managed-challenge ("Just a moment…") hits per host. After ESCALATE_AFTER we
+    // stop retry-looping (each attempt burns 45s and re-provokes Cloudflare) and escalate. Reset on any 2xx.
+    private val managedFails = ConcurrentHashMap<String, Int>()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
@@ -43,14 +48,30 @@ class JcefFetchInterceptor : Interceptor {
         if (r.status !in 200..399) {
             // The real browser itself got a non-2xx — tells us it's an app gate (e.g. MangaFire vrf/session),
             // not our okhttp fingerprint. Body snippet makes the cause unambiguous instead of guessed.
+            val host = req.url.host
             if (HumanCheckState.isHumanChallenge(r.body)) {
-                HumanCheckState.needed(req.url.host) // an interactive captcha → prompt the user (WebView)
-                log.info { "JCEF human-check required for ${req.url.host}${req.url.encodedPath} → flagged for the user" }
+                HumanCheckState.needed(host) // an interactive captcha → prompt the user (WebView)
+                managedFails.remove(host)
+                log.info { "JCEF human-check required for $host${req.url.encodedPath} → flagged for the user" }
             } else {
-                log.info { "JCEF ${r.status} for ${req.url.host}${req.url.encodedPath} → falling back. body: ${r.body.take(160).replace("\n", " ")}" }
+                // Cloudflare's managed challenge ("Just a moment…") — no shapes, and JCEF's silent re-clear
+                // keeps timing out. After a couple tries, dump this host's cf_clearance (so the next attempt
+                // re-challenges fresh) and flag a human-check so the queue PAUSES + resumes-on-clear instead
+                // of 45s-looping to FAILED; attended, the WebView can clear it. Unattended, the queue cooldown
+                // rests the source until Cloudflare's flag decays.
+                val fails = managedFails.merge(host, 1, Int::plus) ?: 1
+                if (fails >= ESCALATE_AFTER) {
+                    JcefFetch.clearCookies(host)
+                    HumanCheckState.needed(host)
+                    managedFails.remove(host)
+                    log.info { "JCEF managed challenge stuck for $host after $fails tries → flushed cf_clearance + flagged human-check" }
+                } else {
+                    log.info { "JCEF ${r.status} managed challenge for $host${req.url.encodedPath} (try $fails) → falling back" }
+                }
             }
             return resp
         }
+        managedFails.remove(req.url.host)
         HumanCheckState.cleared(req.url.host) // a real 2xx means the host is clear again
 
         resp.close()
@@ -78,5 +99,6 @@ class JcefFetchInterceptor : Interceptor {
 
     private companion object {
         private val IMAGE_EXTS = listOf(".webp", ".jpg", ".jpeg", ".png", ".gif", ".avif", ".bmp")
+        private const val ESCALATE_AFTER = 2
     }
 }

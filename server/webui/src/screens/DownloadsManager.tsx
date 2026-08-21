@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, ManagedSeries, ManagedChapter, BrokenReport } from '../api'
+import { api, ManagedSeries, ManagedChapter, BrokenReport, CorruptReport } from '../api'
 import { IconArrowLeft, IconChevronDown, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
@@ -15,6 +15,9 @@ export function DownloadsManager() {
   const [msg, setMsg] = useState('')
   const [broken, setBroken] = useState<BrokenReport | null>(null)
   const [repairingAll, setRepairingAll] = useState(false)
+  const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const [repairingCorrupt, setRepairingCorrupt] = useState(false)
 
   const load = () => {
     api.manageDownloads().then(setSeries).catch(() => setSeries([]))
@@ -29,6 +32,24 @@ export function DownloadsManager() {
     for (const s of broken.series) { const r = await api.repairDownloads(s.title).catch(() => ({ count: 0 })); n += r.count }
     setRepairingAll(false)
     flash(n > 0 ? `Re-downloading ${n} chapter${n === 1 ? '' : 's'} — see Downloads` : 'Nothing could be repaired')
+    load()
+  }
+
+  async function scan() {
+    setScanning(true)
+    const r = await api.scanCorrupt().catch(() => null)
+    setScanning(false)
+    setCorrupt(r)
+    if (r) flash(r.totalBadPages > 0 ? `Found ${r.totalBadPages} bad image${r.totalBadPages === 1 ? '' : 's'} in ${r.totalChapters} chapter${r.totalChapters === 1 ? '' : 's'}` : 'No corrupt images found')
+  }
+  async function repairAllCorrupt() {
+    if (!corrupt?.series.length) return
+    setRepairingCorrupt(true)
+    let n = 0
+    for (const s of corrupt.series) { const r = await api.repairCorrupt(s.title).catch(() => ({ count: 0 })); n += Math.max(0, r.count) }
+    setRepairingCorrupt(false)
+    flash(n > 0 ? `Re-downloading ${n} chapter${n === 1 ? '' : 's'} — see Downloads` : 'Nothing could be repaired (not in library?)')
+    setCorrupt(null)
     load()
   }
 
@@ -104,6 +125,16 @@ export function DownloadsManager() {
         </div>
       )}
 
+      {corrupt && corrupt.totalBadPages > 0 && (
+        <div className="dm-broken">
+          <div className="dm-broken-main">
+            <div className="dm-broken-title">⚠ {corrupt.totalBadPages} bad image{corrupt.totalBadPages === 1 ? '' : 's'} in {corrupt.totalChapters} chapter{corrupt.totalChapters === 1 ? '' : 's'}</div>
+            <div className="dm-broken-sub">Finished chapters whose pages aren’t real images (e.g. a saved block page). Repair re-downloads them.</div>
+          </div>
+          <button className="btn primary" disabled={repairingCorrupt} onClick={repairAllCorrupt}>{repairingCorrupt ? 'Repairing…' : 'Repair all'}</button>
+        </div>
+      )}
+
       {series === null ? <div className="spinner" /> : series.length === 0 ? (
         <div className="center-msg">Nothing downloaded yet.</div>
       ) : (
@@ -118,6 +149,9 @@ export function DownloadsManager() {
                 <div className="dm-stat"><span className="dm-stat-n">{series.length}</span><span className="dm-stat-l">series</span></div>
                 <div className="dm-stat"><span className="dm-stat-n">{totalCh}</span><span className="dm-stat-l">chapters</span></div>
                 {biggest && <div className="dm-stat wide"><span className="dm-stat-n">{biggest.title}</span><span className="dm-stat-l">largest · {fmtSize(biggest.bytes)}</span></div>}
+                <button className="btn sm dm-scan" disabled={scanning} onClick={scan} title="Check every downloaded page for corrupt/non-image files (e.g. saved block pages)">
+                  {scanning ? 'Scanning…' : corrupt ? 'Re-scan images' : 'Scan images'}
+                </button>
               </div>
             )
           })()}
@@ -139,15 +173,15 @@ export function DownloadsManager() {
                     {s.incomplete > 0 && <button className="btn sm danger" onClick={() => delIncomplete(s)}>Delete incomplete</button>}
                     <button className="btn sm danger" onClick={() => delSeries(s)}>Delete all</button>
                   </div>
-                  {[...(chapters[s.title] ?? [])].sort((a, b) => Number(a.complete) - Number(b.complete)).map((ch) => (
-                    <div className={'dm-chapter' + (ch.complete ? '' : ' bad')} key={ch.name}>
+                  {(() => { const bad = new Map((corrupt?.series.find((c) => c.title === s.title)?.chapters ?? []).map((c) => [c.name, c])); return [...(chapters[s.title] ?? [])].sort((a, b) => (Number(a.complete) - Number(b.complete)) || (Number(bad.has(b.name)) - Number(bad.has(a.name)))).map((ch) => (
+                    <div className={'dm-chapter' + (ch.complete && !bad.has(ch.name) ? '' : ' bad')} key={ch.name}>
                       <div className="ext-info">
-                        <div className="dm-ch-name">{ch.name}{!ch.complete && <span className="dm-badge red">INCOMPLETE</span>}</div>
+                        <div className="dm-ch-name">{ch.name}{!ch.complete && <span className="dm-badge red">INCOMPLETE</span>}{bad.has(ch.name) && <span className="dm-badge red">{bad.get(ch.name)!.badPages} BAD</span>}</div>
                         <div className="ext-sub">{ch.pages} page{ch.pages === 1 ? '' : 's'} · {fmtSize(ch.bytes)}{ch.cbz ? ' · CBZ' : ''}</div>
                       </div>
                       <button className="btn sm danger" onClick={() => delChapter(s.title, ch)}>Delete</button>
                     </div>
-                  ))}
+                  )) })()}
                   {chapters[s.title] && chapters[s.title].length === 0 && <div className="center-msg">No chapters.</div>}
                 </div>
               )}

@@ -79,6 +79,12 @@ export function isWebViewWarmup(msg: string | null | undefined): boolean {
   return /downloading\/starting Chromium|in-app WebView/i.test(msg)
 }
 
+/** Dev-tunable entries-per-page (localStorage `dev.pageSize`); default 60. */
+export const pageSize = (): number => {
+  const n = parseInt(localStorage.getItem('dev.pageSize') || '', 10)
+  return Number.isFinite(n) && n > 0 ? n : 60
+}
+export interface HistoryPage { items: HistoryItem[]; total: number }
 export interface HistoryItem {
   sourceId: string
   mangaUrl: string
@@ -167,7 +173,7 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Couldn't open that URL")
     return r.json() as Promise<{ sourceId: string; mangaUrl: string; title: string; cover?: string }>
   },
-  history: () => getJson<HistoryItem[]>('/api/history'),
+  history: (offset = 0, limit?: number) => getJson<HistoryPage>(`/api/history?offset=${offset}${limit ? `&limit=${limit}` : ''}`),
   popular: (id: string, page = 1, signal?: AbortSignal) => getJson<PageResult>(`/api/sources/${id}/popular?page=${page}`, 2, 15000, signal),
   latest: (id: string, page = 1, signal?: AbortSignal) => getJson<PageResult>(`/api/sources/${id}/latest?page=${page}`, 2, 15000, signal),
   search: (id: string, q: string, page = 1, signal?: AbortSignal) =>
@@ -258,6 +264,7 @@ export const api = {
   // Extensions + repositories
   extensions: () => getJson<ExtInstalled[]>('/api/extensions'),
   extCheckUpdates: () => fetch('/api/extensions/check-updates', { method: 'POST' }).then((r) => r.json() as Promise<string[]>),
+  extChangelog: (pkg: string) => getJson<Changelog>(`/api/extensions/changelog?pkg=${encodeURIComponent(pkg)}`),
   extAvailable: (q: string) => getJson<ExtAvailable[]>(`/api/extensions/available?q=${encodeURIComponent(q)}`, 0, 60000),
   extInstall: async (pkg: string) => {
     const r = await fetch('/api/extensions/install', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pkg }) })
@@ -297,6 +304,7 @@ export const api = {
   devRequests: () => getJson<ReqLog[]>('/api/dev/requests'),
   devRequestsClear: () => fetch('/api/dev/requests/clear', { method: 'POST' }),
   devRestart: () => fetch('/api/dev/restart', { method: 'POST' }),
+  clearWebviewCookies: (host?: string) => fetch(`/api/dev/webview/clear-cookies${host ? `?host=${encodeURIComponent(host)}` : ''}`, { method: 'POST' }).then((r) => r.json() as Promise<{ cleared: number }>),
   devShutdown: () => fetch('/api/dev/shutdown', { method: 'POST' }),
   devCaptcha: () => getJson<DevCaptcha>('/api/dev/captcha/generate', 0, 60000),
   autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),
@@ -341,6 +349,8 @@ export const api = {
   deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   brokenDownloads: () => getJson<BrokenReport>('/api/downloads/broken'),
+  scanCorrupt: () => getJson<CorruptReport>('/api/downloads/scan/corrupt'),
+  repairCorrupt: (title: string) => fetch(`/api/downloads/scan/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   logs: (level = 'warn', limit = 200) => getJson<LogEntry[]>(`/api/logs?level=${level}&limit=${limit}`),
   healthSources: () => getJson<HealthReport>('/api/health/sources'),
   runHealthSweep: () => fetch('/api/health/sweep', { method: 'POST' }).then((r) => r.json() as Promise<SweepProgress>),
@@ -374,6 +384,9 @@ export interface SweepProgress { done: number; total: number; running: boolean }
 
 export interface BrokenSeries { title: string; broken: string[]; total: number }
 export interface BrokenReport { series: BrokenSeries[]; totalBroken: number }
+export interface CorruptChapter { name: string; badPages: number; pages: number }
+export interface CorruptSeries { title: string; chapters: CorruptChapter[] }
+export interface CorruptReport { series: CorruptSeries[]; totalChapters: number; totalBadPages: number }
 export interface LogEntry { ts: number; level: string; logger: string; msg: string }
 
 export interface StatSeries { title: string; count: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }
@@ -412,6 +425,8 @@ export interface CapDet { name: string; conf: number; x0: number; y0: number; x1
 export interface CapSolve { aDets: CapDet[]; bDets: CapDet[]; clicks: CapDet[]; missing: string[]; solved: boolean }
 
 export interface ExtInstalled { pkg: string; name: string; version: string; lang: string; nsfw: boolean; sources: number; repo: string; usesWebView: boolean; beta?: boolean }
+export interface ChangelogCommit { title: string; body: string; url: string; date: string }
+export interface Changelog { commits: ChangelogCommit[]; githubUrl: string }
 export interface VrfStatus { present: boolean; valid: boolean; build: string; mtime: number }
 export interface VrfTest { ok: boolean; count: number; sample?: string | null; error?: string | null }
 export interface DevBucket { label: string; bytes: number; path?: string }

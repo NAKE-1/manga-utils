@@ -220,6 +220,35 @@ object JcefFetch {
         return found
     }
 
+    /**
+     * Delete cookies for [host] (e.g. "mangafire.to"), or ALL cookies when null. Returns how many were
+     * removed. Live — the pooled browsers read the emptied jar on their next request. Clearing a host's
+     * cf_clearance forces a fresh Cloudflare challenge (the recovery lever for a stuck managed challenge);
+     * a null/all clear also logs you out of any WebView source you'd signed into.
+     */
+    fun clearCookies(host: String? = null): Int {
+        val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return 0
+        val target = host?.trimStart('.')
+        val latch = CountDownLatch(1)
+        var n = 0
+        val ok = runCatching {
+            mgr.visitAllCookies(object : CefCookieVisitor {
+                override fun visit(cookie: CefCookie, curr: Int, total: Int, delete: BoolRef): Boolean {
+                    val dom = cookie.domain?.trimStart('.') ?: ""
+                    val match = target == null || (dom.isNotEmpty() && (target.endsWith(dom) || dom.endsWith(target)))
+                    if (match) { delete.set(true); n++ }
+                    if (curr + 1 >= total) latch.countDown()
+                    return true
+                }
+            })
+        }.getOrDefault(false)
+        if (!ok) return 0
+        latch.await(3, TimeUnit.SECONDS)
+        runCatching { mgr.flushStore(null) }
+        log.info { "JCEF: cleared $n cookie(s)${target?.let { " for $it" } ?: " (all)"}" }
+        return n
+    }
+
     private fun buildFetchJs(url: String, method: String, headers: Map<String, String>, body: String?): String {
         // Only forward safe, meaningful headers — the page/browser sets UA, Referer, Cookie, encoding itself.
         val skip = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")

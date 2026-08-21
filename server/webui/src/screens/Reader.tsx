@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, pageUrl, Chapter } from '../api'
-import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings } from '../components/icons'
+import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings, IconJetBrains } from '../components/icons'
+import { WebviewModal } from '../components/WebviewModal'
 
 type Sizing = 'clamp' | 'natural'
 type LoadMode = 'hybrid' | 'eager' | 'balanced' | 'lazy'
@@ -174,6 +175,7 @@ export function Reader() {
   const [chrome, setChrome] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [showChapters, setShowChapters] = useState(false)
+  const [showWv, setShowWv] = useState(false) // open the current chapter's page in the in-app browser (JCEF)
   const [readUrls, setReadUrls] = useState<Set<string>>(new Set())
   const currentChapRef = useRef<HTMLButtonElement>(null)
   const [sizing, setSizing] = useState<Sizing>(lsGet('reader.sizing', 'clamp') as Sizing)
@@ -615,9 +617,12 @@ export function Reader() {
             </button>
           )}
           <button className="r-icon" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Top"><IconArrowUp /></button>
+          <button className="r-icon" onClick={() => setShowWv(true)} aria-label="Open this chapter in the in-app browser" title="Open in WebView (test if the source's images render in a real browser)"><IconJetBrains /></button>
           <button className="r-icon" onClick={() => setShowSettings(true)} aria-label="Settings"><IconSettings /></button>
         </div>
       </div>
+
+      {showWv && <WebviewModal source={sourceId} path={chapter} onClose={() => setShowWv(false)} />}
 
       {/* Settings bottom-sheet */}
       {showChapters && (

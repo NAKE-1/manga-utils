@@ -276,6 +276,11 @@ private data class LibraryDto(
 @Serializable private data class BrokenSeriesDto(val title: String, val broken: List<String>, val total: Int)
 @Serializable private data class BrokenReportDto(val series: List<BrokenSeriesDto>, val totalBroken: Int)
 
+// Corrupt-image scan (finished chapters whose page files aren't real images, e.g. a saved CF block page).
+@Serializable private data class CorruptChapterDto(val name: String, val badPages: Int, val pages: Int)
+@Serializable private data class CorruptSeriesDto(val title: String, val chapters: List<CorruptChapterDto>)
+@Serializable private data class CorruptReportDto(val series: List<CorruptSeriesDto>, val totalChapters: Int, val totalBadPages: Int)
+
 // In-app error log.
 @Serializable private data class LogDto(val ts: Long, val level: String, val logger: String, val msg: String)
 
@@ -401,6 +406,9 @@ private data class HistoryDto(
     val chapterName: String,
     val readAt: Long,
 )
+
+@Serializable
+private data class HistoryPageDto(val items: List<HistoryDto>, val total: Int)
 
 @Serializable
 private data class SettingsDto(
@@ -1560,6 +1568,48 @@ fun Application.module() {
             call.respond(CountDto(n))
         }
 
+        // Content scan: finished chapters whose page files aren't real images (e.g. a Cloudflare block
+        // page saved as p.jpg). Heavy — reads the head of every page on disk — so it's on-demand.
+        get("/api/downloads/scan/corrupt") {
+            val rep = withContext(Dispatchers.IO) {
+                val r = DownloadStore.scanCorrupt()
+                CorruptReportDto(
+                    r.series.map { s -> CorruptSeriesDto(s.title, s.chapters.map { CorruptChapterDto(it.name, it.badPages, it.pages) }) },
+                    r.totalChapters, r.totalBadPages,
+                )
+            }
+            call.respond(rep)
+        }
+        // Repair one series' corrupt chapters: map their (sanitized) folder names to source chapter URLs
+        // via the library, delete the ones we can re-fetch, and re-enqueue. Count queued, or -1 if not in
+        // library. Mirrors manage/repair but targets corrupt (finished-but-junk) instead of incomplete.
+        post("/api/downloads/scan/repair") {
+            val title = call.queryParam("title") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val n = withContext(Dispatchers.IO) {
+                val corrupt = DownloadStore.corruptChapterNames(title) // display folder names (no .cbz)
+                if (corrupt.isEmpty()) return@withContext 0
+                val entries = LibraryStore.list().filter { DownloadManager.sanitize(it.title) == title }
+                if (entries.isEmpty()) return@withContext -1
+                // Map each corrupt folder to its source chapter URL via ComicInfo — the folder name carries a
+                // "[scanlator]" suffix, so matching on chapter name would miss every versioned download.
+                val corruptUrls = ChapterIdentity.versionsOf(title)
+                    .filter { it.folder.removeSuffix(".cbz") in corrupt }
+                    .mapNotNull { it.url }.toSet()
+                val plans = entries.map { entry ->
+                    entry to entry.knownChapters.filter { it.url in corruptUrls }.map { DownloadQueue.Chapter(it.url, it.name) }
+                }.filter { it.second.isNotEmpty() }
+                if (plans.isEmpty()) return@withContext 0
+                // Delete the corrupt folders whose URL we can re-fetch, then enqueue.
+                val fetchable = plans.flatMap { it.second }.map { it.url }.toSet()
+                ChapterIdentity.versionsOf(title)
+                    .filter { it.folder.removeSuffix(".cbz") in corrupt && it.url in fetchable }
+                    .forEach { DownloadStore.deleteChapter(title, it.folder.removeSuffix(".cbz")) }
+                plans.forEach { (entry, chapters) -> DownloadQueue.enqueue(entry.sourceId, entry.mangaUrl, entry.title, chapters) }
+                plans.sumOf { it.second.size }
+            }
+            call.respond(CountDto(n))
+        }
+
         // Mass download — plan: per-series downloaded/total (unique chapters, mirrors the library badge)
         // + the grand total that would queue. Uses cached knownChapters (no network); the UI can run
         // /api/library/update first to refresh. Sorted most-missing first.
@@ -1696,17 +1746,27 @@ fun Application.module() {
         }
 
         get("/api/history") {
-            val items = withContext(Dispatchers.IO) {
+            val offset = call.request.queryParameters["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.takeIf { it > 0 }
+            val page = withContext(Dispatchers.IO) {
                 // Backfill a missing cover from the library so Continue-reading cards keep their art
                 // even for older entries (recorded before covers were stored / from sources that
                 // omit the cover in details).
                 val lib = LibraryStore.list().associateBy { it.sourceId to it.mangaUrl }
-                HistoryStore.list().map {
+                // Dedup by manga (most-recent read wins), newest first — the Continue-reading list. Doing it
+                // here instead of shipping every raw read shrinks the payload from ~1.5 MB to one row/manga.
+                val deduped = HistoryStore.list()
+                    .groupBy { it.sourceId to it.mangaUrl }
+                    .map { (_, reads) -> reads.maxByOrNull { it.readAt }!! }
+                    .sortedByDescending { it.readAt }
+                val slice = deduped.drop(offset).let { if (limit != null) it.take(limit) else it }
+                val items = slice.map {
                     val thumb = it.thumbnailUrl?.takeIf { t -> t.isNotBlank() } ?: lib[it.sourceId to it.mangaUrl]?.thumbnailUrl
                     HistoryDto(it.sourceId.toString(), it.mangaUrl, it.mangaTitle, thumb, it.chapterUrl, it.chapterName, it.readAt)
                 }
+                HistoryPageDto(items, deduped.size)
             }
-            call.respond(items)
+            call.respond(page)
         }
 
         post("/api/history") {
@@ -1790,9 +1850,13 @@ fun Application.module() {
         post("/api/webview/open") {
             // ?url=<http…> loads that page directly; ?source=<id> resolves the source's baseUrl server-side
             // (so a "solve this source's challenge" button doesn't need the base URL on the client).
+            // ?path=<relative chapter/manga url> combined with ?source= opens baseUrl+path (e.g. the
+            // current chapter's reader page) — the client has the path but not the source's base URL.
+            val path = call.request.queryParameters["path"]?.trim()
             val url = call.request.queryParameters["url"]?.trim()?.takeIf { it.startsWith("http") }
                 ?: call.request.queryParameters["source"]?.toLongOrNull()?.let { sid ->
                     (mangautils.core.source.SourceManager.loadSource(sid) as? eu.kanade.tachiyomi.source.online.HttpSource)?.baseUrl
+                        ?.let { base -> if (!path.isNullOrBlank()) base.trimEnd('/') + "/" + path.trimStart('/') else base }
                 }
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("a http(s) url or valid source id is required"))
             withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.open(url) }
@@ -1988,6 +2052,13 @@ fun Application.module() {
         // Clean restart / shutdown (dev). Restart relies on start.bat's web loop seeing restart.flag.
         post("/api/dev/restart") { call.respond(HttpStatusCode.OK); initiateRestart(restart = true) }
         post("/api/dev/shutdown") { call.respond(HttpStatusCode.OK); initiateRestart(restart = false) }
+        // Clear WebView cookies — all, or ?host=mangafire.to for a scoped flush (dumps cf_clearance so the
+        // next request re-challenges fresh). An all-clear also logs you out of WebView sources.
+        post("/api/dev/webview/clear-cookies") {
+            val host = call.request.queryParameters["host"]?.takeIf { it.isNotBlank() }
+            val n = withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefFetch.clearCookies(host) }
+            call.respond(mapOf("cleared" to n))
+        }
         // Dev captcha tester: pull a fresh MangaFire shape-captcha through real Chromium (JCEF handles CF +
         // the mangafire session), decode the JSON, and hand back A (order) + B (clickable grid) as data URIs.
         get("/api/dev/captcha/generate") {
@@ -2216,6 +2287,11 @@ fun Application.module() {
         post("/api/extensions/check-updates") {
             val pkgs = withContext(Dispatchers.IO) { runCatching { ExtensionUpdates.check().map { it.installed.pkg } }.getOrDefault(emptyList()) }
             call.respond(pkgs)
+        }
+        get("/api/extensions/changelog") {
+            val pkg = call.request.queryParameters["pkg"]
+            if (pkg.isNullOrBlank()) return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "pkg required"))
+            call.respond(withContext(Dispatchers.IO) { ExtensionChangelog.forPackage(pkg) })
         }
         post("/api/extensions/install") {
             val pkg = call.receive<InstallReq>().pkg
