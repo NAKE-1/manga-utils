@@ -349,7 +349,20 @@ export const api = {
   deleteIncomplete: (title: string) => fetch(`/api/downloads/manage/delete-incomplete?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   repairDownloads: (title: string) => fetch(`/api/downloads/manage/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   brokenDownloads: () => getJson<BrokenReport>('/api/downloads/broken'),
-  scanCorrupt: () => getJson<CorruptReport>('/api/downloads/scan/corrupt'),
+  // Background scan + poll (not a long-held request that drops on phone/Tailscale → false "scan failed").
+  scanCorrupt: (onProgress?: (done: number, total: number) => void): Promise<CorruptReport | null> =>
+    fetch('/api/downloads/scan/corrupt/start', { method: 'POST' }).catch(() => null).then(
+      () => new Promise<CorruptReport | null>((resolve) => {
+        let fails = 0
+        const t = setInterval(async () => {
+          const p = await getJson<{ running: boolean; done: number; total: number; report: CorruptReport | null }>('/api/downloads/scan/corrupt/progress').catch(() => null)
+          if (!p) { if (++fails > 30) { clearInterval(t); resolve(null) } return } // ~24s unreachable → give up
+          fails = 0
+          onProgress?.(p.done, p.total)
+          if (!p.running) { clearInterval(t); resolve(p.report ?? null) }
+        }, 800)
+      }),
+    ),
   repairCorrupt: (title: string) => fetch(`/api/downloads/scan/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
   manifestInfo: () => getJson<ManifestInfo>('/api/downloads/manifest'),
   manifestProgress: () => getJson<ManifestProgress>('/api/downloads/manifest/progress'),

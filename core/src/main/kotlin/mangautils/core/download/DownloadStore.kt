@@ -112,16 +112,18 @@ object DownloadStore {
      * downloader would now reject. Heavy: reads the head of every page file.
      * ponytail: full walk each call; add a persisted per-chapter marker if it drags on huge libraries.
      */
-    fun scanCorrupt(): CorruptReport {
+    fun scanCorrupt(onProgress: ((Int, Int) -> Unit)? = null): CorruptReport {
         if (!Files.isDirectory(root)) return CorruptReport(emptyList(), 0, 0)
         val dirs = Files.list(root).use { st -> st.filter { it.isDirectory() }.toList() }
+        val totalDirs = dirs.size
+        val done = AtomicInteger(0)
         // Parallel across series (common ForkJoinPool) — on a large library the per-file IO dominates.
         val series = dirs.parallelStream().map { dir ->
             val chs = chapterEntries(dir).mapNotNull { p ->
                 val (bad, total) = badPagesIn(p)
                 if (bad > 0) CorruptChapter(if (p.name.endsWith(".cbz")) p.name.removeSuffix(".cbz") else p.name, bad, total) else null
             }
-            CorruptSeries(dir.name, chs)
+            CorruptSeries(dir.name, chs).also { onProgress?.invoke(done.incrementAndGet(), totalDirs) }
         }.filter { it.chapters.isNotEmpty() }.collect(java.util.stream.Collectors.toList()).sortedBy { it.title.lowercase() }
         return CorruptReport(series, series.sumOf { it.chapters.size }, series.sumOf { s -> s.chapters.sumOf { it.badPages } })
     }

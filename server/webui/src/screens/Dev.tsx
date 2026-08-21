@@ -163,7 +163,7 @@ export function Dev() {
   }
   async function runScan() {
     setScanBusy(true); setScanMsg('Scanning every downloaded page…')
-    const r = await api.scanCorrupt().catch(() => null)
+    const r = await api.scanCorrupt((done, total) => { if (total > 0) setScanMsg(`Scanning… ${done}/${total} series`) }).catch(() => null)
     setScanBusy(false); setCorrupt(r)
     setScanMsg(!r ? 'Scan failed' : r.totalBadPages > 0 ? `${r.totalBadPages} bad image(s) in ${r.totalChapters} chapter(s) across ${r.series.length} series` : 'No corrupt images found')
   }

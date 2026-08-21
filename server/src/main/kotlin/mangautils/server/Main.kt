@@ -358,6 +358,16 @@ private val manifestExec = java.util.concurrent.Executors.newSingleThreadExecuto
     val saved: ManifestInfoDto, val report: DownloadStore.VerifyReport? = null,
 )
 
+// ---- corrupt-image scan: background so a phone/Tailscale client polls instead of holding a long request ----
+@Volatile private var corruptRunning = false
+@Volatile private var corruptDone = 0
+@Volatile private var corruptTotal = 0
+@Volatile private var corruptReport: CorruptReportDto? = null // last completed scan result (for the poll)
+private val corruptExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    Thread(r, "corrupt-scan").apply { isDaemon = true }
+}
+@Serializable private data class CorruptProgressDto(val running: Boolean, val done: Int, val total: Int, val report: CorruptReportDto? = null)
+
 @Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false, val beta: Boolean = false)
 
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
@@ -1122,7 +1132,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -1601,15 +1611,27 @@ fun Application.module() {
 
         // Content scan: finished chapters whose page files aren't real images (e.g. a Cloudflare block
         // page saved as p.jpg). Heavy — reads the head of every page on disk — so it's on-demand.
-        get("/api/downloads/scan/corrupt") {
-            val rep = withContext(Dispatchers.IO) {
-                val r = DownloadStore.scanCorrupt()
-                CorruptReportDto(
-                    r.series.map { s -> CorruptSeriesDto(s.title, s.chapters.map { CorruptChapterDto(it.name, it.badPages, it.pages) }) },
-                    r.totalChapters, r.totalBadPages,
-                )
+        // Corrupt scan runs in the background (a full walk of ~millions of files); the client polls
+        // /progress rather than holding a minute-long request open — which dropped over Tailscale/phone
+        // and showed a false "scan failed" even when the server finished fine (same fix as library update).
+        post("/api/downloads/scan/corrupt/start") {
+            if (!corruptRunning) {
+                corruptRunning = true; corruptDone = 0; corruptTotal = 0; corruptReport = null
+                corruptExec.submit {
+                    try {
+                        val r = DownloadStore.scanCorrupt { d, t -> corruptDone = d; corruptTotal = t }
+                        corruptReport = CorruptReportDto(
+                            r.series.map { s -> CorruptSeriesDto(s.title, s.chapters.map { CorruptChapterDto(it.name, it.badPages, it.pages) }) },
+                            r.totalChapters, r.totalBadPages,
+                        )
+                    } catch (e: Throwable) { log.warn("corrupt scan failed: {}", e.message) }
+                    finally { corruptRunning = false }
+                }
             }
-            call.respond(rep)
+            call.respond(HttpStatusCode.Accepted)
+        }
+        get("/api/downloads/scan/corrupt/progress") {
+            call.respond(CorruptProgressDto(corruptRunning, corruptDone, corruptTotal, if (!corruptRunning) corruptReport else null))
         }
         // Repair one series' corrupt chapters: map their (sanitized) folder names to source chapter URLs
         // via the library, delete the ones we can re-fetch, and re-enqueue. Count queued, or -1 if not in
