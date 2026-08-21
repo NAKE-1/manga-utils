@@ -42,7 +42,6 @@ class FlareSolverrInterceptor(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private val solvedUa = FlareSolverrConfig.solvedUserAgents // shared with the UA network interceptor
-    private val warmedAt = java.util.concurrent.ConcurrentHashMap<String, Long>() // host -> last session-warm attempt
 
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
@@ -306,6 +305,13 @@ class FlareSolverrInterceptor(
             .build()
 
     companion object {
+        // host -> last session-warm attempt. Process-wide so an egress reset can wipe it after a VPN switch
+        // (a warm session is bound to the old exit IP).
+        private val warmedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+        /** Clear FlareSolverr warm-session bookkeeping — part of the egress reset. */
+        fun resetWarmSessions() = warmedAt.clear()
+
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private val ERROR_CODES = listOf(403, 503)
         private const val WARM_COOLDOWN_MS = 2 * 60_000L // min gap between session-warm attempts per host

@@ -654,6 +654,9 @@ private data class MangaStateDto(
 private data class CountDto(val count: Int)
 
 @Serializable
+private data class EgressResetDto(val jcefCookies: Int, val ok: Boolean = true)
+
+@Serializable
 private data class PagesDto(val count: Int)
 
 @Serializable
@@ -2004,6 +2007,23 @@ fun Application.module() {
                 return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("couldn't reach the Mullvad check — $mullvadFailWhy"))
             }
             call.respond(r)
+        }
+        // Clear IP-bound network state so a VPN / OpenWRT exit-node switch takes effect WITHOUT a restart:
+        // flush cf_clearance cookies (okhttp + JCEF), drop stale keep-alive sockets, and un-stick the
+        // sources that were fast-failing / flagged on the old IP. Touches only caches — no library/downloads.
+        post("/api/egress/reset") {
+            val jcefCookies = withContext(Dispatchers.IO) {
+                val net = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>()
+                runCatching { net.cookieStore.removeAll() }
+                runCatching { net.client.connectionPool.evictAll() }
+                eu.kanade.tachiyomi.network.interceptor.HumanCheckState.clearAll()
+                mangautils.core.source.SourceCircuits.resetAll()
+                eu.kanade.tachiyomi.network.interceptor.JcefFetchInterceptor.resetManagedFails()
+                eu.kanade.tachiyomi.network.interceptor.FlareSolverrInterceptor.resetWarmSessions()
+                runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.clearCookies(null) }.getOrDefault(0)
+            }
+            log.info("egress reset: flushed cookies + evicted connections + un-stuck sources (JCEF {} cookie(s))", jcefCookies)
+            call.respond(EgressResetDto(jcefCookies))
         }
         get("/api/dev/captcha/stats") {
             call.respond(AutoSolveStatsDto(AutoSolveStats.solved, AutoSolveStats.failed, AutoSolveStats.reloads, AutoSolveStats.avgMs(),

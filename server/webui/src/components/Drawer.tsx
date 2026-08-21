@@ -29,6 +29,17 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
   // either way; only a fetch failure leaves mv null.
   const loadMv = () => { setMvErr(false); api.mullvad().then(setMv).catch(() => setMvErr(true)) }
   useEffect(() => { if (open) loadMv() }, [open])
+  // Reset egress: clears IP-bound cookies/sockets/stuck-sources so an OpenWRT/Mullvad exit-node switch
+  // takes effect without restarting the server. Re-checks egress after, so the chip reflects the new IP.
+  const [resetting, setResetting] = useState(false)
+  const [resetMsg, setResetMsg] = useState('')
+  const doReset = () => {
+    setResetting(true); setResetMsg('')
+    api.resetEgress()
+      .then(() => { setResetMsg('✓ Cleared — sources re-clear on next use'); loadMv() })
+      .catch(() => setResetMsg('✗ Reset failed'))
+      .finally(() => setResetting(false))
+  }
   const go = (to: string) => { onClose(); nav(to) }
   // Close on Escape (desktop).
   useEffect(() => {
@@ -68,6 +79,9 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
                     <div>{[mv.city, mv.country].filter(Boolean).join(', ') || '—'}</div>
                     <div>IP · {mv.ip || '—'}</div>
                     {mv.organization && <div>{mv.organization}</div>}
+                    <button className="drawer-mv-reset" disabled={resetting} onClick={doReset} title="Clear cookies/connections after switching your VPN exit node — no restart needed">
+                      {resetting ? 'Resetting…' : resetMsg || '↻ Reset egress (after VPN switch)'}
+                    </button>
                   </div>
                 )}
                 <button

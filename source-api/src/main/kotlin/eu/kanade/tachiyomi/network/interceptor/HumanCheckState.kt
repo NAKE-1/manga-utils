@@ -42,6 +42,10 @@ object HumanCheckState {
 
     fun isPending(host: String): Boolean = pending.containsKey(host)
 
+    /** Drop every flag without firing onCleared (used by the egress reset — a VPN switch invalidates the
+     *  old clearances, so sources should be re-probed from scratch rather than treated as still-blocked). */
+    fun clearAll() { pending.clear(); manual.clear() }
+
     /** host -> since-ms, oldest first. All flagged blocks (for downloads / health / library). */
     fun snapshot(): List<Pair<String, Long>> = pending.entries.map { it.key to it.value }.sortedBy { it.second }
 

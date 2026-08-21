@@ -310,6 +310,13 @@ export const api = {
   autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),
   captchaStats: () => getJson<CapStats>('/api/dev/captcha/stats'),
   mullvad: () => getJson<Mullvad>('/api/mullvad', 0, 10000),
+  // Clears IP-bound network state (cf_clearance cookies, stale sockets, stuck sources) so a VPN / exit-node
+  // switch takes effect without restarting the server. Caches only — never touches library/downloads.
+  resetEgress: async (): Promise<{ jcefCookies: number }> => {
+    const r = await fetch('/api/egress/reset', { method: 'POST' })
+    if (!r.ok) throw new Error(`reset HTTP ${r.status}`)
+    return r.json()
+  },
   devCaptchaSolve: (imageA: string, imageB: string) =>
     fetch('/api/dev/captcha/solve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageA, imageB }) })
       .then((r) => { if (!r.ok) throw new Error(`solve HTTP ${r.status}`); return r.json() as Promise<CapSolve> }),

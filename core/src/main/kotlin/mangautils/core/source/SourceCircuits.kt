@@ -50,6 +50,9 @@ class Circuit(private val name: String, private val threshold: Int, private val 
         }
     }
 
+    /** Forget all breaker state so every source is probed immediately (used by the egress reset). */
+    fun reset() = states.clear()
+
     fun recordFailure(id: Long) {
         val s = state(id)
         synchronized(s) {
@@ -71,4 +74,7 @@ object SourceCircuits {
     /** Image fetches (pages / covers): a dead CDN like atsu.moe. Trips at 3 so a whole chapter isn't
      *  ground through; short cooldown so it recovers quickly once the host is back. */
     val images = Circuit("images", threshold = 3, cooldownMs = 20_000)
+
+    /** Close every open breaker (egress reset) so sources aren't fast-failed on the old exit IP's failures. */
+    fun resetAll() { api.reset(); images.reset() }
 }

@@ -28,10 +28,6 @@ import java.util.concurrent.ConcurrentHashMap
 class JcefFetchInterceptor : Interceptor {
     private val log = KotlinLogging.logger {}
 
-    // Consecutive un-clearable managed-challenge ("Just a moment…") hits per host. After ESCALATE_AFTER we
-    // stop retry-looping (each attempt burns 45s and re-provokes Cloudflare) and escalate. Reset on any 2xx.
-    private val managedFails = ConcurrentHashMap<String, Int>()
-
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
         val resp = chain.proceed(req)
@@ -97,8 +93,16 @@ class JcefFetchInterceptor : Interceptor {
         return IMAGE_EXTS.any { p.endsWith(it) }
     }
 
-    private companion object {
+    companion object {
         private val IMAGE_EXTS = listOf(".webp", ".jpg", ".jpeg", ".png", ".gif", ".avif", ".bmp")
         private const val ESCALATE_AFTER = 2
+
+        // Consecutive un-clearable managed-challenge ("Just a moment…") hits per host. After ESCALATE_AFTER we
+        // stop retry-looping (each attempt burns 45s and re-provokes Cloudflare) and escalate. Reset on any 2xx.
+        // Process-wide (companion) so an egress reset can wipe stuck counters after a VPN switch.
+        private val managedFails = ConcurrentHashMap<String, Int>()
+
+        /** Clear stuck managed-challenge counters — part of the egress reset (VPN/exit-node switch). */
+        fun resetManagedFails() = managedFails.clear()
     }
 }
