@@ -154,13 +154,23 @@ object Notifier {
             runCatching {
                 val withNew = results.filter { it.newChapters.isNotEmpty() }
                 val totalNew = withNew.sumOf { it.newChapters.size }
+                val failed = results.filter { it.failed }
                 val summary = if (c.libraryCheck)
-                    "🔄 **Library check** (${if (scheduled) "scheduled" else "manual"}) · ${results.size} series · " +
-                        (if (totalNew > 0) "**$totalNew** new across ${withNew.size}" else "no new chapters")
+                    "🔄 **Library check** (${if (scheduled) "scheduled" else "manual"}) · checked ${results.size} series · " +
+                        (if (totalNew > 0) "**$totalNew** new across ${withNew.size}" else "no new chapters") +
+                        (if (failed.isNotEmpty()) " · ⚠️ **${failed.size}** failed to check" else "")
                 else null
 
+                // A list of what couldn't be checked (source down / captcha), so failures are visible even
+                // when nothing new came in. Gated on the library-check summary toggle.
+                val failedEmbed = if (c.libraryCheck && failed.isNotEmpty()) Embed(
+                    title = "⚠️ Failed to check (${failed.size})",
+                    description = failedList(failed),
+                    color = AMBER,
+                ) else null
+
                 if (!c.newChapters || withNew.isEmpty()) {
-                    if (summary != null) enqueue(Payload(content = summary))
+                    if (summary != null || failedEmbed != null) enqueue(Payload(content = summary, embeds = listOfNotNull(failedEmbed)))
                     return@runCatching
                 }
                 // Per-manga embeds, batched 10/message; the first message carries the summary as content.
@@ -169,6 +179,7 @@ object Notifier {
                     MangaItem(r.entry.title, r.entry.mangaUrl, chapterList(names), sourceName(r.entry.sourceId), coverFor(r.entry.sourceId, r.entry.mangaUrl))
                 }
                 items.chunked(10).forEachIndexed { idx, chunk -> enqueue(buildMangaMessage(if (idx == 0) summary else null, chunk)) }
+                if (failedEmbed != null) enqueue(Payload(embeds = listOf(failedEmbed))) // failures as their own trailing message
             }.onFailure { log.warn("notify(libraryChecked) failed: {}", it.message) }
         }
     }
@@ -341,6 +352,17 @@ object Notifier {
         for ((i, n) in names.withIndex()) {
             val line = "• $n\n"
             if (sb.length + line.length > 3900) { sb.append("• …(embed-limit — ${names.size - i} more)"); break }
+            sb.append(line)
+        }
+        return sb.toString().trimEnd()
+    }
+
+    /** "• Source — Title" list of series that failed to check, truncated to the embed description cap. */
+    private fun failedList(failed: List<UpdateResult>): String {
+        val sb = StringBuilder()
+        for ((i, r) in failed.withIndex()) {
+            val line = "• ${sourceName(r.entry.sourceId)} — ${r.entry.title}\n"
+            if (sb.length + line.length > 3900) { sb.append("• …(${failed.size - i} more)"); break }
             sb.append(line)
         }
         return sb.toString().trimEnd()

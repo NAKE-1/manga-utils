@@ -301,6 +301,7 @@ img { display: block; }
 .update-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
 .ul-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ul-count { color: var(--accent); font-weight: 800; flex: 0 0 auto; }
+.ul-fail { color: var(--danger, #e86e8f); }
 .upd-row { display: flex; align-items: center; gap: 8px; }
 .upd-pct { font-size: 13px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .chapter-bm { width: 16px; height: 16px; color: var(--accent); flex: 0 0 auto; }

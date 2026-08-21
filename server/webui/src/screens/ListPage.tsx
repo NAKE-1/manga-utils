@@ -35,6 +35,7 @@ export function ListPage() {
   const [updatePct, setUpdatePct] = useState(0)
   const [updateMsg, setUpdateMsg] = useState('')
   const [updatedTitles, setUpdatedTitles] = useState<{ title: string; count: number }[]>([])
+  const [updatedFailed, setUpdatedFailed] = useState<{ source: string; title: string }[]>([])
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<'title' | 'updated' | 'new' | 'number'>('title')
   const [filter, setFilter] = useState<'all' | 'new' | 'downloaded' | 'notdl'>('all')
@@ -58,14 +59,22 @@ export function ListPage() {
   }, [kind, contPage, PS])
 
   async function checkUpdates() {
-    setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatePct(0)
+    setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatedFailed([]); setUpdatePct(0)
     // Starts the update and polls to completion — no long-held request to drop → no false "Update failed".
     const r = await api.runLibraryUpdate((pct) => setUpdatePct(pct)).catch(() => null)
     await api.library().then(setLibrary).catch(() => {})
     setUpdating(false); setUpdatePct(0)
-    if (!r) { setUpdateMsg('Update failed'); setUpdatedTitles([]) } // only a genuine server error now
-    else if (r.titles.length === 0) { setUpdateMsg('No new chapters found'); setUpdatedTitles([]) }
-    else { setUpdateMsg(''); setUpdatedTitles(r.titles) }
+    if (!r) { setUpdateMsg('Update failed'); return } // only a genuine server error / unreachable now
+    const checked = r.checked ?? 0
+    const failed = r.failed ?? 0
+    // e.g. "Checked 270/272 series · no new chapters · 2 failed to check"
+    const parts: string[] = []
+    if (checked > 0) parts.push(`Checked ${checked - failed}/${checked} series`)
+    if (r.titles.length === 0) parts.push('no new chapters')
+    if (failed > 0) parts.push(`${failed} failed to check`)
+    setUpdateMsg(parts.join(' · ') || 'No new chapters found')
+    setUpdatedTitles(r.titles)
+    setUpdatedFailed(r.failedTitles ?? [])
   }
 
   if (!ready) return <div className="spinner" />
@@ -142,6 +151,13 @@ export function ListPage() {
         <div className="update-list">
           {updatedTitles.map((t) => (
             <div key={t.title} className="update-line"><span className="ul-name">{t.title}</span><span className="ul-count">{t.count} new</span></div>
+          ))}
+        </div>
+      )}
+      {updatedFailed.length > 0 && (
+        <div className="update-list update-failed">
+          {updatedFailed.map((t) => (
+            <div key={t.source + '|' + t.title} className="update-line"><span className="ul-name">{t.title}</span><span className="ul-count ul-fail">{t.source} failed</span></div>
           ))}
         </div>
       )}

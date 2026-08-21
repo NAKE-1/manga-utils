@@ -414,7 +414,7 @@ export interface DlTask {
   vfHost?: string // state==="waitvf": host whose human-check must be solved to resume
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
-export interface UpdateSummary { newChapters: number; updatedManga: number; titles: { title: string; count: number }[] }
+export interface UpdateSummary { newChapters: number; updatedManga: number; titles: { title: string; count: number }[]; checked?: number; failed?: number; failedTitles?: { source: string; title: string }[] }
 export interface UpdateProgress { done: number; total: number; running: boolean; summary?: UpdateSummary | null }
 // Dev captcha tester: A = order strip, B = clickable grid. Both are data-URI images. count = shapes to click.
 export interface DevCaptcha { captchaId: string; count: number; imageA: string; imageB: string }

@@ -243,7 +243,15 @@ private data class LibraryDto(
 )
 
 @Serializable private data class UpdatedTitleDto(val title: String, val count: Int)
-@Serializable private data class UpdateSummaryDto(val newChapters: Int, val updatedManga: Int, val titles: List<UpdatedTitleDto> = emptyList())
+@Serializable private data class FailedTitleDto(val source: String, val title: String)
+@Serializable private data class UpdateSummaryDto(
+    val newChapters: Int,
+    val updatedManga: Int,
+    val titles: List<UpdatedTitleDto> = emptyList(),
+    val checked: Int = 0,
+    val failed: Int = 0,
+    val failedTitles: List<FailedTitleDto> = emptyList(),
+)
 @Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean, val summary: UpdateSummaryDto? = null)
 @Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
@@ -1392,7 +1400,15 @@ fun Application.module() {
                         val titles = results.filter { it.newChapters.isNotEmpty() }
                             .sortedByDescending { it.newChapters.size }
                             .map { UpdatedTitleDto(it.entry.title, it.newChapters.size) }
-                        libUpdateSummary = UpdateSummaryDto(titles.sumOf { it.count }, titles.size, titles)
+                        val failedTitles = results.filter { it.failed }.map { r ->
+                            val src = runCatching { SourceManager.loadSource(r.entry.sourceId)?.name }.getOrNull()
+                                ?.takeIf { it.isNotBlank() } ?: r.entry.sourceId.toString()
+                            FailedTitleDto(src, r.entry.title)
+                        }
+                        libUpdateSummary = UpdateSummaryDto(
+                            titles.sumOf { it.count }, titles.size, titles,
+                            checked = results.size, failed = failedTitles.size, failedTitles = failedTitles,
+                        )
                     } catch (e: Throwable) {
                         log.warn("manual library update failed: {}", e.message)
                     } finally { libUpdateRunning = false }
