@@ -5,11 +5,15 @@
  */
 package mangautils.core.download
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
 import mangautils.core.convert.ImageFormat
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.Comparator
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 
@@ -222,4 +226,111 @@ object DownloadStore {
             ChapterStat(pages, bytes, hasInfo && pages > 0)
         }
     }.getOrDefault(ChapterStat(0, 0, false))
+
+    // ---- Integrity manifest: prove the downloads survived a disk move / copy intact ----------------
+    // Generate a fingerprint on the OLD box, then verify against it on the NEW box. FAST (default) reads
+    // only file names + sizes (minutes); DEEP also SHA-256s every file's content (hours, catches bit-rot).
+    // Per-CHAPTER granularity keeps the manifest small (~thousands of rows) yet pinpoints the exact chapter
+    // that changed. Digests are OS-independent: names+sizes only (no mtime), JVM string sort, junk excluded.
+
+    @Serializable data class ChapterFp(val name: String, val files: Int, val bytes: Long, val digest: String)
+    @Serializable data class SeriesFp(val series: String, val files: Int, val bytes: Long, val digest: String, val chapters: List<ChapterFp>)
+    @Serializable data class DownloadsManifest(val version: Int, val deep: Boolean, val generatedAt: Long, val totalFiles: Int, val totalBytes: Long, val series: List<SeriesFp>)
+
+    @Serializable data class VerifyChanged(val series: String, val savedFiles: Int, val curFiles: Int, val savedBytes: Long, val curBytes: Long, val chapters: List<String>)
+    @Serializable data class VerifyReport(val ok: Boolean, val deep: Boolean, val seriesTotal: Int, val seriesMatched: Int, val missing: List<String>, val extra: List<String>, val changed: List<VerifyChanged>)
+
+    private val manifestJson = Json { ignoreUnknownKeys = true }
+    private val manifestFile: Path get() = AppConfig.dataDir.resolve("downloads-manifest.json")
+
+    /** Walk the library and fingerprint every series/chapter. [onProgress] fires per series (done,total). */
+    fun buildManifest(deep: Boolean, onProgress: ((Int, Int) -> Unit)? = null): DownloadsManifest {
+        if (!Files.isDirectory(root)) return DownloadsManifest(1, deep, System.currentTimeMillis(), 0, 0, emptyList())
+        val dirs = Files.list(root).use { st -> st.filter { it.isDirectory() }.toList() }
+        val total = dirs.size
+        val done = AtomicInteger(0)
+        val series = dirs.parallelStream().map { dir ->
+            fingerprintSeries(dir, deep).also { onProgress?.invoke(done.incrementAndGet(), total) }
+        }.collect(java.util.stream.Collectors.toList()).sortedBy { it.series }
+        return DownloadsManifest(1, deep, System.currentTimeMillis(), series.sumOf { it.files }, series.sumOf { it.bytes }, series)
+    }
+
+    /** Generate + persist a manifest to the data dir (rides the config backup to the new box). */
+    fun generateManifest(deep: Boolean, onProgress: ((Int, Int) -> Unit)? = null): DownloadsManifest {
+        val m = buildManifest(deep, onProgress)
+        runCatching { Files.writeString(manifestFile, manifestJson.encodeToString(DownloadsManifest.serializer(), m)) }
+        return m
+    }
+
+    /** The saved manifest (from a prior generate), or null if none exists / it won't parse. */
+    fun savedManifest(): DownloadsManifest? = runCatching {
+        if (!Files.exists(manifestFile)) return null
+        manifestJson.decodeFromString(DownloadsManifest.serializer(), Files.readString(manifestFile))
+    }.getOrNull()
+
+    /** Re-fingerprint at the saved manifest's level and diff against it — the post-move integrity check. */
+    fun verifyManifest(onProgress: ((Int, Int) -> Unit)? = null): VerifyReport {
+        val saved = savedManifest() ?: return VerifyReport(false, false, 0, 0, emptyList(), emptyList(), emptyList())
+        val current = buildManifest(saved.deep, onProgress)
+        val savedMap = saved.series.associateBy { it.series }
+        val curMap = current.series.associateBy { it.series }
+        val missing = savedMap.keys.filter { it !in curMap }.sorted()
+        val extra = curMap.keys.filter { it !in savedMap }.sorted()
+        val changed = savedMap.values.mapNotNull { s ->
+            val c = curMap[s.series] ?: return@mapNotNull null
+            if (s.digest == c.digest) return@mapNotNull null
+            val sc = s.chapters.associateBy { it.name }; val cc = c.chapters.associateBy { it.name }
+            val chDiffs = (sc.keys + cc.keys).filter { sc[it]?.digest != cc[it]?.digest }.sorted()
+            VerifyChanged(s.series, s.files, c.files, s.bytes, c.bytes, chDiffs.take(50))
+        }.sortedBy { it.series }
+        val matched = savedMap.count { (n, s) -> curMap[n]?.digest == s.digest }
+        return VerifyReport(missing.isEmpty() && extra.isEmpty() && changed.isEmpty(), saved.deep, saved.series.size, matched, missing, extra, changed)
+    }
+
+    private fun fingerprintSeries(dir: Path, deep: Boolean): SeriesFp {
+        val chapters = chapterEntries(dir).map { fingerprintChapter(it, deep) }.sortedBy { it.name }
+        val md = MessageDigest.getInstance("SHA-256")
+        for (c in chapters) { md.update(c.name.toByteArray()); md.update(0); md.update(c.digest.toByteArray()); md.update('\n'.code.toByte()) }
+        return SeriesFp(dir.name, chapters.sumOf { it.files }, chapters.sumOf { it.bytes }, hex(md.digest()), chapters)
+    }
+
+    private fun fingerprintChapter(p: Path, deep: Boolean): ChapterFp {
+        val name = if (p.name.endsWith(".cbz")) p.name.removeSuffix(".cbz") else p.name
+        // (fileName, size, contentHash?) for every real file in the chapter (the .cbz itself, or its pages).
+        val entries = ArrayList<Triple<String, Long, String?>>()
+        if (p.name.endsWith(".cbz")) {
+            entries.add(Triple(p.name, runCatching { Files.size(p) }.getOrDefault(0L), if (deep) sha256File(p) else null))
+        } else runCatching {
+            Files.list(p).use { st -> st.forEach { child ->
+                if (Files.isDirectory(child) || isJunk(child.name)) return@forEach
+                entries.add(Triple(child.name, runCatching { Files.size(child) }.getOrDefault(0L), if (deep) sha256File(child) else null))
+            } }
+        }
+        entries.sortBy { it.first }
+        val md = MessageDigest.getInstance("SHA-256")
+        var bytes = 0L
+        for ((rel, size, ch) in entries) {
+            md.update(rel.toByteArray()); md.update(0); md.update(size.toString().toByteArray())
+            if (ch != null) { md.update(0); md.update(ch.toByteArray()) }
+            md.update('\n'.code.toByte()); bytes += size
+        }
+        return ChapterFp(name, entries.size, bytes, hex(md.digest()))
+    }
+
+    /** OS/Explorer junk that appears on one box but not the other — excluded so it can't cause false diffs. */
+    private fun isJunk(name: String): Boolean {
+        val n = name.lowercase()
+        return n == "thumbs.db" || n == "desktop.ini" || n == ".ds_store" || name.contains(':') // ':' = NTFS ADS
+    }
+
+    private fun sha256File(p: Path): String = runCatching {
+        val md = MessageDigest.getInstance("SHA-256")
+        Files.newInputStream(p).use { ins ->
+            val buf = ByteArray(1 shl 16)
+            while (true) { val r = ins.read(buf); if (r < 0) break; md.update(buf, 0, r) }
+        }
+        hex(md.digest())
+    }.getOrDefault("")
+
+    private fun hex(b: ByteArray): String = b.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 }

@@ -351,6 +351,10 @@ export const api = {
   brokenDownloads: () => getJson<BrokenReport>('/api/downloads/broken'),
   scanCorrupt: () => getJson<CorruptReport>('/api/downloads/scan/corrupt'),
   repairCorrupt: (title: string) => fetch(`/api/downloads/scan/repair?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
+  manifestInfo: () => getJson<ManifestInfo>('/api/downloads/manifest'),
+  manifestProgress: () => getJson<ManifestProgress>('/api/downloads/manifest/progress'),
+  manifestGenerate: (deep: boolean) => fetch(`/api/downloads/manifest/generate?deep=${deep}`, { method: 'POST' }),
+  manifestVerify: () => fetch('/api/downloads/manifest/verify', { method: 'POST' }),
   logs: (level = 'warn', limit = 200) => getJson<LogEntry[]>(`/api/logs?level=${level}&limit=${limit}`),
   healthSources: () => getJson<HealthReport>('/api/health/sources'),
   runHealthSweep: () => fetch('/api/health/sweep', { method: 'POST' }).then((r) => r.json() as Promise<SweepProgress>),
@@ -387,6 +391,10 @@ export interface BrokenReport { series: BrokenSeries[]; totalBroken: number }
 export interface CorruptChapter { name: string; badPages: number; pages: number }
 export interface CorruptSeries { title: string; chapters: CorruptChapter[] }
 export interface CorruptReport { series: CorruptSeries[]; totalChapters: number; totalBadPages: number }
+export interface ManifestInfo { exists: boolean; deep?: boolean; generatedAt?: number; totalFiles?: number; totalBytes?: number; series?: number }
+export interface VerifyChanged { series: string; savedFiles: number; curFiles: number; savedBytes: number; curBytes: number; chapters: string[] }
+export interface VerifyReport { ok: boolean; deep: boolean; seriesTotal: number; seriesMatched: number; missing: string[]; extra: string[]; changed: VerifyChanged[] }
+export interface ManifestProgress { running: boolean; done: number; total: number; phase: string; saved: ManifestInfo; report?: VerifyReport | null }
 export interface LogEntry { ts: number; level: string; logger: string; msg: string }
 
 export interface StatSeries { title: string; count: number; sourceId: string; mangaUrl: string; thumbnailUrl?: string | null }

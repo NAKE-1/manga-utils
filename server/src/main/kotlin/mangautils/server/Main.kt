@@ -343,6 +343,21 @@ private val libUpdateExec = java.util.concurrent.Executors.newSingleThreadExecut
     Thread(r, "library-update").apply { isDaemon = true }
 }
 
+// ---- downloads-integrity manifest (generate on the OLD box, verify on the NEW box after a disk move) ----
+@Volatile private var manifestRunning = false
+@Volatile private var manifestDone = 0
+@Volatile private var manifestTotal = 0
+@Volatile private var manifestPhase = "" // "generate" | "verify"
+@Volatile private var manifestReport: DownloadStore.VerifyReport? = null // last verify result (for the poll)
+private val manifestExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    Thread(r, "downloads-manifest").apply { isDaemon = true }
+}
+@Serializable private data class ManifestInfoDto(val exists: Boolean, val deep: Boolean = false, val generatedAt: Long = 0, val totalFiles: Int = 0, val totalBytes: Long = 0, val series: Int = 0)
+@Serializable private data class ManifestProgressDto(
+    val running: Boolean, val done: Int, val total: Int, val phase: String,
+    val saved: ManifestInfoDto, val report: DownloadStore.VerifyReport? = null,
+)
+
 @Serializable private data class ExtDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val sources: Int, val repo: String = "", val usesWebView: Boolean = false, val beta: Boolean = false)
 
 @Serializable private data class AvailDto(val pkg: String, val name: String, val version: String, val lang: String, val nsfw: Boolean, val installed: Boolean, val hasUpdate: Boolean, val repo: String = "")
@@ -1107,7 +1122,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -1624,6 +1639,42 @@ fun Application.module() {
                 plans.sumOf { it.second.size }
             }
             call.respond(CountDto(n))
+        }
+
+        // ---- Downloads integrity: fingerprint the library (generate) then re-check it survived a move
+        // (verify). Both run in the background (a full walk of ~millions of files) and report via /progress.
+        fun manifestInfo(): ManifestInfoDto {
+            val m = DownloadStore.savedManifest() ?: return ManifestInfoDto(false)
+            return ManifestInfoDto(true, m.deep, m.generatedAt, m.totalFiles, m.totalBytes, m.series.size)
+        }
+        get("/api/downloads/manifest") { call.respond(withContext(Dispatchers.IO) { manifestInfo() }) }
+        post("/api/downloads/manifest/generate") {
+            val deep = call.queryParam("deep") == "true"
+            if (!manifestRunning) {
+                manifestRunning = true; manifestDone = 0; manifestTotal = 0; manifestPhase = "generate"; manifestReport = null
+                manifestExec.submit {
+                    try { DownloadStore.generateManifest(deep) { d, t -> manifestDone = d; manifestTotal = t } }
+                    catch (e: Throwable) { log.warn("manifest generate failed: {}", e.message) }
+                    finally { manifestRunning = false }
+                }
+            }
+            call.respond(HttpStatusCode.Accepted)
+        }
+        post("/api/downloads/manifest/verify") {
+            if (withContext(Dispatchers.IO) { DownloadStore.savedManifest() } == null) return@post call.respond(HttpStatusCode.BadRequest)
+            if (!manifestRunning) {
+                manifestRunning = true; manifestDone = 0; manifestTotal = 0; manifestPhase = "verify"; manifestReport = null
+                manifestExec.submit {
+                    try { manifestReport = DownloadStore.verifyManifest { d, t -> manifestDone = d; manifestTotal = t } }
+                    catch (e: Throwable) { log.warn("manifest verify failed: {}", e.message) }
+                    finally { manifestRunning = false }
+                }
+            }
+            call.respond(HttpStatusCode.Accepted)
+        }
+        get("/api/downloads/manifest/progress") {
+            val info = withContext(Dispatchers.IO) { manifestInfo() }
+            call.respond(ManifestProgressDto(manifestRunning, manifestDone, manifestTotal, manifestPhase, info, if (!manifestRunning) manifestReport else null))
         }
 
         // Mass download — plan: per-series downloaded/total (unique chapters, mirrors the library badge)

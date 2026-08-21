@@ -47,6 +47,11 @@ export function Dev() {
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanMsg, setScanMsg] = useState('')
+  const [mfInfo, setMfInfo] = useState<import('../api').ManifestInfo | null>(null)
+  const [mfProg, setMfProg] = useState<import('../api').ManifestProgress | null>(null)
+  const [mfReport, setMfReport] = useState<import('../api').VerifyReport | null>(null)
+  const [mfBusy, setMfBusy] = useState(false)
+  const [mfMsg, setMfMsg] = useState('')
   const [library, setLibrary] = useState<LibraryEntry[]>([])
   const [simManga, setSimManga] = useState('')
   const [simMsg, setSimMsg] = useState('')
@@ -90,6 +95,7 @@ export function Dev() {
     api.devState().then(setStateFiles).catch(() => {})
     api.sources().then(setSources).catch(() => {})
     api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha) }).catch(() => {})
+    api.manifestInfo().then(setMfInfo).catch(() => {})
     return () => clearInterval(t)
   }, [])
 
@@ -178,6 +184,31 @@ export function Dev() {
       const series = c.series.filter((s) => !targets.includes(s.title))
       return { series, totalChapters: series.reduce((a, s) => a + s.chapters.length, 0), totalBadPages: series.reduce((a, s) => a + s.chapters.reduce((b, ch) => b + ch.badPages, 0), 0) }
     })
+  }
+  // Poll the background manifest job (generate/verify) to completion, then refresh saved-manifest info.
+  function pollManifest() {
+    setMfBusy(true); setMfReport(null)
+    const t = setInterval(async () => {
+      const p = await api.manifestProgress().catch(() => null)
+      if (!p) return
+      setMfProg(p)
+      if (!p.running) {
+        clearInterval(t); setMfBusy(false); setMfProg(null)
+        if (p.report) { setMfReport(p.report); setMfMsg('') } else setMfMsg('Manifest saved to the data dir')
+        api.manifestInfo().then(setMfInfo).catch(() => {})
+      }
+    }, 800)
+  }
+  async function genManifest(deep: boolean) {
+    setMfMsg(''); setMfReport(null)
+    await api.manifestGenerate(deep).catch(() => {})
+    pollManifest()
+  }
+  async function verifyManifest() {
+    setMfMsg(''); setMfReport(null)
+    const r = await api.manifestVerify().catch(() => null)
+    if (!r || !r.ok) { setMfMsg('Generate a manifest first (on the old box)'); return }
+    pollManifest()
   }
   async function genCaptcha() {
     setCapBusy(true); setCapErr(''); setCapClicks([]); setSolve(null)
@@ -551,6 +582,41 @@ export function Dev() {
                   <button className="btn sm" disabled={scanBusy} onClick={() => repairScan(s.title)}>Repair</button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Downloads integrity</div>
+          <div className="set-hint">Fingerprints every downloaded file so you can confirm the library survived a disk move / copy. <b>Generate</b> on the old box, then <b>Verify</b> on the new one. <b>Fast</b> = names + sizes (minutes); <b>Deep</b> = also SHA-256s every file’s contents (hours — catches bit-rot). Saved to the data dir, so it travels with your config backup.</div>
+          {mfInfo?.exists && (
+            <div className="set-hint" style={{ marginTop: 4 }}>
+              Saved: <b>{mfInfo.deep ? 'DEEP' : 'FAST'}</b> · {mfInfo.series} series · {(mfInfo.totalFiles ?? 0).toLocaleString()} files · {fmtBytes(mfInfo.totalBytes ?? 0)} · {new Date(mfInfo.generatedAt ?? 0).toLocaleString()}
+            </div>
+          )}
+          <div className="set-actions">
+            <button className="btn" disabled={mfBusy} onClick={() => genManifest(false)}>Generate (Fast)</button>
+            <button className="btn" disabled={mfBusy} onClick={() => genManifest(true)}>Generate (Deep)</button>
+            <button className="btn primary" disabled={mfBusy || !mfInfo?.exists} onClick={verifyManifest}>Verify</button>
+          </div>
+          {mfBusy && mfProg && (
+            <div className="set-hint" style={{ marginTop: 6 }}>{mfProg.phase === 'verify' ? 'Verifying' : 'Fingerprinting'}… {mfProg.done}/{mfProg.total} series</div>
+          )}
+          {mfMsg && <div className="set-hint" style={{ marginTop: 6 }}>{mfMsg}</div>}
+          {mfReport && (
+            <div className="set-hint" style={{ marginTop: 6 }}>
+              {mfReport.ok
+                ? `✓ All ${mfReport.seriesTotal} series match (${mfReport.deep ? 'deep' : 'fast'})`
+                : `✗ ${mfReport.seriesMatched}/${mfReport.seriesTotal} match · ${mfReport.missing.length} missing · ${mfReport.extra.length} extra · ${mfReport.changed.length} changed`}
+              {!mfReport.ok && (
+                <div style={{ marginTop: 6, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {mfReport.missing.map((s) => <div key={'m' + s}>⛔ missing: {s}</div>)}
+                  {mfReport.extra.map((s) => <div key={'e' + s}>➕ extra: {s}</div>)}
+                  {mfReport.changed.map((c) => (
+                    <div key={'c' + c.series}>⚠️ {c.series}: {c.savedFiles}→{c.curFiles} files, {fmtBytes(c.savedBytes)}→{fmtBytes(c.curBytes)}{c.chapters.length ? ` · ${c.chapters.join(', ')}` : ''}</div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
