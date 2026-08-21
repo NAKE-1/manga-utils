@@ -24,13 +24,18 @@ Design rationale and the full feature menu live in [`DESIGN.md`](DESIGN.md).
   moment it clears.
 - **Downloads & library** — multi-source fallback, CBZ-friendly on-disk layout, reading
   history/positions, per-scanlator chapter versions, mass-download planning, scheduled
-  library updates with auto-download of new chapters, and Discord notifications.
-- **Self-hosts cleanly** — a Docker/Proxmox deploy with all source egress behind
-  **gluetun/Mullvad** and the web UI reachable only over Tailscale. See
-  [`docs/!DOCKER-SERVER-PLAN-MAIN.md`](docs/!DOCKER-SERVER-PLAN-MAIN.md).
+  library updates (each run reports how many series were checked vs. failed, on-screen and
+  to Discord) with auto-download of new chapters, a **corrupt-image scan + one-click
+  repair** (flags block-pages/junk saved as pages and re-fetches them), and Discord
+  notifications.
+- **Self-hosts cleanly** — a Docker/Proxmox deploy with the web UI reachable only over
+  Tailscale, and source egress routed through Mullvad — either per-container
+  (**gluetun**) or at the network layer (an OpenWRT gateway with a toggleable Mullvad exit
+  node). See [`docs/!DOCKER-SERVER-PLAN-MAIN.md`](docs/!DOCKER-SERVER-PLAN-MAIN.md).
 - **Moves between machines in two clicks** — a *Mass data migration* package carries the
   whole instance (library, history, extensions, settings, covers) except the downloads,
-  which move as their own drive.
+  which move as their own drive — plus a **downloads integrity check** (fast name+size, or
+  deep SHA-256 of every file) that confirms the library survived the move intact.
 
 ## Architecture
 
@@ -48,7 +53,8 @@ Multi-module Gradle project (Kotlin / JVM 21):
 
 All runtime state lives under one data dir (`MU_DATA_DIR`, else a platform default):
 `library.db`, `downloads/`, `extensions/`, `bin/jcef` (the downloaded Chromium native),
-`cache/jcef` (cookies incl. `cf_clearance`), `logs/`.
+`cache/jcef` (cookies incl. `cf_clearance`), `covers/`, `downloads-manifest.json` (the
+integrity fingerprint), `logs/`.
 
 ### Concurrency
 
@@ -86,9 +92,11 @@ so any running instance reports exactly which commit it was built from.
 ## Deploying
 
 The intended production shape is a Debian VM on Proxmox running Docker: the whole server
-(including JCEF) in one container behind gluetun/Mullvad for source egress, with the web
-UI published only onto your Tailscale network. The full architecture, `Dockerfile`,
-compose file, and a step-by-step setup runbook are in
+(including JCEF) in one container, with the web UI published only onto your Tailscale
+network. Source egress goes through Mullvad — either per-container via **gluetun**, or at
+the network layer via an **OpenWRT gateway** with a toggleable Mullvad exit node (so the
+whole LAN shares one tunnel and the container stays simpler). The full architecture,
+`Dockerfile`, compose file, and a step-by-step setup runbook are in
 [`docs/!DOCKER-SERVER-PLAN-MAIN.md`](docs/!DOCKER-SERVER-PLAN-MAIN.md).
 
 ## Licensing & ethics
