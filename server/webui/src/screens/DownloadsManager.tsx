@@ -37,10 +37,12 @@ export function DownloadsManager() {
 
   async function scan() {
     setScanning(true)
-    const r = await api.scanCorrupt().catch(() => null)
+    const r = await api.scanCorrupt((done, total) => { if (total > 0) setMsg(`Scanning… ${done}/${total} series`) }).catch(() => null)
     setScanning(false)
     setCorrupt(r)
-    if (r) flash(r.totalBadPages > 0 ? `Found ${r.totalBadPages} bad image${r.totalBadPages === 1 ? '' : 's'} in ${r.totalChapters} chapter${r.totalChapters === 1 ? '' : 's'}` : 'No corrupt images found')
+    flash(!r ? 'Scan failed'
+      : r.totalBadPages > 0 ? `Found ${r.totalBadPages} bad image${r.totalBadPages === 1 ? '' : 's'} in ${r.totalChapters} chapter${r.totalChapters === 1 ? '' : 's'}`
+      : 'No corrupt images found')
   }
   async function repairAllCorrupt() {
     if (!corrupt?.series.length) return
