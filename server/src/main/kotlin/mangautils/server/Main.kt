@@ -1966,10 +1966,19 @@ fun Application.module() {
             // ?path=<relative chapter/manga url> combined with ?source= opens baseUrl+path (e.g. the
             // current chapter's reader page) — the client has the path but not the source's base URL.
             val path = call.request.queryParameters["path"]?.trim()
+            val http0 = call.request.queryParameters["source"]?.toLongOrNull()
+                ?.let { mangautils.core.source.SourceManager.loadSource(it) as? eu.kanade.tachiyomi.source.online.HttpSource }
             val url = call.request.queryParameters["url"]?.trim()?.takeIf { it.startsWith("http") }
-                ?: call.request.queryParameters["source"]?.toLongOrNull()?.let { sid ->
-                    (mangautils.core.source.SourceManager.loadSource(sid) as? eu.kanade.tachiyomi.source.online.HttpSource)?.baseUrl
-                        ?.let { base -> if (!path.isNullOrBlank()) base.trimEnd('/') + "/" + path.trimStart('/') else base }
+                ?: http0?.let { src ->
+                    if (path.isNullOrBlank()) src.baseUrl
+                    // Resolve the chapter's real web page via the source itself (Suwayomi's approach): API-id
+                    // sources (e.g. Atsumaru) override getChapterUrl to their actual reader page (…/read/<id>),
+                    // which a hand-rolled baseUrl+path misses. Path sources (MangaFire) return baseUrl+path
+                    // unchanged. Fall back to baseUrl+path only if the source yields no usable URL.
+                    else runCatching {
+                        src.getChapterUrl(eu.kanade.tachiyomi.source.model.SChapter.create().apply { this.url = path })
+                    }.getOrNull()?.takeIf { it.startsWith("http") }
+                        ?: (src.baseUrl.trimEnd('/') + "/" + path.trimStart('/'))
                 }
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("a http(s) url or valid source id is required"))
             withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.open(url) }
