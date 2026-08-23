@@ -424,7 +424,7 @@ export interface Stats { chaptersRead: number; seriesInLibrary: number; readThis
 export interface MassPlanItem { sourceId: string; mangaUrl: string; title: string; source: string; total: number; downloaded: number; missing: number }
 export interface MassPlan { items: MassPlanItem[]; totalMissing: number; seriesWithMissing: number }
 
-export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean }
+export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean; sourceName: string }
 export interface ManagedChapter { name: string; pages: number; bytes: number; cbz: boolean; complete: boolean }
 
 export interface MigItem { key: string; label: string; files: number; bytes: number; detail: string }

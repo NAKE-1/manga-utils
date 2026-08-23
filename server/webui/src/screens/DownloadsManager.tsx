@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ManagedSeries, ManagedChapter, BrokenReport, CorruptReport } from '../api'
+
+type SortKey = 'name' | 'size' | 'source'
 import { IconArrowLeft, IconChevronDown, IconDownload } from '../components/icons'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 
@@ -19,6 +21,19 @@ export function DownloadsManager() {
   const [scanning, setScanning] = useState(false)
   const [repairingCorrupt, setRepairingCorrupt] = useState(false)
   const [loadErr, setLoadErr] = useState(false)
+  const [sortBy, setSortBy] = useState<SortKey>(() => (localStorage.getItem('dm.sort') as SortKey) || 'name')
+  useEffect(() => { localStorage.setItem('dm.sort', sortBy) }, [sortBy])
+  // Source is best-effort (resolved via the library); '' shows as Unknown and sorts last.
+  const view = useMemo(() => {
+    if (!series) return series
+    const src = (s: ManagedSeries) => (s.sourceName ? s.sourceName.toLowerCase() : '￿')
+    const byName = (a: ManagedSeries, b: ManagedSeries) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
+    const cmp =
+      sortBy === 'size' ? (a: ManagedSeries, b: ManagedSeries) => b.bytes - a.bytes || byName(a, b)
+      : sortBy === 'source' ? (a: ManagedSeries, b: ManagedSeries) => src(a).localeCompare(src(b)) || byName(a, b)
+      : byName
+    return [...series].sort(cmp)
+  }, [series, sortBy])
 
   const load = () => {
     // On failure keep series null + flag the error, so a timeout shows "Couldn't load" rather than
@@ -158,19 +173,26 @@ export function DownloadsManager() {
                 <div className="dm-stat"><span className="dm-stat-n">{series.length}</span><span className="dm-stat-l">series</span></div>
                 <div className="dm-stat"><span className="dm-stat-n">{totalCh}</span><span className="dm-stat-l">chapters</span></div>
                 {biggest && <div className="dm-stat wide"><span className="dm-stat-n">{biggest.title}</span><span className="dm-stat-l">largest · {fmtSize(biggest.bytes)}</span></div>}
+                <label className="dm-sort">Sort
+                  <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortKey)}>
+                    <option value="name">Name</option>
+                    <option value="size">Size</option>
+                    <option value="source">Source</option>
+                  </select>
+                </label>
                 <button className="btn sm dm-scan" disabled={scanning} onClick={scan} title="Check every downloaded page for corrupt/non-image files (e.g. saved block pages)">
                   {scanning ? 'Scanning…' : corrupt ? 'Re-scan images' : 'Scan images'}
                 </button>
               </div>
             )
           })()}
-          {series.map((s) => (
+          {(view ?? []).map((s) => (
             <div key={s.title} className="dm-series">
               <button className="dm-row" onClick={() => toggle(s.title)}>
                 <IconChevronDown className={'dm-caret' + (open === s.title ? ' open' : '')} />
                 <div className="ext-info">
                   <div className="ext-name">{s.title}{s.incomplete > 0 && <span className="dm-badge">{s.incomplete} incomplete</span>}</div>
-                  <div className="ext-sub">{s.chapters} chapter{s.chapters === 1 ? '' : 's'} · {fmtSize(s.bytes)}</div>
+                  <div className="ext-sub">{s.chapters} chapter{s.chapters === 1 ? '' : 's'} · {fmtSize(s.bytes)} · {s.sourceName || 'Unknown source'}</div>
                 </div>
                 <IconDownload className="dm-dl" />
               </button>

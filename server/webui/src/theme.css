@@ -441,6 +441,9 @@ img { display: block; }
 .dm-stat-n { font-size: 17px; font-weight: 800; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-stat.wide .dm-stat-n { font-size: 14px; }
 .dm-stat-l { font-size: 11px; color: #8a8a92; text-transform: uppercase; letter-spacing: 0.03em; }
+.dm-sort { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8a8a92; }
+.dm-sort select { background: #17171a; border: 1px solid #24242a; border-radius: 8px; color: var(--text);
+  font: inherit; font-size: 12px; padding: 6px 8px; }
 
 /* Library search + sort/filter toolbar. */
 .lib-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; }

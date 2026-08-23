@@ -426,7 +426,7 @@ private fun validateVrf(json: String): Pair<Boolean, String> = runCatching {
     val vfHost: String = "",
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
-@Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
+@Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean, val sourceName: String = "")
 @Serializable private data class ManagedChapterDto(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean, val complete: Boolean)
 
 @Serializable
@@ -1574,7 +1574,15 @@ fun Application.module() {
 
         get("/api/downloads/manage") {
             val list = withContext(Dispatchers.IO) {
-                DownloadStore.listSeries().map { ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover) }
+                // Downloads are stored by title only (no source on disk), so resolve each series' source
+                // best-effort by matching its folder (a sanitized title) against the library. A title that
+                // maps to two different sources, or isn't in the library, resolves to "" (shown as Unknown).
+                val byTitle = mangautils.core.library.LibraryStore.list()
+                    .groupBy { mangautils.core.download.DownloadManager.sanitize(it.title) }
+                    .mapValues { (_, es) -> es.map { DownloadQueue.sourceName(it.sourceId) }.distinct().singleOrNull() ?: "" }
+                DownloadStore.listSeries().map {
+                    ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover, byTitle[it.title] ?: "")
+                }
             }
             call.respond(list)
         }
