@@ -200,8 +200,15 @@ object BackupImport {
         // Restore any manga-utils-native sections present in the file.
         var settingsRestored = false
         if (!backup.settingsJson.isNullOrBlank()) {
-            runCatching { SettingsStore.save(json.decodeFromString<Settings>(backup.settingsJson)) }
-                .onSuccess { settingsRestored = true }
+            runCatching {
+                val incoming = json.decodeFromString<Settings>(backup.settingsJson)
+                // Never let a restore clobber machine-specific settings. Export blanks these on purpose
+                // (so a backup moved to another box doesn't drag this host's paths along) - so on import we
+                // KEEP the current host's values instead of writing the blanked ones back. Otherwise a
+                // same-box restore nulls downloadDir and the app loses sight of the downloads folder.
+                val current = SettingsStore.get()
+                SettingsStore.save(incoming.copy(downloadDir = current.downloadDir, flareSolverrUrl = current.flareSolverrUrl))
+            }.onSuccess { settingsRestored = true }
                 .onFailure { log.warn("backup: failed to restore settings: {}", it.message) }
         }
         var historyRestored = 0
