@@ -22,7 +22,7 @@ import kotlin.io.path.name
  * Downloads live at `<downloadsDir>/<title>/<chapter>/…` (folder of pages) or `<chapter>.cbz`.
  */
 object DownloadStore {
-    data class Series(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean)
+    data class Series(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean, val sourceName: String = "")
     /** [complete] = the chapter finished writing (has ComicInfo.xml). Missing it ⇒ interrupted/partial. */
     data class Chapter(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean, val complete: Boolean)
 
@@ -80,7 +80,8 @@ object DownloadStore {
             st.filter { it.isDirectory() }.map { dir ->
                 val stats = chapterEntries(dir).map { statChapter(it) }
                 val hasCover = runCatching { Files.list(dir).use { s -> s.anyMatch { it.name.startsWith("cover.") } } }.getOrDefault(false)
-                Series(dir.name, stats.size, stats.count { !it.complete }, stats.sumOf { it.bytes }, hasCover)
+                val sourceName = SeriesMeta.read(dir)?.sourceName ?: ""
+                Series(dir.name, stats.size, stats.count { !it.complete }, stats.sumOf { it.bytes }, hasCover, sourceName)
             }.toList()
         }.sortedBy { it.title.lowercase() }
     }

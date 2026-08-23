@@ -122,6 +122,24 @@ class DownloadManager(
 
             // Save the cover into the series folder so it's available offline (once per series).
             runCatching { saveCover(primary.sourceId, title, details) }
+            // Record the series identity in the folder (.series.json) so the downloads manager can report
+            // its real source, and the library can be rebuilt from disk, without title-matching.
+            runCatching {
+                SeriesMeta.write(
+                    AppConfig.downloadsDir.resolve(sanitize(title)),
+                    SeriesMeta(
+                        sourceId = primary.sourceId,
+                        sourceName = runCatching { primarySource.name }.getOrDefault(""),
+                        mangaUrl = primary.mangaUrl,
+                        title = title,
+                        author = runCatching { details.author }.getOrNull(),
+                        status = runCatching { details.status }.getOrDefault(0),
+                        genre = runCatching { details.genre }.getOrNull(),
+                        thumbnailUrl = runCatching { details.thumbnail_url }.getOrNull(),
+                        savedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
 
             // Pre-fetch mirror chapter lists so we can match by chapter number on fallback.
             val mirrorChapters =

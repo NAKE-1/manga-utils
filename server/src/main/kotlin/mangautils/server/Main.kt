@@ -1595,7 +1595,8 @@ fun Application.module() {
                     .groupBy { mangautils.core.download.DownloadManager.sanitize(it.title) }
                     .mapValues { (_, es) -> es.map { DownloadQueue.sourceName(it.sourceId) }.distinct().singleOrNull() ?: "" }
                 DownloadStore.listSeries().map {
-                    ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover, byTitle[it.title] ?: "")
+                    // Sidecar (.series.json) is exact; fall back to library title-match only when absent.
+                    ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover, it.sourceName.ifBlank { byTitle[it.title] ?: "" })
                 }
             }
             call.respond(list)
