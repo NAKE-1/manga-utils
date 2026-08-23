@@ -5,8 +5,12 @@ import { IconDownload } from './icons'
 import noPoster from '../assets/no-poster.png'
 
 // Warm the detail (server + browser cache) on hover/press so the tap opens instantly.
+// Disabled: on a big grid a mouse sweep fired a live source fetch per card, hammering
+// Cloudflare sources (JCEF/FlareSolverr). Flip to true to re-enable hover prefetch.
+const PREFETCH_ON_HOVER = false
 const prefetched = new Set<string>()
 function prefetchDetail(sourceId: string, url: string) {
+  if (!PREFETCH_ON_HOVER) return
   const k = sourceId + '|' + url
   if (prefetched.has(k)) return
   prefetched.add(k)
