@@ -79,8 +79,6 @@ export function Settings() {
   const pendingLocalName = useRef<string | null>(null) // set when the pending restore is a saved on-disk backup
   const [backups, setBackups] = useState<LocalBackup[]>([])
   const [backingUp, setBackingUp] = useState(false)
-  const [backfilling, setBackfilling] = useState(false)
-  const [backfillMsg, setBackfillMsg] = useState<{ text: string; err: boolean } | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [exportSel, setExportSel] = useState<Record<string, boolean>>({ library: true, settings: true, repos: true, extensions: false })
   async function runExport() {
@@ -146,27 +144,6 @@ export function Settings() {
   async function deleteLocal(name: string) {
     await api.localBackupDelete(name).catch(() => {})
     refreshBackups()
-  }
-  // Backfill .series.json: preview first (writes nothing), then confirm to write the missing sidecars.
-  async function runBackfill() {
-    setBackfillMsg(null); setBackfilling(true)
-    try {
-      const p = await api.seriesBackfillPreview()
-      setBackfilling(false)
-      setConfirm({
-        title: 'Backfill series metadata',
-        message: `${p.total} folders · ${p.alreadyHad} already have it · ${p.written} to write` +
-          `${p.unresolved.length ? ` · ${p.unresolved.length} unresolved (left untouched)` : ''}. Only writes missing .series.json files — never changes chapters.`,
-        confirmLabel: p.written > 0 ? `Write ${p.written}` : 'Nothing to write',
-        onCancel: () => setConfirm(null),
-        onConfirm: async () => {
-          setConfirm(null); setBackfilling(true)
-          try { const r = await api.seriesBackfillRun(); setBackfillMsg({ text: `Wrote ${r.written} · ${r.alreadyHad} already had one · ${r.unresolved.length} unresolved.`, err: false }) }
-          catch (e) { setBackfillMsg({ text: e instanceof Error ? e.message : 'Backfill failed', err: true }) }
-          finally { setBackfilling(false) }
-        },
-      })
-    } catch (e) { setBackfilling(false); setBackfillMsg({ text: e instanceof Error ? e.message : 'Preview failed', err: true }) }
   }
 
   async function toggleAutoUpdate() {
@@ -880,15 +857,6 @@ export function Settings() {
           <div className="set-row-label">Developer tools</div>
           <div className="set-hint">Runtime stats, storage breakdown, state inspectors, network log, source diagnostics, and a diagnostics bundle.</div>
           <div className="set-actions"><button className="btn primary" onClick={() => nav('/dev')}>Open developer tools →</button></div>
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Backfill series metadata</div>
-          <div className="set-hint">Write a <code>.series.json</code> identity into download folders that don't have one yet (resolved from library → queue → history), so Manage shows the real source and the library is rebuildable from disk. You'll see a preview first; it only ever writes a missing file — never touches chapters.</div>
-          <div className="set-actions">
-            <button className="btn primary" disabled={backfilling} onClick={runBackfill}>{backfilling ? 'Working…' : 'Backfill…'}</button>
-            {backfillMsg && <span className={'set-msg' + (backfillMsg.err ? ' err' : '')}>{backfillMsg.text}</span>}
-          </div>
         </div>
 
       </section>

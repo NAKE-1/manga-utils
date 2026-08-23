@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport } from '../api'
+import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
@@ -86,6 +86,21 @@ export function Dev() {
   const [solving, setSolving] = useState(false)
   const [solveAttempt, setSolveAttempt] = useState(0)
   const [capStats, setCapStats] = useState<import('../api').CapStats | null>(null)
+  const [bf, setBf] = useState<SeriesBackfillResult | null>(null)
+  const [bfBusy, setBfBusy] = useState(false)
+  const [bfDone, setBfDone] = useState<string | null>(null)
+
+  async function previewBackfill() {
+    setBfBusy(true); setBfDone(null)
+    try { setBf(await api.seriesBackfillPreview()) } catch { toast('Preview failed', 'error') }
+    finally { setBfBusy(false) }
+  }
+  async function runBackfill() {
+    setBfBusy(true)
+    try { const r = await api.seriesBackfillRun(); setBf(null); setBfDone(`Wrote ${r.written} · ${r.alreadyHad} already had one · ${r.unresolved.length} unresolved.`); toast('Backfill complete', 'info') }
+    catch { toast('Backfill failed', 'error') }
+    finally { setBfBusy(false) }
+  }
 
   useEffect(() => {
     const load = () => api.devStats().then((d) => { setS(d); setFailed(false) }).catch(() => setFailed(true))
@@ -390,6 +405,19 @@ export function Dev() {
           <div className="set-row-label">Mass data migration</div>
           <div className="set-hint">Move ALL app data — library, read state, resume points, history, settings, extensions, covers — from one instance to another. Everything <b>except downloads</b>, which you move as a mounted drive. You'll see exactly what's inside before creating or restoring.</div>
           <div className="set-actions"><button className="btn primary" onClick={() => setMigOpen(true)}>Open migration…</button></div>
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">Backfill series metadata</div>
+          <div className="set-hint">Write a <code>.series.json</code> identity into download folders that lack one (resolved from library → queue → history), so Manage shows the real source and the library is rebuildable from disk. Preview writes nothing; it only ever writes a missing file — never touches chapters.</div>
+          <div className="set-actions">
+            <button className="btn" disabled={bfBusy} onClick={previewBackfill}>{bfBusy ? 'Working…' : 'Preview'}</button>
+            {bf && bf.written > 0 && <button className="btn primary" disabled={bfBusy} onClick={runBackfill}>Write {bf.written}</button>}
+          </div>
+          {bf && (
+            <div className="set-hint">{bf.total} folders · {bf.alreadyHad} already have it · {bf.written} to write · {bf.unresolved.length} unresolved
+              {bf.unresolved.length > 0 && <> ({bf.unresolved.slice(0, 5).join(', ')}{bf.unresolved.length > 5 ? '…' : ''})</>}</div>
+          )}
+          {bfDone && <div className="set-msg">{bfDone}</div>}
         </div>
       </div>
 
