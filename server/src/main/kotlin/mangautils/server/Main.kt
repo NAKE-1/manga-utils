@@ -2252,6 +2252,10 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        // Backfill .series.json into download folders that lack one (library → queue → history). Preview
+        // writes nothing; POST does it. Safe: only ever writes a missing sidecar, never overwrites/renames/deletes.
+        get("/api/dev/series-backfill/preview") { call.respond(withContext(Dispatchers.IO) { SeriesBackfill.run(dryRun = true) }) }
+        post("/api/dev/series-backfill") { call.respond(withContext(Dispatchers.IO) { SeriesBackfill.run(dryRun = false) }) }
         // Clean restart / shutdown (dev). Restart relies on start.bat's web loop seeing restart.flag.
         post("/api/dev/restart") { call.respond(HttpStatusCode.OK); initiateRestart(restart = true) }
         post("/api/dev/shutdown") { call.respond(HttpStatusCode.OK); initiateRestart(restart = false) }

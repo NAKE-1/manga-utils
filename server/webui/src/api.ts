@@ -20,6 +20,7 @@ export interface PageResult { mangas: Manga[]; hasNextPage: boolean }
 export interface BackupResult { imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number; historyRestored?: number; clientPrefsJson?: string | null }
 export interface ImportJob { state: string; phase: string; done: number; total: number; current: string; error?: string; result?: BackupResult | null }
 export interface LocalBackup { name: string; savedAt: number; size: number; kind: string }
+export interface SeriesBackfillResult { total: number; alreadyHad: number; written: number; unresolved: string[]; dryRun: boolean }
 export interface BackupPreview { total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number }
 
 export interface RelocatePreview { sourceBytes: number; sourceFiles: number; targetFreeBytes: number; targetLayout: string; activeDownloads: number; fits: boolean; warning: string }
@@ -327,6 +328,12 @@ export const api = {
   devRequests: () => getJson<ReqLog[]>('/api/dev/requests'),
   devRequestsClear: () => fetch('/api/dev/requests/clear', { method: 'POST' }),
   devRestart: () => fetch('/api/dev/restart', { method: 'POST' }),
+  seriesBackfillPreview: () => getJson<SeriesBackfillResult>('/api/dev/series-backfill/preview', 0, 120000),
+  seriesBackfillRun: async (): Promise<SeriesBackfillResult> => {
+    const r = await fetch('/api/dev/series-backfill', { method: 'POST' })
+    if (!r.ok) throw new Error('Backfill failed')
+    return r.json() as Promise<SeriesBackfillResult>
+  },
   clearWebviewCookies: (host?: string) => fetch(`/api/dev/webview/clear-cookies${host ? `?host=${encodeURIComponent(host)}` : ''}`, { method: 'POST' }).then((r) => r.json() as Promise<{ cleared: number }>),
   devShutdown: () => fetch('/api/dev/shutdown', { method: 'POST' }),
   devCaptcha: () => getJson<DevCaptcha>('/api/dev/captcha/generate', 0, 60000),
