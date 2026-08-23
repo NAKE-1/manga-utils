@@ -86,6 +86,13 @@ data class Settings(
     val healthCheckEnabled: Boolean = false,
     /** Hour of day (0-23, local time) the daily health sweep runs. */
     val healthCheckHour: Int = 3,
+    // ---- Scheduled local data backups (.mudata snapshots in <dataDir>/backups) ----
+    /** Make a daily local snapshot of the library/history/settings so a corruption or mistake is recoverable. */
+    val autoBackupEnabled: Boolean = true,
+    /** Hour of day (0-23, local time) the daily backup runs. */
+    val autoBackupHour: Int = 4,
+    /** How many rotating auto-backups to keep (oldest pruned; manual backups are never auto-pruned). */
+    val autoBackupKeep: Int = 5,
     // ---- Cloudflare bypass (FlareSolverr) ----
     /** Solve Cloudflare challenges via a running FlareSolverr instance. */
     val flareSolverrEnabled: Boolean = false,

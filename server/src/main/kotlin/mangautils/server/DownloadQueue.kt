@@ -23,10 +23,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
-import kotlin.io.path.createParentDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 /**
  * Web download queue. Each task is ONE manga (a set of chapters), downloaded with a single
@@ -376,8 +372,7 @@ object DownloadQueue {
                     t.chapters.map { PChap(it.url, it.name) }, t.finishedUrls.toList(), t.failed.map { it.url }, t.error,
                     t.autoRetries, t.failClass, t.reArms, t.retryAt, t.failReason.toMap())
             }
-            queueFile.createParentDirectories()
-            queueFile.writeText(pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
+            mangautils.core.util.SafeFile.writeAtomic(queueFile, pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
         }.onFailure { log.debug("queue persist failed: {}", it.message) }
     }
 
@@ -545,7 +540,7 @@ object DownloadQueue {
 
     @Synchronized
     fun loadAndResume() {
-        val pf = runCatching { if (queueFile.exists()) pjson.decodeFromString<PFile>(queueFile.readText()) else null }.getOrNull() ?: return
+        val pf = mangautils.core.util.SafeFile.read(queueFile) { runCatching { pjson.decodeFromString<PFile>(it) }.getOrNull() } ?: return
         if (pf.tasks.isEmpty()) return
         var interrupted = 0; var kept = 0
         for (pt in pf.tasks) {

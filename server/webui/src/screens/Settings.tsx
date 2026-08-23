@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, Source, SettingsInfo, DiagResult, DevStats, VersionInfo, BackupJob, BackupResult, FlareTest } from '../api'
+import { api, Source, SettingsInfo, DiagResult, DevStats, VersionInfo, BackupJob, BackupResult, FlareTest, LocalBackup } from '../api'
 import { SourcePicker } from '../components/SourcePicker'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { THEMES, applyTheme, currentTheme } from '../themes'
@@ -27,6 +27,13 @@ const fmtUptime = (ms: number) => {
 }
 // 0..23 -> "12:00 AM" .. "11:00 PM"
 const fmtHour = (h: number) => `${h % 12 === 0 ? 12 : h % 12}:00 ${h < 12 ? 'AM' : 'PM'}`
+const fmtBytes = (b: number) => (b < 1024 ? `${b} B` : b < 1024 ** 2 ? `${Math.round(b / 1024)} KB` : `${(b / 1024 ** 2).toFixed(1)} MB`)
+// Date and time formatted separately and joined — one toLocaleString call renders "Aug 23 at 4:00" on some phones.
+const fmtBackupDate = (ms: number) => {
+  if (!ms) return ''
+  const d = new Date(ms)
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+}
 
 // DYNO (USB backup) is hidden until the portable-library work is ready. Flip to true to restore it.
 const SHOW_USB_BACKUP = false
@@ -69,6 +76,9 @@ export function Settings() {
   const [preview, setPreview] = useState<{ total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number } | null>(null)
   const backupInput = useRef<HTMLInputElement>(null)
   const pendingBackup = useRef<ArrayBuffer | null>(null)
+  const pendingLocalName = useRef<string | null>(null) // set when the pending restore is a saved on-disk backup
+  const [backups, setBackups] = useState<LocalBackup[]>([])
+  const [backingUp, setBackingUp] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [exportSel, setExportSel] = useState<Record<string, boolean>>({ library: true, settings: true, repos: true, extensions: false })
   async function runExport() {
@@ -101,7 +111,40 @@ export function Settings() {
     api.sources().then((s) => { setSources(s); setDiagSource((c) => (c && s.some((x) => x.id === c)) || !s.length ? c : s[0].id) }).catch(() => {})
     api.version().then(setAbout).catch(() => {})
     api.languages().then(setLanguages).catch(() => {})
+    api.localBackups().then(setBackups).catch(() => {})
   }, [])
+
+  function refreshBackups() { api.localBackups().then(setBackups).catch(() => {}) }
+  async function toggleAutoBackup() {
+    if (!info) return
+    const s = await api.saveSettings({ autoBackupEnabled: !info.autoBackupEnabled }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function setBackupHour(n: number) {
+    const s = await api.saveSettings({ autoBackupHour: Math.max(0, Math.min(23, n)) }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function setBackupKeep(n: number) {
+    const s = await api.saveSettings({ autoBackupKeep: Math.max(1, Math.min(20, n)) }).catch(() => null)
+    if (s) setInfo(s)
+  }
+  async function backupNow() {
+    setBackingUp(true); setImportMsg(null)
+    try { await api.localBackupCreate(); refreshBackups(); setImportMsg({ text: 'Backup saved.', err: false }) }
+    catch (e) { setImportMsg({ text: e instanceof Error ? e.message : 'Backup failed', err: true }) }
+    finally { setBackingUp(false) }
+  }
+  // Restore a saved backup: load its diff into the shared preview panel; confirm runs the merge.
+  async function restoreLocal(name: string) {
+    setImporting(true); setImportMsg(null); setPreview(null)
+    try { pendingLocalName.current = name; pendingBackup.current = null; setPreview(await api.localBackupPreview(name)) }
+    catch (e) { setImportMsg({ text: e instanceof Error ? e.message : 'Couldn’t read that backup', err: true }); pendingLocalName.current = null }
+    finally { setImporting(false) }
+  }
+  async function deleteLocal(name: string) {
+    await api.localBackupDelete(name).catch(() => {})
+    refreshBackups()
+  }
 
   async function toggleAutoUpdate() {
     if (!info) return
@@ -136,10 +179,12 @@ export function Settings() {
     } finally { setImporting(false) }
   }
   async function doImport() {
-    if (!pendingBackup.current) return
+    if (!pendingBackup.current && !pendingLocalName.current) return
     setImporting(true); setImportMsg(null); setImportProg({ phase: 'Starting…', done: 0, total: 0, current: '' })
     try {
-      await api.importStart(pendingBackup.current) // kicks off the background restore
+      // kick off the background restore — from a saved on-disk backup or the uploaded file
+      if (pendingLocalName.current) await api.localBackupRestore(pendingLocalName.current)
+      else await api.importStart(pendingBackup.current!)
       let r: BackupResult | null = null
       for (;;) { // poll live progress until the job finishes
         await new Promise((res) => setTimeout(res, 350))
@@ -158,12 +203,12 @@ export function Settings() {
         r?.extensionsInstalled ? `${r.extensionsInstalled} extension${r.extensionsInstalled === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join(' · ')
       setImportMsg({ text: `Imported ${r?.imported ?? 0} manga${r?.skipped ? ` · ${r.skipped} skipped` : ''}${extras ? ` · restored ${extras}` : ''}${r?.extensionsFailed ? ` · ${r.extensionsFailed} ext failed` : ''}.`, err: false })
-      setPreview(null); pendingBackup.current = null
+      setPreview(null); pendingBackup.current = null; pendingLocalName.current = null
     } catch (err) {
       setImportMsg({ text: err instanceof Error ? err.message : 'Import failed', err: true })
     } finally { setImporting(false); setImportProg(null) }
   }
-  function cancelImport() { setPreview(null); pendingBackup.current = null }
+  function cancelImport() { setPreview(null); pendingBackup.current = null; pendingLocalName.current = null }
   // Poll the USB-backup job ~1s while it's running.
   useEffect(() => {
     if (!usbJob?.running) return
@@ -533,6 +578,43 @@ export function Settings() {
 
       <section className="set-section">
         <div className="set-section-h">Backup</div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={toggleAutoBackup}>
+            <div>
+              <div className="set-row-label">Automatic backups</div>
+              <div className="set-hint">Save a daily snapshot of your library, reading history &amp; settings to <code>{(info?.dataDir || '…')}\backups</code>. Keeps the newest few so a corruption or mistake is recoverable. (Images aren’t included — these are small.)</div>
+            </div>
+            <span className={'switch' + (info?.autoBackupEnabled ? ' on' : '')}><span className="knob" /></span>
+          </button>
+          {info?.autoBackupEnabled && (
+            <div className="set-inline">
+              <span className="set-row-label">Every day at</span>
+              <select className="set-select" style={{ width: 'auto' }} value={info?.autoBackupHour ?? 4} onChange={(e) => setBackupHour(Number(e.target.value))}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+              </select>
+              <span className="set-row-label">· keep</span>
+              <select className="set-select" style={{ width: 'auto' }} value={info?.autoBackupKeep ?? 5} onChange={(e) => setBackupKeep(Number(e.target.value))}>
+                {[3, 5, 7, 10, 15].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="set-actions">
+            <button className="btn primary" disabled={backingUp} onClick={backupNow}>{backingUp ? 'Backing up…' : 'Back up now'}</button>
+          </div>
+          {backups.length > 0 ? (
+            <div className="backup-list">
+              {backups.map((b) => (
+                <div key={b.name} className="backup-row">
+                  <div className="backup-when">{fmtBackupDate(b.savedAt)}{b.kind === 'manual' ? ' · pinned' : ''}<span className="backup-size">{fmtBytes(b.size)}</span></div>
+                  <div className="backup-acts">
+                    <button className="btn" disabled={importing} onClick={() => restoreLocal(b.name)}>Restore</button>
+                    <button className="btn" onClick={() => deleteLocal(b.name)}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <div className="set-hint">No local backups yet.</div>}
+        </div>
         <div className="set-card">
           <div className="set-row-label">Backup &amp; restore</div>
           <div className="set-hint">Import a Mihon / Tachiyomi .tachibk / .proto.gz — you’ll see a preview first and nothing changes until you confirm. Export writes your current library to a .tachibk you can re-import (great for testing round-trips). Install the matching source extensions to actually read imported manga.</div>

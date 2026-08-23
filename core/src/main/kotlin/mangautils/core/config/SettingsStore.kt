@@ -7,10 +7,7 @@ package mangautils.core.config
 
 import kotlinx.serialization.json.Json
 import mangautils.core.download.ExistingPolicy
-import kotlin.io.path.createParentDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
+import mangautils.core.util.SafeFile
 
 /** Loads/saves [Settings] from `data/settings.json`, with string key access for the CLI. */
 object SettingsStore {
@@ -23,20 +20,14 @@ object SettingsStore {
     @Synchronized
     fun get(): Settings {
         cached?.let { return it }
-        val loaded =
-            if (file.exists()) {
-                runCatching { json.decodeFromString<Settings>(file.readText()) }.getOrDefault(Settings())
-            } else {
-                Settings()
-            }
+        val loaded = SafeFile.read(file) { runCatching { json.decodeFromString<Settings>(it) }.getOrNull() } ?: Settings()
         cached = loaded
         return loaded
     }
 
     @Synchronized
     fun save(settings: Settings) {
-        file.createParentDirectories()
-        file.writeText(json.encodeToString(settings))
+        SafeFile.writeAtomic(file, json.encodeToString(settings))
         cached = settings
     }
 

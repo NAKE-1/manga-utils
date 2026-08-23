@@ -7,10 +7,7 @@ package mangautils.core.library
 
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
-import kotlin.io.path.createParentDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
+import mangautils.core.util.SafeFile
 
 /**
  * How far through each chapter you got, per manga, in `data/positions.json`. Keyed "sourceId|mangaUrl"
@@ -28,25 +25,35 @@ object PositionStore {
     private val file get() = AppConfig.dataDir.resolve("positions.json")
 
     @Synchronized
-    private fun load(): MutableMap<String, MutableMap<String, Float>> {
-        if (!file.exists()) return mutableMapOf()
-        return runCatching {
-            json.decodeFromString<Map<String, Map<String, Float>>>(file.readText())
-                .mapValues { it.value.toMutableMap() }
-                .toMutableMap()
-        }.getOrDefault(mutableMapOf())
-    }
+    private fun load(): MutableMap<String, MutableMap<String, Float>> =
+        SafeFile.read(file) {
+            runCatching {
+                json.decodeFromString<Map<String, Map<String, Float>>>(it)
+                    .mapValues { e -> e.value.toMutableMap() }
+                    .toMutableMap()
+            }.getOrNull()
+        } ?: mutableMapOf()
 
     @Synchronized
-    private fun save(map: Map<String, Map<String, Float>>) {
-        file.createParentDirectories()
-        file.writeText(json.encodeToString(map))
-    }
+    private fun save(map: Map<String, Map<String, Float>>) = SafeFile.writeAtomic(file, json.encodeToString(map))
 
     private fun key(
         sourceId: Long,
         mangaUrl: String,
     ) = "$sourceId|$mangaUrl"
+
+    /** Full "sourceId|mangaUrl" -> chapter -> fraction map, for backup export. */
+    @Synchronized
+    fun snapshot(): Map<String, Map<String, Float>> = load()
+
+    /** Merge backup positions into current (backup value wins per chapter), for restore. */
+    @Synchronized
+    fun restore(data: Map<String, Map<String, Float>>) {
+        if (data.isEmpty()) return
+        val map = load()
+        for ((k, v) in data) map.getOrPut(k) { mutableMapOf() }.putAll(v)
+        save(map)
+    }
 
     fun positions(
         sourceId: Long,

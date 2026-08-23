@@ -461,6 +461,9 @@ private data class SettingsDto(
     val autoDownloadNew: Boolean,
     val healthCheckEnabled: Boolean,
     val healthCheckHour: Int,
+    val autoBackupEnabled: Boolean,
+    val autoBackupHour: Int,
+    val autoBackupKeep: Int,
     val flareSolverrEnabled: Boolean,
     val flareSolverrUrl: String,
     val flareSolverrSession: String,
@@ -547,6 +550,9 @@ private data class SettingsPatch(
     val autoDownloadNew: Boolean? = null,
     val healthCheckEnabled: Boolean? = null,
     val healthCheckHour: Int? = null,
+    val autoBackupEnabled: Boolean? = null,
+    val autoBackupHour: Int? = null,
+    val autoBackupKeep: Int? = null,
     val flareSolverrEnabled: Boolean? = null,
     val flareSolverrUrl: String? = null,
     val flareSolverrSession: String? = null,
@@ -601,6 +607,12 @@ private data class BackupPreviewItemDto(val title: String, val source: String, v
 private data class BackupPreviewDto(val total: Int, val manga: List<BackupPreviewItemDto>, val hasSettings: Boolean = false, val repos: Int = 0, val extensions: Int = 0)
 
 @Serializable
+private data class LocalBackupDto(val name: String, val savedAt: Long, val size: Long, val kind: String)
+
+@Serializable
+private data class LocalBackupNameDto(val name: String)
+
+@Serializable
 private data class BackupJobDto(
     val running: Boolean, val state: String, val phase: String,
     val filesDone: Int, val filesTotal: Int, val bytesCopied: Long,
@@ -622,6 +634,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.downloadAsCbz, s.downloadConcurrency, s.parallelDownloads, s.perSourceParallel, s.perSourceLimit,
     s.visibleLanguages, s.flareSolverrEnabled, s.autoUpdate, s.autoUpdateHours, s.autoUpdateHour, s.autoDownloadNew,
     s.healthCheckEnabled, s.healthCheckHour,
+    s.autoBackupEnabled, s.autoBackupHour, s.autoBackupKeep,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
     s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha,
 )
@@ -961,6 +974,7 @@ fun main() {
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
     HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
+    BackupScheduler.reschedule() // start the daily local data backup if enabled in settings
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     try {
@@ -1945,6 +1959,9 @@ fun Application.module() {
             body.autoDownloadNew?.let { s = s.copy(autoDownloadNew = it) }
             body.healthCheckEnabled?.let { s = s.copy(healthCheckEnabled = it) }
             body.healthCheckHour?.let { s = s.copy(healthCheckHour = it.coerceIn(0, 23)) }
+            body.autoBackupEnabled?.let { s = s.copy(autoBackupEnabled = it) }
+            body.autoBackupHour?.let { s = s.copy(autoBackupHour = it.coerceIn(0, 23)) }
+            body.autoBackupKeep?.let { s = s.copy(autoBackupKeep = it.coerceIn(1, 20)) }
             body.flareSolverrEnabled?.let { s = s.copy(flareSolverrEnabled = it) }
             body.flareSolverrUrl?.let { s = s.copy(flareSolverrUrl = it.trim()) }
             body.flareSolverrSession?.let { s = s.copy(flareSolverrSession = it.trim()) }
@@ -1961,6 +1978,7 @@ fun Application.module() {
             applyVerboseLogging(s.verboseLogging) // live-apply the console-logging level
             UpdateScheduler.reschedule() // apply any change to the auto-update interval/toggle
             HealthScheduler.reschedule() // apply any change to the health-check schedule
+            BackupScheduler.reschedule() // apply any change to the backup schedule
             call.respond(settingsDto(s))
         }
 
@@ -2136,6 +2154,41 @@ fun Application.module() {
                 onSuccess = { p -> call.respond(BackupPreviewDto(p.total, p.manga.map { BackupPreviewItemDto(it.title, it.source.toString(), it.chapters, it.read, it.inLibrary) }, p.hasSettings, p.repos, p.extensions)) },
                 onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup — is it a Mihon/Tachiyomi .tachibk? (${it.message})")) },
             )
+        }
+        // ---- Scheduled local backups: rotating .mudata snapshots in <dataDir>/backups ----
+        get("/api/backup/local") {
+            call.respond(withContext(Dispatchers.IO) { mangautils.core.backup.LocalBackups.list() }
+                .map { LocalBackupDto(it.name, it.savedAt, it.size, it.kind) })
+        }
+        // Make a snapshot now. Manual backups are pinned (never auto-pruned).
+        post("/api/backup/local/create") {
+            val e = withContext(Dispatchers.IO) { mangautils.core.backup.LocalBackups.create("manual", SettingsStore.get().autoBackupKeep) }
+            call.respond(LocalBackupDto(e.name, e.savedAt, e.size, e.kind))
+        }
+        // Dry run: what restoring a saved backup would merge in (same diff as an upload preview).
+        post("/api/backup/local/preview") {
+            val name = call.receive<LocalBackupNameDto>().name
+            withContext(Dispatchers.IO) {
+                runCatching { mangautils.core.backup.BackupImport.preview(mangautils.core.backup.LocalBackups.read(name)) }
+            }.fold(
+                onSuccess = { p -> call.respond(BackupPreviewDto(p.total, p.manga.map { BackupPreviewItemDto(it.title, it.source.toString(), it.chapters, it.read, it.inLibrary) }, p.hasSettings, p.repos, p.extensions)) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't read that backup (${it.message})")) },
+            )
+        }
+        // Restore a saved backup (merge — never deletes). Progress via /api/backup/import/progress.
+        post("/api/backup/local/restore") {
+            val name = call.receive<LocalBackupNameDto>().name
+            withContext(Dispatchers.IO) {
+                runCatching { ImportJob.start(mangautils.core.backup.LocalBackups.read(name)) }
+            }.fold(
+                onSuccess = { call.respond(importJobDto(it)) },
+                onFailure = { call.respond(HttpStatusCode.BadRequest, ErrorDto("Couldn't start restore (${it.message})")) },
+            )
+        }
+        delete("/api/backup/local") {
+            val name = call.receive<LocalBackupNameDto>().name
+            val gone = withContext(Dispatchers.IO) { runCatching { mangautils.core.backup.LocalBackups.delete(name) }.getOrDefault(false) }
+            if (gone) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such backup"))
         }
         // Export chosen sections. ?include=library,settings,repos,extensions (default: library only).
         get("/api/backup/export") {

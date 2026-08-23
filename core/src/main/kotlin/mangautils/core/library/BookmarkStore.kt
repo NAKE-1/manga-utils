@@ -7,10 +7,7 @@ package mangautils.core.library
 
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
-import kotlin.io.path.createParentDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
+import mangautils.core.util.SafeFile
 
 /** Bookmarked chapters, per manga, in `data/bookmarks.json` ("sourceId|mangaUrl" -> set of urls). */
 object BookmarkStore {
@@ -18,19 +15,16 @@ object BookmarkStore {
     private val file get() = AppConfig.dataDir.resolve("bookmarks.json")
 
     @Synchronized
-    private fun load(): MutableMap<String, MutableSet<String>> {
-        if (!file.exists()) return mutableMapOf()
-        return runCatching {
-            json.decodeFromString<Map<String, Set<String>>>(file.readText())
-                .mapValues { it.value.toMutableSet() }.toMutableMap()
-        }.getOrDefault(mutableMapOf())
-    }
+    private fun load(): MutableMap<String, MutableSet<String>> =
+        SafeFile.read(file) {
+            runCatching {
+                json.decodeFromString<Map<String, Set<String>>>(it)
+                    .mapValues { e -> e.value.toMutableSet() }.toMutableMap()
+            }.getOrNull()
+        } ?: mutableMapOf()
 
     @Synchronized
-    private fun save(map: Map<String, Set<String>>) {
-        file.createParentDirectories()
-        file.writeText(json.encodeToString(map))
-    }
+    private fun save(map: Map<String, Set<String>>) = SafeFile.writeAtomic(file, json.encodeToString(map))
 
     private fun key(sourceId: Long, mangaUrl: String) = "$sourceId|$mangaUrl"
 

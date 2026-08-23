@@ -8,10 +8,7 @@ package mangautils.core.library
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
-import kotlin.io.path.createParentDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
+import mangautils.core.util.SafeFile
 
 @Serializable
 data class HistoryEntry(
@@ -32,16 +29,12 @@ object HistoryStore {
     // text; even tens of thousands total to a few MB. Dedup below keeps it from double-counting a chapter.
 
     @Synchronized
-    private fun load(): MutableList<HistoryEntry> {
-        if (!file.exists()) return mutableListOf()
-        return runCatching { json.decodeFromString<List<HistoryEntry>>(file.readText()).toMutableList() }.getOrDefault(mutableListOf())
-    }
+    private fun load(): MutableList<HistoryEntry> =
+        SafeFile.read(file) { runCatching { json.decodeFromString<List<HistoryEntry>>(it).toMutableList() }.getOrNull() }
+            ?: mutableListOf()
 
     @Synchronized
-    private fun save(list: List<HistoryEntry>) {
-        file.createParentDirectories()
-        file.writeText(json.encodeToString(list))
-    }
+    private fun save(list: List<HistoryEntry>) = SafeFile.writeAtomic(file, json.encodeToString(list))
 
     @Synchronized
     fun record(

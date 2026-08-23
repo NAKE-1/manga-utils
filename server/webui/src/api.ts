@@ -19,6 +19,8 @@ export interface PageResult { mangas: Manga[]; hasNextPage: boolean }
 
 export interface BackupResult { imported: number; skipped: number; total: number; settingsRestored?: boolean; reposAdded?: number; extensionsInstalled?: number; extensionsFailed?: number; historyRestored?: number; clientPrefsJson?: string | null }
 export interface ImportJob { state: string; phase: string; done: number; total: number; current: string; error?: string; result?: BackupResult | null }
+export interface LocalBackup { name: string; savedAt: number; size: number; kind: string }
+export interface BackupPreview { total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number }
 
 export interface RelocatePreview { sourceBytes: number; sourceFiles: number; targetFreeBytes: number; targetLayout: string; activeDownloads: number; fits: boolean; warning: string }
 export interface RelocateProgress { running: boolean; phase: string; finished: boolean; error: string; mode: string; target: string; filesTotal: number; filesDone: number; bytesTotal: number; bytesDone: number; steps: string[] }
@@ -225,12 +227,33 @@ export const api = {
     if (r.status === 204) return null
     return r.json() as Promise<ImportJob>
   },
+  // Scheduled local snapshots on the data disk.
+  localBackups: () => getJson<LocalBackup[]>('/api/backup/local'),
+  localBackupCreate: async (): Promise<LocalBackup> => {
+    const r = await fetch('/api/backup/local/create', { method: 'POST' })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Backup failed')
+    return r.json() as Promise<LocalBackup>
+  },
+  localBackupPreview: async (name: string): Promise<BackupPreview> => {
+    const r = await fetch('/api/backup/local/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Preview failed')
+    return r.json() as Promise<BackupPreview>
+  },
+  localBackupRestore: async (name: string): Promise<ImportJob> => {
+    const r = await fetch('/api/backup/local/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Restore failed')
+    return r.json() as Promise<ImportJob>
+  },
+  localBackupDelete: async (name: string): Promise<void> => {
+    const r = await fetch('/api/backup/local', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    if (!r.ok && r.status !== 204) throw new Error('Delete failed')
+  },
   exportBackup: async (include: string[], clientPrefs: string | null): Promise<Blob> => {
     const r = await fetch('/api/backup/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ include, clientPrefs }) })
     if (!r.ok) throw new Error('Export failed')
     return r.blob()
   },
-  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean }>): Promise<SettingsInfo> => {
+  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; autoBackupEnabled: boolean; autoBackupHour: number; autoBackupKeep: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed')
     return r.json()
@@ -464,7 +487,7 @@ export interface SourceDiag { id: string; name: string; baseUrl: string; host: s
 export interface RawResult { status: number; ms: number; contentType?: string | null; snippet: string; error?: string | null }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
-export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean }
+export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; autoBackupEnabled: boolean; autoBackupHour: number; autoBackupKeep: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean }
 export interface BackupJob { running: boolean; state: string; phase: string; filesDone: number; filesTotal: number; bytesCopied: number; blobName: string; filesSkipped: number; error: string; target: string }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
 export interface DevStats {

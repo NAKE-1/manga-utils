@@ -7,10 +7,7 @@ package mangautils.core.library
 
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
-import kotlin.io.path.createParentDirectories
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.writeText
+import mangautils.core.util.SafeFile
 
 /**
  * Manga-level bookmarks — a "saved" list that is INDEPENDENT of the library (a manga can be
@@ -22,22 +19,27 @@ object MangaBookmarkStore {
     private val file get() = AppConfig.dataDir.resolve("manga_bookmarks.json")
 
     @Synchronized
-    private fun load(): MutableSet<String> {
-        if (!file.exists()) return mutableSetOf()
-        return runCatching { json.decodeFromString<Set<String>>(file.readText()).toMutableSet() }.getOrDefault(mutableSetOf())
-    }
+    private fun load(): MutableSet<String> =
+        SafeFile.read(file) { runCatching { json.decodeFromString<Set<String>>(it).toMutableSet() }.getOrNull() }
+            ?: mutableSetOf()
 
     @Synchronized
-    private fun save(set: Set<String>) {
-        file.createParentDirectories()
-        file.writeText(json.encodeToString(set))
-    }
+    private fun save(set: Set<String>) = SafeFile.writeAtomic(file, json.encodeToString(set))
 
     private fun key(sourceId: Long, mangaUrl: String) = "$sourceId|$mangaUrl"
 
     fun isBookmarked(sourceId: Long, mangaUrl: String): Boolean = key(sourceId, mangaUrl) in load()
 
     fun list(): Set<String> = load()
+
+    /** Merge backup keys ("sourceId|mangaUrl") into the saved set, for restore. */
+    @Synchronized
+    fun restore(keys: Set<String>) {
+        if (keys.isEmpty()) return
+        val s = load()
+        s.addAll(keys)
+        save(s)
+    }
 
     @Synchronized
     fun set(sourceId: Long, mangaUrl: String, value: Boolean) {

@@ -26,6 +26,8 @@ import mangautils.core.library.HistoryEntry
 import mangautils.core.library.HistoryStore
 import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
+import mangautils.core.library.MangaBookmarkStore
+import mangautils.core.library.PositionStore
 import mangautils.core.library.ReadStore
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayOutputStream
@@ -142,8 +144,11 @@ object BackupImport {
             else null,
             repoUrls = if (sections.repos) RepoStore.list() else emptyList(),
             extensionPkgs = if (sections.extensions) InstalledStore.list().map { it.pkg } else emptyList(),
-            // Continue-reading history rides with the library section (it's reading progress).
+            // Continue-reading history, scroll positions, and the saved list all ride with the library
+            // section — they're all reading state keyed by manga.
             historyJson = if (sections.library) json.encodeToString(HistoryStore.list()) else null,
+            positionsJson = if (sections.library) json.encodeToString(PositionStore.snapshot()) else null,
+            mangaBookmarksJson = if (sections.library) json.encodeToString(MangaBookmarkStore.list()) else null,
             clientPrefsJson = clientPrefsJson, // browser reader/display prefs, gathered by the caller
         )
         val raw = ProtoBuf.encodeToByteArray(backup)
@@ -207,6 +212,14 @@ object BackupImport {
                 historyRestored = entries.size
             }.onFailure { log.warn("backup: failed to restore history: {}", it.message) }
         }
+        if (!backup.positionsJson.isNullOrBlank()) {
+            runCatching { PositionStore.restore(json.decodeFromString<Map<String, Map<String, Float>>>(backup.positionsJson)) }
+                .onFailure { log.warn("backup: failed to restore positions: {}", it.message) }
+        }
+        if (!backup.mangaBookmarksJson.isNullOrBlank()) {
+            runCatching { MangaBookmarkStore.restore(json.decodeFromString<Set<String>>(backup.mangaBookmarksJson)) }
+                .onFailure { log.warn("backup: failed to restore saved list: {}", it.message) }
+        }
         val reposAdded = backup.repoUrls.count { runCatching { RepoStore.add(it) }.getOrDefault(false) }
 
         var extInstalled = 0
@@ -242,6 +255,8 @@ object BackupImport {
         @ProtoNumber(902) val extensionPkgs: List<String> = emptyList(),
         @ProtoNumber(903) val historyJson: String? = null, // continue-reading history (manga-utils native)
         @ProtoNumber(904) val clientPrefsJson: String? = null, // browser reader/display prefs (manga-utils native)
+        @ProtoNumber(905) val positionsJson: String? = null, // mid-chapter scroll positions (manga-utils native)
+        @ProtoNumber(906) val mangaBookmarksJson: String? = null, // manga-level "saved" list (manga-utils native)
     )
 
     @Serializable
