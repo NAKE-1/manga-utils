@@ -247,8 +247,21 @@ object DownloadQueue {
             }
         }.onFailure {
             task.bytesPerSec = 0.0
-            if (Thread.currentThread().isInterrupted || it is InterruptedException) task.state = "stopped"
-            else { task.state = "failed"; task.error = it.message ?: it::class.simpleName ?: "failed" }
+            // download() can throw (vs. return a job with failed chapters) when the human-check trips on the
+            // chapter-LIST / details fetch, which runs outside the per-chapter loop. Park that the same way
+            // the mid-page path does (see ~line 230) so ONE captcha solve resumes it with its siblings,
+            // instead of stranding it as a hard "failed" row the batch never comes back to.
+            val vfHost = sourceHost(task.sourceId)?.takeIf { HumanCheckState.isPending(it) }
+            when {
+                Thread.currentThread().isInterrupted || it is InterruptedException -> task.state = "stopped"
+                vfHost != null -> {
+                    task.failed.clear(); task.failed.addAll(task.chapters.filter { c -> c.url !in task.finishedUrls })
+                    task.failedCount = task.failed.size
+                    task.vfHost = vfHost
+                    task.state = "waitvf"
+                }
+                else -> { task.state = "failed"; task.error = it.message ?: it::class.simpleName ?: "failed" }
+            }
             log.debug("download task {} ended: {}", task.id, task.state)
         }
         when (task.state) {
