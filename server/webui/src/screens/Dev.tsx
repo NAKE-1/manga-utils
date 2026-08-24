@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult } from '../api'
+import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
@@ -44,6 +44,8 @@ export function Dev() {
   const [pgSize, setPgSize] = useState(() => pageSize())
   const [cookieBusy, setCookieBusy] = useState(false)
   const [cookieMsg, setCookieMsg] = useState('')
+  const [ckHosts, setCkHosts] = useState<CookieHost[]>([])
+  const [ckHost, setCkHost] = useState('') // '' = no selection (default)
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanMsg, setScanMsg] = useState('')
@@ -111,6 +113,7 @@ export function Dev() {
     api.sources().then(setSources).catch(() => {})
     api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha) }).catch(() => {})
     api.manifestInfo().then(setMfInfo).catch(() => {})
+    refreshCookieHosts()
     return () => clearInterval(t)
   }, [])
 
@@ -166,6 +169,12 @@ export function Dev() {
     await (kind === 'restart' ? api.devRestart() : api.devShutdown()).catch(() => {})
     toast(kind === 'restart' ? 'Restarting… reconnecting shortly' : 'Server shutting down', 'info', 8000)
   }
+  function refreshCookieHosts() {
+    api.cookieHosts().then((h) => {
+      setCkHosts(h)
+      setCkHost((cur) => (h.some((x) => x.host === cur) ? cur : '')) // drop selection if that host is now empty
+    }).catch(() => {})
+  }
   async function clearCookies(host?: string) {
     const msg = host
       ? `Clear cookies for ${host}? This dumps its cf_clearance so the next request re-challenges fresh.`
@@ -174,7 +183,8 @@ export function Dev() {
     setCookieBusy(true); setCookieMsg('')
     const r = await api.clearWebviewCookies(host).catch(() => null)
     setCookieBusy(false)
-    setCookieMsg(r ? `Cleared ${r.cleared} cookie${r.cleared === 1 ? '' : 's'}` : 'Clear failed')
+    setCookieMsg(r ? `Cleared ${r.cleared} cookie${r.cleared === 1 ? '' : 's'}${host ? ` for ${host}` : ''}` : 'Clear failed')
+    refreshCookieHosts()
   }
   async function runScan() {
     setScanBusy(true); setScanMsg('Scanning every downloaded page…')
@@ -583,9 +593,20 @@ export function Dev() {
         </div>
         <div className="set-card">
           <div className="set-row-label">WebView cookies</div>
-          <div className="set-hint">Clearing MangaFire's cookies dumps its cf_clearance so the next request re-challenges fresh — the fix for a stuck “Just a moment…” loop. Clearing all also logs you out of any WebView source. Library, downloads and settings are untouched.</div>
-          <div className="set-actions">
-            <button className="btn" disabled={cookieBusy} onClick={() => clearCookies('mangafire.to')}>Clear MangaFire cookies</button>
+          <div className="set-hint">Pick a host and clear its cookies to dump that host's cf_clearance so the next request re-challenges fresh — the fix for a stuck “Just a moment…” loop. Clearing all also logs you out of any WebView source. Library, downloads and settings are untouched.</div>
+          <div className="set-actions" style={{ alignItems: 'center' }}>
+            <select className="set-select" style={{ width: 'auto', minWidth: 180 }} value={ckHost} onChange={(e) => setCkHost(e.target.value)}>
+              <option value="">Select a host…</option>
+              {ckHosts.map((h) => <option key={h.host} value={h.host}>{h.host} ({h.count}){h.hasClearance ? ' ●' : ''}</option>)}
+            </select>
+            <button className="btn" title="Refresh cookie list" disabled={cookieBusy} onClick={refreshCookieHosts}>↻</button>
+            {(() => {
+              const sel = ckHosts.find((h) => h.host === ckHost)
+              return sel
+                ? <span className="dev-chip" title={sel.hasClearance ? 'has cf_clearance' : 'no cf_clearance'}>🍪 {sel.count}{sel.hasClearance ? ' ●' : ''}</span>
+                : <span className="set-hint">{ckHosts.length ? `${ckHosts.length} host${ckHosts.length === 1 ? '' : 's'} found` : 'no hosts'}</span>
+            })()}
+            <button className="btn" disabled={cookieBusy || !ckHost} onClick={() => clearCookies(ckHost)}>Clear cookies</button>
             <button className="btn danger" disabled={cookieBusy} onClick={() => clearCookies()}>Clear all cookies</button>
           </div>
           {cookieMsg && <div className="set-hint" style={{ marginTop: 6 }}>{cookieMsg}</div>}

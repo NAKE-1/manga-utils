@@ -651,6 +651,8 @@ private data class DiagDto(
 )
 
 @Serializable private data class ErrorDto(val error: String)
+
+@Serializable private data class CookieHostDto(val host: String, val count: Int, val hasClearance: Boolean)
 @Serializable private data class ResolveDto(val sourceId: String, val mangaUrl: String, val title: String, val cover: String? = null)
 
 @Serializable
@@ -2265,6 +2267,27 @@ fun Application.module() {
             val host = call.request.queryParameters["host"]?.takeIf { it.isNotBlank() }
             val n = withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefFetch.clearCookies(host) }
             call.respond(mapOf("cleared" to n))
+        }
+        // Every installed source's host (so the picker lists them all, even at 0 cookies), merged with the
+        // live cookie counts + cf_clearance flag. Any stray cookie host not tied to a source is kept too.
+        get("/api/dev/webview/cookie-hosts") {
+            val out = withContext(Dispatchers.IO) {
+                val buckets = runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.cookieHosts() }.getOrDefault(emptyList())
+                val sourceHosts = runCatching {
+                    mangautils.core.source.SourceManager.listInstalledSources().mapNotNull { s ->
+                        runCatching {
+                            (mangautils.core.source.SourceManager.loadSource(s.id) as? eu.kanade.tachiyomi.source.online.HttpSource)
+                                ?.baseUrl?.let { java.net.URI(it).host?.removePrefix("www.")?.lowercase() }
+                        }.getOrNull()
+                    }.distinct()
+                }.getOrDefault(emptyList())
+                val hosts = LinkedHashSet<String>().apply { addAll(sourceHosts); addAll(buckets.map { it.host }) }
+                hosts.map { h ->
+                    val m = buckets.filter { b -> h.endsWith(b.host) || b.host.endsWith(h) }
+                    CookieHostDto(h, m.sumOf { it.count }, m.any { it.hasClearance })
+                }.sortedWith(compareByDescending<CookieHostDto> { it.hasClearance }.thenByDescending { it.count }.thenBy { it.host })
+            }
+            call.respond(out)
         }
         // Dev captcha tester: pull a fresh MangaFire shape-captcha through real Chromium (JCEF handles CF +
         // the mangafire session), decode the JSON, and hand back A (order) + B (clickable grid) as data URIs.

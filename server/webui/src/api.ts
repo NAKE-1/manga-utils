@@ -21,6 +21,7 @@ export interface BackupResult { imported: number; skipped: number; total: number
 export interface ImportJob { state: string; phase: string; done: number; total: number; current: string; error?: string; result?: BackupResult | null }
 export interface LocalBackup { name: string; savedAt: number; size: number; kind: string }
 export interface SeriesBackfillResult { total: number; alreadyHad: number; written: number; unresolved: string[]; dryRun: boolean }
+export interface CookieHost { host: string; count: number; hasClearance: boolean }
 export interface BackupPreview { total: number; manga: { title: string; source: string; chapters: number; read: number; inLibrary: boolean }[]; hasSettings?: boolean; repos?: number; extensions?: number }
 
 export interface RelocatePreview { sourceBytes: number; sourceFiles: number; targetFreeBytes: number; targetLayout: string; activeDownloads: number; fits: boolean; warning: string }
@@ -335,6 +336,7 @@ export const api = {
     return r.json() as Promise<SeriesBackfillResult>
   },
   clearWebviewCookies: (host?: string) => fetch(`/api/dev/webview/clear-cookies${host ? `?host=${encodeURIComponent(host)}` : ''}`, { method: 'POST' }).then((r) => r.json() as Promise<{ cleared: number }>),
+  cookieHosts: () => getJson<CookieHost[]>('/api/dev/webview/cookie-hosts'),
   devShutdown: () => fetch('/api/dev/shutdown', { method: 'POST' }),
   devCaptcha: () => getJson<DevCaptcha>('/api/dev/captcha/generate', 0, 60000),
   autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),

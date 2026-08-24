@@ -249,6 +249,39 @@ object JcefFetch {
         return n
     }
 
+    /** One cookie host bucket for the dev cookie picker. */
+    data class CookieHost(val host: String, val count: Int, val hasClearance: Boolean)
+
+    /**
+     * Every host that currently holds cookies in the shared jar, with its cookie count and whether it
+     * has a cf_clearance. Groups by cookie domain (leading dot stripped). Backs the dev-menu host picker.
+     */
+    fun cookieHosts(): List<CookieHost> {
+        val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return emptyList()
+        val latch = CountDownLatch(1)
+        val counts = HashMap<String, Int>()
+        val clearance = HashSet<String>()
+        val ok = runCatching {
+            mgr.visitAllCookies(object : CefCookieVisitor {
+                override fun visit(cookie: CefCookie, curr: Int, total: Int, delete: BoolRef): Boolean {
+                    if (total == 0) { latch.countDown(); return false }
+                    val dom = cookie.domain?.trimStart('.') ?: ""
+                    if (dom.isNotEmpty()) {
+                        counts[dom] = (counts[dom] ?: 0) + 1
+                        if (cookie.name == "cf_clearance") clearance.add(dom)
+                    }
+                    if (curr + 1 >= total) latch.countDown()
+                    return true
+                }
+            })
+        }.getOrDefault(false)
+        if (!ok) return emptyList()
+        latch.await(2, TimeUnit.SECONDS)
+        return counts.entries
+            .map { CookieHost(it.key, it.value, it.key in clearance) }
+            .sortedWith(compareByDescending<CookieHost> { it.hasClearance }.thenByDescending { it.count }.thenBy { it.host })
+    }
+
     private fun buildFetchJs(url: String, method: String, headers: Map<String, String>, body: String?): String {
         // Only forward safe, meaningful headers — the page/browser sets UA, Referer, Cookie, encoding itself.
         val skip = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")
