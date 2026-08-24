@@ -17,8 +17,29 @@ import org.xml.sax.XMLReader;
 
 public class Html {
 
+    // API 24+ fromHtml flag constants (see android.text.Html). We ignore the flags — this shim strips to
+    // plain text — but sources reference these fields, so declare them to avoid NoSuchFieldError.
+    public static final int FROM_HTML_MODE_LEGACY = 0x00000000;
+    public static final int FROM_HTML_MODE_COMPACT = 0x0000003f;
+    public static final int FROM_HTML_SEPARATOR_LINE_BREAK_HEADING = 0x00000002;
+    public static final int FROM_HTML_SEPARATOR_LINE_BREAK_LIST_ITEM = 0x00000004;
+    public static final int FROM_HTML_SEPARATOR_LINE_BREAK_LIST = 0x00000008;
+    public static final int FROM_HTML_SEPARATOR_LINE_BREAK_PARAGRAPH = 0x00000010;
+    public static final int FROM_HTML_SEPARATOR_LINE_BREAK_BLOCKQUOTE = 0x00000020;
+    public static final int FROM_HTML_OPTION_USE_CSS_COLORS = 0x00000100;
+
     public static Spanned fromHtml(String source) {
         return new FakeSpanned(Jsoup.clean(source, Safelist.none()));
+    }
+
+    // API 24+ overloads. The flags only control paragraph spacing/separators, which don't matter here
+    // (we strip to plain text) — so delegate to the single-arg version. (Tapas & co. call fromHtml(s, flags).)
+    public static Spanned fromHtml(String source, int flags) {
+        return fromHtml(source);
+    }
+
+    public static Spanned fromHtml(String source, int flags, Html.ImageGetter imageGetter, Html.TagHandler tagHandler) {
+        return fromHtml(source);
     }
 
     public static Spanned fromHtml(String source, Html.ImageGetter imageGetter, Html.TagHandler tagHandler) {
