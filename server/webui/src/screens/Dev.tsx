@@ -606,6 +606,8 @@ export function Dev() {
                 ? <span className="dev-chip" title={sel.hasClearance ? 'has cf_clearance' : 'no cf_clearance'}>🍪 {sel.count}{sel.hasClearance ? ' ●' : ''}</span>
                 : <span className="set-hint">{ckHosts.length ? `${ckHosts.length} host${ckHosts.length === 1 ? '' : 's'} found` : 'no hosts'}</span>
             })()}
+          </div>
+          <div className="set-actions" style={{ marginTop: 8 }}>
             <button className="btn" disabled={cookieBusy || !ckHost} onClick={() => clearCookies(ckHost)}>Clear cookies</button>
             <button className="btn danger" disabled={cookieBusy} onClick={() => clearCookies()}>Clear all cookies</button>
           </div>
