@@ -1302,7 +1302,7 @@ main > * { animation: fade-up .22s ease backwards; }
 .wv-solve { flex: none; }
 .wv-solvemsg { flex: none; font-size: 12px; font-weight: 600; color: #b9c6cf; white-space: nowrap; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
 .wv-stage { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 12px; overflow: auto; }
-.wv-frame { width: min(96vw, 460px); height: auto; border-radius: 10px; box-shadow: 0 6px 28px rgba(0,0,0,.5); background: #111; display: block; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.wv-frame { width: min(96vw, 460px); height: auto; border-radius: 10px; box-shadow: 0 6px 28px rgba(0,0,0,.5); background: #111; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
 .wv-status { position: absolute; margin-top: 44px; font-size: 13px; color: #8aa0ad; }
 
 /* Dev WebView tester (Settings → Developer). */

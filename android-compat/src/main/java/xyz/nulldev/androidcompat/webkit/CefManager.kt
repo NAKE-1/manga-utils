@@ -135,6 +135,9 @@ object CefManager {
                                 "--off-screen-rendering-enabled",
                                 "--disable-dev-shm-usage",
                                 "--change-stack-guard-on-fork=disable",
+                                // Offscreen rendering streams video into the frame buffer but audio still
+                                // goes to the HOST speakers — mute it; this is a captcha/solve browser.
+                                "--mute-audio",
                                 // Silence background-service log spam we never use: GCM push
                                 // ("ConnectionHandler failed with net error: -2") and Cast/media-router
                                 // cert checks ("CRL - Verification failed"). Cosmetic only.

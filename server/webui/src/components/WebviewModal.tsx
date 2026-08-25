@@ -12,6 +12,7 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const lastObj = useRef<string | null>(null)
+  const drag = useRef<{ y: number; startY: number; moved: boolean } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -77,17 +78,59 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
     finally { setSolving(false) }
   }
 
-  // Map a tap on the displayed frame to OSR-pixel coordinates and forward it as a click.
-  function onTap(e: PointerEvent<HTMLImageElement>) {
+  // Map a client point on the displayed frame to OSR pixels (+ the display→OSR scale for scroll deltas).
+  function toOsr(clientX: number, clientY: number) {
     const img = imgRef.current
-    if (!img || !dims) return
+    if (!img || !dims) return null
     const rect = img.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return
-    const x = Math.round(((e.clientX - rect.left) / rect.width) * dims.w)
-    const y = Math.round(((e.clientY - rect.top) / rect.height) * dims.h)
-    if (x < 0 || y < 0 || x > dims.w || y > dims.h) return
-    fetch(`/api/webview/input?x=${x}&y=${y}`, { method: 'POST' }).catch(() => {})
+    if (rect.width === 0 || rect.height === 0) return null
+    return {
+      x: Math.round(((clientX - rect.left) / rect.width) * dims.w),
+      y: Math.round(((clientY - rect.top) / rect.height) * dims.h),
+      scale: dims.h / rect.height, // screen px → OSR px (frame is usually shown smaller than 780px)
+    }
   }
+
+  function sendClick(clientX: number, clientY: number) {
+    const o = toOsr(clientX, clientY)
+    if (!o || o.x < 0 || o.y < 0 || o.x > dims!.w || o.y > dims!.h) return
+    fetch(`/api/webview/input?x=${o.x}&y=${o.y}`, { method: 'POST' }).catch(() => {})
+  }
+  function sendScroll(clientX: number, clientY: number, dyScreen: number) {
+    const o = toOsr(clientX, clientY)
+    if (!o || dyScreen === 0) return
+    fetch(`/api/webview/scroll?x=${o.x}&y=${o.y}&dy=${Math.round(dyScreen * o.scale)}`, { method: 'POST' }).catch(() => {})
+  }
+
+  // Pointer drag = scroll (touch or mouse); a drag that barely moved is treated as a tap → click.
+  function onDown(e: PointerEvent<HTMLImageElement>) {
+    drag.current = { y: e.clientY, startY: e.clientY, moved: false }
+    imgRef.current?.setPointerCapture(e.pointerId)
+  }
+  function onMove(e: PointerEvent<HTMLImageElement>) {
+    const d = drag.current
+    if (!d) return
+    if (Math.abs(e.clientY - d.startY) > 6) d.moved = true
+    sendScroll(e.clientX, e.clientY, d.y - e.clientY) // finger up → positive → page down
+    d.y = e.clientY
+  }
+  function onUp(e: PointerEvent<HTMLImageElement>) {
+    const d = drag.current
+    drag.current = null
+    imgRef.current?.releasePointerCapture(e.pointerId)
+    if (d && !d.moved) sendClick(e.clientX, e.clientY) // it was a tap, not a scroll
+  }
+
+  // Mouse wheel → scroll. React's onWheel is passive (can't preventDefault), so attach non-passively
+  // here to stop the wheel from scrolling the page/modal behind the frame.
+  useEffect(() => {
+    const img = imgRef.current
+    if (!img) return
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); sendScroll(e.clientX, e.clientY, e.deltaY) }
+    img.addEventListener('wheel', onWheel, { passive: false })
+    return () => img.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dims])
 
   return (
     <div className="wv-overlay" role="dialog" aria-modal="true">
@@ -105,7 +148,9 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
           className="wv-frame"
           alt=""
           draggable={false}
-          onPointerUp={onTap}
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
           style={dims ? { aspectRatio: `${dims.w} / ${dims.h}` } : undefined}
         />
       </div>

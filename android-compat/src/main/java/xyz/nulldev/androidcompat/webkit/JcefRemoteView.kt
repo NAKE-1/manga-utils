@@ -111,6 +111,22 @@ object JcefRemoteView {
         runCatching { b.invalidate() }
     }
 
+    /** Forward a wheel scroll at OSR-pixel ([x],[y]). [deltaY] > 0 scrolls the page DOWN. OSR gets no
+     *  native input, so the client's scroll gesture has to be forwarded as a wheel event or it does nothing. */
+    fun scroll(x: Int, y: Int, deltaY: Int) {
+        val b = browser ?: return
+        runCatching {
+            // MouseWheelEvent(source, id, when, mods, x, y, clicks, popupTrigger, scrollType, scrollAmount, wheelRotation).
+            // JCEF turns wheelRotation into the Chromium scroll delta; positive rotation scrolls the page down.
+            val ev = java.awt.event.MouseWheelEvent(
+                panel, java.awt.event.MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(), 0, x, y, 0, false,
+                java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, deltaY,
+            )
+            b.sendMouseWheelEvent(ev)
+        }
+        runCatching { b.invalidate() }
+    }
+
     /** The latest frame as a JPEG, or null if nothing has painted yet. Also nudges the next repaint. */
     fun frameJpeg(): ByteArray? {
         val bytes: ByteArray; val w: Int; val h: Int

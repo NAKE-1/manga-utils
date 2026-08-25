@@ -972,6 +972,21 @@ fun main() {
     Thread { runCatching { mangautils.core.source.SourceManager.detectCloudflare() } }.apply { isDaemon = true; name = "cf-detect" }.start()
     // Warm the download-manager series cache in the background so its first open is instant, not a ~3s scan.
     Thread { runCatching { mangautils.core.download.DownloadStore.listSeries() } }.apply { isDaemon = true; name = "dl-warm" }.start()
+    // Warm the library downloaded-badge cache (ChapterIdentity re-parses every downloaded chapter's
+    // ComicInfo to compute green/yellow badges — a ~9s cold cost on the first /api/library). Do it at boot
+    // so the user's first library load is instant instead of paying for it.
+    Thread {
+        val t0 = System.currentTimeMillis()
+        val entries = runCatching { mangautils.core.library.LibraryStore.list() }.getOrDefault(emptyList())
+        log.info("prewarming library badges ({} series)...", entries.size)
+        entries.forEach { e ->
+            runCatching {
+                mangautils.core.download.ChapterIdentity.downloadedNumbers(e.title)
+                mangautils.core.download.ChapterIdentity.downloadedUrls(e.title)
+            }
+        }
+        log.info("library badges prewarmed in {} ms ({} series)", System.currentTimeMillis() - t0, entries.size)
+    }.apply { isDaemon = true; name = "lib-warm" }.start()
     // Restore + resume the download queue from disk (survives a crash/restart).
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
@@ -2031,6 +2046,15 @@ fun Application.module() {
             val y = call.request.queryParameters["y"]?.toIntOrNull()
             if (x == null || y == null) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("x and y required"))
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
+            call.respond(HttpStatusCode.OK)
+        }
+        // Forward a scroll gesture to the offscreen WebView (OSR has no native input). x,y = OSR pixel under
+        // the pointer; dy = scroll delta (>0 = down). Without this a scroll just moves the page behind it.
+        post("/api/webview/scroll") {
+            val x = call.request.queryParameters["x"]?.toIntOrNull() ?: 0
+            val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
+            val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dy required"))
+            xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dy)
             call.respond(HttpStatusCode.OK)
         }
         // Auto-solve the shape-captcha currently shown in the streamed WebView (detect→match→click→refresh
