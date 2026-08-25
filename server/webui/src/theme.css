@@ -96,6 +96,32 @@ img { display: block; }
   border-bottom: 1px solid var(--border);
 }
 .topbar .wordmark { font-weight: 800; letter-spacing: .14em; font-size: 17px; flex: 1; cursor: pointer; }
+
+/* Offline banner (server has no internet egress) — flows below the fixed top bar. */
+.offline-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 16px; font-size: 13px; line-height: 1.35;
+  color: #ffd9d9; background: rgba(236,106,106,.16); border-bottom: 1px solid rgba(236,106,106,.4);
+}
+.offline-banner-txt { flex: 1; min-width: 180px; }
+.offline-banner-txt b { color: #ff9d9d; }
+.offline-banner-btn {
+  padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  color: #ffd9d9; background: rgba(236,106,106,.2); border: 1px solid rgba(236,106,106,.5);
+}
+.offline-banner-btn:disabled { opacity: .6; cursor: default; }
+
+/* Standalone offline panel for network-only screens (search, non-downloaded chapter). */
+.offline-notice { text-align: center; padding: 48px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.offline-notice-icon { font-size: 34px; color: #ec6a6a; }
+.offline-notice-title { font-weight: 800; font-size: 17px; color: var(--text); }
+.offline-notice-sub { color: var(--muted); font-size: 13px; max-width: 340px; line-height: 1.45; }
+.offline-notice-btn {
+  margin-top: 8px; padding: 8px 18px; border-radius: 10px; font-weight: 700; cursor: pointer;
+  color: var(--text); background: var(--card-2); border: 1px solid var(--border);
+}
+.offline-notice-btn:hover:not(:disabled) { border-color: var(--accent); }
+.offline-notice-btn:disabled { opacity: .6; cursor: default; }
 /* Hamburger slide-in drawer */
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 90; }
 .drawer-backdrop.show { opacity: 1; pointer-events: auto; }
@@ -110,6 +136,8 @@ img { display: block; }
 .drawer-mv { font-size: 12px; font-weight: 700; padding: 5px 9px; border-radius: 8px; white-space: nowrap; cursor: pointer; }
 .drawer-mv.on { color: #5fce8f; background: rgba(95,206,143,.12); border: 1px solid rgba(95,206,143,.3); }
 .drawer-mv.off { color: #e0a458; background: rgba(224,164,88,.12); border: 1px solid rgba(224,164,88,.3); }
+.drawer-mv.off-net { color: #ec6a6a; background: rgba(236,106,106,.14); border: 1px solid rgba(236,106,106,.4); }
+.drawer-mv.off-net:disabled { opacity: .7; cursor: default; }
 .drawer-ver { color: var(--border); }
 /* Detail popover that appears ABOVE the badge on click. */
 .drawer-mv-pop { position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 180px; z-index: 5;

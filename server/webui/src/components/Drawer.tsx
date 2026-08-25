@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { api, Mullvad } from '../api'
+import { useNet } from './NetStatus'
 
 // Slide-in navigation drawer opened by the top-bar hamburger. Holds the routes that aren't in the
 // bottom tab bar (downloads, extensions, etc.) plus quick access to the primary ones.
@@ -17,6 +18,7 @@ const ITEMS: { label: string; to: string }[] = [
 
 export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nav = useNavigate()
+  const { online, checking, check } = useNet()
   const [ver, setVer] = useState('')
   const [mv, setMv] = useState<Mullvad | null>(null)
   const [mvErr, setMvErr] = useState(false)
@@ -66,9 +68,13 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
             <button key={it.to} className="drawer-item" onClick={() => go(it.to)}>{it.label}</button>
           ))}
         </div>
-        {(ver || mv || mvErr) && (
+        {(ver || mv || mvErr || !online) && (
           <div className="drawer-foot">
-            {(mv || mvErr) && (
+            {!online ? (
+              <button className="drawer-mv off-net" onClick={check} disabled={checking} title="Server has no internet — tap to re-check">
+                {checking ? 'Checking…' : '⚠ Offline · retry'}
+              </button>
+            ) : (mv || mvErr) && (
               <div className="drawer-mv-wrap">
                 {mvOpen && mv && (
                   <div className="drawer-mv-pop">
@@ -86,7 +92,7 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
                 )}
                 <button
                   className={'drawer-mv ' + (mv?.mullvad_exit_ip ? 'on' : 'off')}
-                  onClick={() => (mv ? setMvOpen((o) => !o) : loadMv())}
+                  onClick={() => { check(); mv ? setMvOpen((o) => !o) : loadMv() }}
                   title={mv ? 'Server VPN egress' : 'Tap to retry'}
                 >
                   {mv ? (mv.mullvad_exit_ip ? '🔒 Mullvad ▴' : '⚠ No VPN ▴') : '⚠ VPN? · retry'}

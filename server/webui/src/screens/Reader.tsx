@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, pageUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings, IconJetBrains } from '../components/icons'
 import { WebviewModal } from '../components/WebviewModal'
+import { useNet } from '../components/NetStatus'
 
 type Sizing = 'clamp' | 'natural'
 type LoadMode = 'hybrid' | 'eager' | 'balanced' | 'lazy'
@@ -149,6 +150,9 @@ export function Reader() {
   const title = sp.get('title') || ''
   const scanMarker = localStorage.getItem('dev.scanMarker') === '1' // dev/debug: show the chapter's scanlator
   const nav = useNavigate()
+  const { online, check } = useNet()
+  // Re-fetch this chapter's page count (used by the offline "Check again" button once egress is back).
+  const retryPages = () => { setCount(null); check(); api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0)) }
 
   const [count, setCount] = useState<number | null>(null)
   const [force, setForce] = useState(false) // you chose to try a known-broken chapter anyway
@@ -508,12 +512,17 @@ export function Reader() {
           return (
             <div className="r-failed-ov" role="dialog" aria-modal="true">
               <div className="r-failed">
-                <div className="r-failed-title">{gated ? 'This chapter is known to be broken' : "Couldn't load this chapter"}</div>
+                <div className="r-failed-title">{!online && !gated ? 'You appear to be offline' : gated ? 'This chapter is known to be broken' : "Couldn't load this chapter"}</div>
                 <div className="r-failed-why">
-                {cur?.unavailable
+                {!online && !gated
+                  ? "The server can't reach the internet and this chapter isn't downloaded. Downloaded chapters still open."
+                  : cur?.unavailable
                   ? cur.unavailable
                   : `${cur?.scanlator ? `${cur.scanlator}'s ` : ''}copy of this chapter didn't load.`}
               </div>
+                {!online && !gated && (
+                  <button className="btn primary r-failed-btn" onClick={retryPages}>Check again</button>
+                )}
                 {others.length > 0 && (
                 <>
                   <div className="r-failed-alt">Other scanlation{others.length === 1 ? '' : 's'} of this chapter:</div>

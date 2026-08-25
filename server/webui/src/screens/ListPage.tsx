@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { api, coverUrl, dlState, pageSize, LibraryEntry, HistoryItem } from '../api'
 import { CoverCard } from '../components/CoverCard'
 import { Pager } from '../components/Pager'
+import { useNet } from '../components/NetStatus'
 
 const TITLES: Record<string, string> = {
   library: 'Library',
@@ -28,6 +29,7 @@ function lastLine(e: LibraryEntry): string {
 // A full library-style grid for a Home section (opened from a tappable section header).
 export function ListPage() {
   const { kind = 'library' } = useParams()
+  const { online } = useNet()
   const [library, setLibrary] = useState<LibraryEntry[]>([])
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [ready, setReady] = useState(false)
@@ -59,6 +61,7 @@ export function ListPage() {
   }, [kind, contPage, PS])
 
   async function checkUpdates() {
+    if (!online) { setUpdateMsg('You appear to be offline — connect to check for updates'); return }
     setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatedFailed([]); setUpdatePct(0)
     // Starts the update and polls to completion — no long-held request to drop → no false "Update failed".
     const r = await api.runLibraryUpdate((pct) => setUpdatePct(pct)).catch(() => null)

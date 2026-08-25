@@ -7,6 +7,7 @@ import { ProgressRing } from '../components/ProgressRing'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
+import { OfflineNotice, useNet } from '../components/NetStatus'
 import noPoster from '../assets/no-poster.png'
 
 // Chapters oldest-first, for finding the "next to read". Sorting by chapter number only works when
@@ -80,6 +81,7 @@ export function Detail() {
   const [sp] = useSearchParams()
   const url = sp.get('url') || ''
   const nav = useNavigate()
+  const { online } = useNet()
 
   const [data, setData] = useState<DetailT | null>(null)
   const [state, setState] = useState<MangaState>({ inLibrary: false, bookmarked: false, read: [], bookmarks: [] })
@@ -290,6 +292,8 @@ export function Detail() {
       </div>
     </BackWrap>
   )
+  // Offline + no cached data server-side → the friendly offline panel instead of a scary source error.
+  if (error && !online) return <BackWrap nav={nav}><OfflineNotice what="this series" onRetry={() => setTries((t) => t + 1)} /></BackWrap>
   if (error) return <BackWrap nav={nav}><ErrorPanel onRetry={() => setTries((t) => t + 1)} message={error} webviewSource={sourceId} /></BackWrap>
   if (!data) return <BackWrap nav={nav}><DetailSkeleton /></BackWrap>
 

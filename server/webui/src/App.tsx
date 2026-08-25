@@ -25,6 +25,7 @@ import { Stub } from './screens/Stub'
 import { Toasts, DownloadWatcher, setReaderActive } from './components/Toast'
 import { HumanCheckWatcher } from './components/HumanCheckWatcher'
 import { PullToRefresh } from './components/PullToRefresh'
+import { NetProvider, OfflineBanner } from './components/NetStatus'
 
 export function App() {
   const loc = useLocation()
@@ -35,7 +36,7 @@ export function App() {
   // full-screen reader doesn't remount them — otherwise the FlareSolverr/download watchers reset and
   // swallow the very events (a Cloudflare solve on chapter open) we want to toast.
   return (
-    <>
+    <NetProvider>
       <DownloadWatcher />
       <Toasts />
       <HumanCheckWatcher />
@@ -47,6 +48,7 @@ export function App() {
         <div className="app">
           <PullToRefresh />
           <TopBar />
+          <OfflineBanner />
           <main>
             <Routes>
               <Route path="/" element={<Home />} />
@@ -74,6 +76,6 @@ export function App() {
           <TabBar />
         </div>
       )}
-    </>
+    </NetProvider>
   )
 }

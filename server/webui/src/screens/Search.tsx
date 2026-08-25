@@ -7,6 +7,7 @@ import { SkeletonGrid } from '../components/Skeleton'
 import { ErrorPanel } from '../components/ErrorPanel'
 import { SourcePicker } from '../components/SourcePicker'
 import { SourcePrefsSheet } from '../components/SourcePrefsSheet'
+import { OfflineNotice, useNet } from '../components/NetStatus'
 import { IconSearch, IconSettings } from '../components/icons'
 
 type Mode = 'popular' | 'latest' | 'search'
@@ -34,6 +35,7 @@ export function Search() {
   // bookmarkable state; the module cache still handles instant restore-on-Back.
   const [sp, setSp] = useSearchParams()
   const nav = useNavigate()
+  const { online } = useNet()
   const urlSource = sp.get('source') || ''
   const urlQ = sp.get('q') || ''
   const urlMode = sp.get('mode') as Mode | null
@@ -220,7 +222,9 @@ export function Search() {
         </div>
       )}
 
-      {isGlobal ? (
+      {!online ? (
+        <OfflineNotice what="search" />
+      ) : isGlobal ? (
         !query.trim() ? <div className="center-msg">Type to search across all sources.</div>
           : (
             <div className="gs">

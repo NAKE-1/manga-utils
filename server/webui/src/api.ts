@@ -342,6 +342,13 @@ export const api = {
   autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),
   captchaStats: () => getJson<CapStats>('/api/dev/captcha/stats'),
   mullvad: () => getJson<Mullvad>('/api/mullvad', 0, 10000),
+  // Server-side internet reachability (the phone reaches the LAN server even when the server has no egress).
+  netStatus: () => getJson<NetStatus>('/api/net/status', 0, 6000),
+  netCheck: async (): Promise<NetStatus> => {
+    const r = await fetch('/api/net/check', { method: 'POST' })
+    if (!r.ok) throw new Error(`check HTTP ${r.status}`)
+    return r.json()
+  },
   // Clears IP-bound network state (cf_clearance cookies, stale sockets, stuck sources) so a VPN / exit-node
   // switch takes effect without restarting the server. Caches only — never touches library/downloads.
   resetEgress: async (): Promise<{ jcefCookies: number }> => {
@@ -481,6 +488,7 @@ export interface DevCaptcha { captchaId: string; count: number; imageA: string; 
 export interface CapAttempt { at: number; result: string; clicks: number; tries: number; ms: number }
 export interface CapStats { solved: number; failed: number; reloads: number; avgMs: number; recent: CapAttempt[] }
 export interface Mullvad { ip: string; country: string; city: string; mullvad_exit_ip: boolean; mullvad_exit_ip_hostname: string; organization: string }
+export interface NetStatus { online: boolean; lastChecked: number; since: number }
 export interface CapDet { name: string; conf: number; x0: number; y0: number; x1: number; y1: number }
 export interface CapSolve { aDets: CapDet[]; bDets: CapDet[]; clicks: CapDet[]; missing: string[]; solved: boolean }
 

@@ -1483,6 +1483,11 @@ fun Application.module() {
         // polls /progress for the result instead of holding a minute-long request open (which used to drop
         // over Tailscale/phone and show a false "Update failed" even though the server finished fine).
         post("/api/library/update") {
+            // Offline: don't hammer every source with doomed calls. Report it so the UI can say so.
+            if (!NetMonitor.online) {
+                call.respond(HttpStatusCode.ServiceUnavailable, ErrorDto("offline"))
+                return@post
+            }
             if (!libUpdateRunning) {
                 libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0; libUpdateSummary = null
                 libUpdateExec.submit {
