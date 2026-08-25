@@ -80,6 +80,8 @@ object CefManager {
                 .onFailure {
                     logger.error(it) { "Failed to set up CEF" }
                     CefHelper.cefApp.value = Result.failure(it)
+                    // Let a later attempt re-run init instead of being wedged on this failed one forever.
+                    started.set(false)
                 }
         }.apply { isDaemon = true; name = "cef-bootstrap" }.start()
     }

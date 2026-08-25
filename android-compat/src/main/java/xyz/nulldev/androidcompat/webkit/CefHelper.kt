@@ -36,7 +36,14 @@ object CefHelper {
         // If CEF is already initialized (the common case — bootstrap set cefApp on INITIALIZED), use it
         // directly. onInitialization() only fires on state *changes*, so waitForInit() would block
         // forever on an already-initialized app — deadlocking the main looper the WebView runs on.
-        val app = if (isInitialized) cef else waitForInit().first()
+        // BOUNDED: if the app got created but never reaches INITIALIZED (e.g. a stale CEF profile lock
+        // after a crash), waitForInit() would otherwise hang forever — and, held under JcefRemoteView's
+        // monitor, wedge every WebView open and starve the coroutine pools. Time out and fail cleanly.
+        val app = if (isInitialized) {
+            cef
+        } else {
+            withTimeoutOrNull(30_000) { waitForInit().first() } ?: throw CefException(WEBVIEW_INITIALIZING)
+        }
         val client = app.createClient()
         JsHandler(client) // This adds itself to a global map
         // Block ALL popups (window.open, target=_blank new-windows). Piracy sources spray ad popups that

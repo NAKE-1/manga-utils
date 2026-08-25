@@ -36,7 +36,8 @@ object JcefRemoteView {
     const val WIDTH = 440
     const val HEIGHT = 780
 
-    private var client: CefClient? = null
+    @Volatile private var client: CefClient? = null
+    private val clientInitLock = Any() // guards the slow createClient() WITHOUT holding the instance monitor
     @Volatile private var browser: CefBrowser? = null
     @Volatile private var currentUrl = ""
     private val panel = JPanel() // MouseEvent source for input forwarding
@@ -65,19 +66,34 @@ object JcefRemoteView {
     }
 
     /** (Re)open the offscreen browser at [url]. Disposes any previous session. */
-    @Synchronized
     fun open(url: String) {
-        // Idempotent: a client re-mount / re-render must NOT spawn a second browser (that's what caused the
-        // two-challenges-flashing + endless re-init). Same URL + a live session → keep it.
-        if (browser != null && url.trimEnd('/') == currentUrl.trimEnd('/')) return
-        if (client == null) client = runCatching { runBlocking { CefHelper.createClient() } }.getOrNull()
-        val c = client ?: run { log.warn { "JcefRemoteView: CEF client unavailable" }; return }
-        closeBrowser()
-        synchronized(lock) { raw = null; rw = 0; rh = 0 }
-        currentUrl = url
-        browser = c.createBrowser(url, CefRendering.CefRenderingWithHandler(renderHandler, panel), false)
-            .apply { createImmediately() }
-        log.info { "JcefRemoteView: opened $url" }
+        // Get the CEF client OUTSIDE the instance monitor: createClient() can block on CEF init, and if it
+        // held `this` monitor a hung init would wedge EVERY open() call and starve the coroutine pools
+        // (the exact site-wide-lag failure we saw). Single-flight via a dedicated lock instead.
+        val c = ensureClient() ?: run { log.warn { "JcefRemoteView: CEF client unavailable" }; return }
+        synchronized(this) {
+            // Idempotent: a client re-mount / re-render must NOT spawn a second browser (that's what caused
+            // the two-challenges-flashing + endless re-init). Same URL + a live session → keep it.
+            if (browser != null && url.trimEnd('/') == currentUrl.trimEnd('/')) return
+            closeBrowser()
+            synchronized(lock) { raw = null; rw = 0; rh = 0 }
+            currentUrl = url
+            browser = c.createBrowser(url, CefRendering.CefRenderingWithHandler(renderHandler, panel), false)
+                .apply { createImmediately() }
+            log.info { "JcefRemoteView: opened $url" }
+        }
+    }
+
+    /** Create the CEF client once (single-flight). The slow/blocking part is held under [clientInitLock],
+     *  never the instance monitor, so a stuck CEF init fails in ~30s (CefHelper timeout) instead of wedging. */
+    private fun ensureClient(): CefClient? {
+        client?.let { return it }
+        synchronized(clientInitLock) {
+            client?.let { return it }
+            val c = runCatching { runBlocking { CefHelper.createClient() } }.getOrNull()
+            client = c
+            return c
+        }
     }
 
     /** Forward a tap at OSR-pixel ([x],[y]) as a left click (move → press → release). */
