@@ -653,6 +653,8 @@ private data class DiagDto(
 @Serializable private data class ErrorDto(val error: String)
 
 @Serializable private data class CookieHostDto(val host: String, val count: Int, val hasClearance: Boolean)
+
+@Serializable private data class NetStatusDto(val online: Boolean, val lastChecked: Long, val since: Long)
 @Serializable private data class ResolveDto(val sourceId: String, val mangaUrl: String, val title: String, val cover: String? = null)
 
 @Serializable
@@ -989,6 +991,9 @@ fun main() {
     }.apply { isDaemon = true; name = "lib-warm" }.start()
     // Restore + resume the download queue from disk (survives a crash/restart).
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
+    NetMonitor.start() // watch server internet reachability so the app can degrade gracefully offline
+    // Pause the download queue while offline (stop hammering doomed fetches); auto-resume on reconnect.
+    NetMonitor.onChange { online -> if (online) DownloadQueue.resumeFromOffline() else DownloadQueue.pauseForOffline() }
     UpdateScheduler.reschedule() // start background library updates if enabled in settings
     HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
     BackupScheduler.reschedule() // start the daily local data backup if enabled in settings
@@ -2497,6 +2502,13 @@ fun Application.module() {
         post("/api/net/up") {
             val n = call.receive<ByteArray>().size
             call.respondBytes(n.toString().toByteArray())
+        }
+        // Server-side internet reachability, so clients can degrade gracefully offline (the phone reaches the
+        // LAN server fine even when the server has no egress). status = current verdict; check = force a probe.
+        get("/api/net/status") { call.respond(NetStatusDto(NetMonitor.online, NetMonitor.lastChecked, NetMonitor.since)) }
+        post("/api/net/check") {
+            val online = withContext(Dispatchers.IO) { NetMonitor.checkNow() }
+            call.respond(NetStatusDto(online, NetMonitor.lastChecked, NetMonitor.since))
         }
 
         // Build info + tech stack + recent changelog (baked into resources at build time). Lets each

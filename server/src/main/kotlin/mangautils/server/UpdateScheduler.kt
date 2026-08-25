@@ -24,10 +24,23 @@ object UpdateScheduler {
     }
     @Volatile private var task: ScheduledFuture<*>? = null
     @Volatile var lastRunAt: Long = 0L; private set
+    @Volatile private var missedWhileOffline = false
+    @Volatile private var netWired = false
 
     /** (Re)configure the periodic task from the current settings. Safe to call repeatedly. */
     @Synchronized
     fun reschedule() {
+        // Once: when the server comes back online, run an update that was skipped while offline.
+        if (!netWired) {
+            netWired = true
+            NetMonitor.onChange { online ->
+                if (online && missedWhileOffline) {
+                    missedWhileOffline = false
+                    log.info("back online - running the scheduled update that was skipped while offline")
+                    runCatching { runNow() }.onFailure { log.warn("catch-up update failed: {}", it.message) }
+                }
+            }
+        }
         task?.cancel(false)
         task = null
         val s = runCatching { SettingsStore.get() }.getOrNull() ?: return
@@ -43,7 +56,14 @@ object UpdateScheduler {
             String.format("%02d", hour), initialDelayMs / 3_600_000, s.autoDownloadNew,
         )
         task = exec.scheduleAtFixedRate(
-            { runCatching { runNow() }.onFailure { log.warn("scheduled update failed: {}", it.message) } },
+            {
+                if (!NetMonitor.online) {
+                    log.info("skipping scheduled update - server offline (will run when back online)")
+                    missedWhileOffline = true
+                } else {
+                    runCatching { runNow() }.onFailure { log.warn("scheduled update failed: {}", it.message) }
+                }
+            },
             initialDelayMs, TimeUnit.DAYS.toMillis(1), TimeUnit.MILLISECONDS,
         )
     }

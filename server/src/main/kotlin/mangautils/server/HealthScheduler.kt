@@ -21,11 +21,23 @@ object HealthScheduler {
         Thread(r, "health-sched").apply { isDaemon = true }
     }
     @Volatile private var task: ScheduledFuture<*>? = null
+    @Volatile private var missedWhileOffline = false
+    @Volatile private var netWired = false
 
     @Synchronized
     fun reschedule() {
         task?.cancel(false)
         task = null
+        if (!netWired) {
+            netWired = true
+            NetMonitor.onChange { online ->
+                if (online && missedWhileOffline) {
+                    missedWhileOffline = false
+                    log.info("back online - running the health check that was skipped while offline")
+                    runCatching { HealthSweep.start() }.onFailure { log.warn("catch-up health check failed: {}", it.message) }
+                }
+            }
+        }
         val s = runCatching { SettingsStore.get() }.getOrNull() ?: return
         if (!s.healthCheckEnabled) { log.debug("scheduled health check disabled"); return }
         val hour = s.healthCheckHour.coerceIn(0, 23)
@@ -35,7 +47,14 @@ object HealthScheduler {
         val initialDelayMs = java.time.Duration.between(now, next).toMillis()
         log.info("scheduled health check on: daily at {}:00 (first run in ~{}h)", String.format("%02d", hour), initialDelayMs / 3_600_000)
         task = exec.scheduleAtFixedRate(
-            { runCatching { HealthSweep.start() }.onFailure { log.warn("scheduled health check failed: {}", it.message) } },
+            {
+                if (!NetMonitor.online) {
+                    log.info("skipping scheduled health check - server offline (will run when back online)")
+                    missedWhileOffline = true
+                } else {
+                    runCatching { HealthSweep.start() }.onFailure { log.warn("scheduled health check failed: {}", it.message) }
+                }
+            },
             initialDelayMs, TimeUnit.DAYS.toMillis(1), TimeUnit.MILLISECONDS,
         )
     }

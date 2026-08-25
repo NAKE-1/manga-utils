@@ -46,7 +46,7 @@ object DownloadQueue {
         val total = chapters.size
         @Volatile var order = 0 // sort key for the queue; lower runs first (reorderable while queued)
         @Volatile var tag = "" // "" for a normal download, "migration" for one queued by a migration
-        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted | retrywait | waitvf
+        @Volatile var state = "queued" // queued | running | done | failed | stopped | interrupted | retrywait | waitvf | offlinewait
         @Volatile var vfHost = "" // when state==waitvf: the host whose human-check must be solved to resume
         @Volatile var doneCount = 0
         @Volatile var failedCount = 0
@@ -230,7 +230,13 @@ object DownloadQueue {
                     } else {
                     // A rate limit / busy source is source-wide, not manga-specific: rest the whole source so
                     // pump() doesn't immediately throw the next queued manga at it and cascade the failure.
-                    if (task.failClass == "transient") sourceCooldownUntil[task.sourceId] = System.currentTimeMillis() + SOURCE_COOLDOWN_MS
+                    if (task.failClass == "transient") {
+                        sourceCooldownUntil[task.sourceId] = System.currentTimeMillis() + SOURCE_COOLDOWN_MS
+                        // A whole batch failing as "busy" can actually be the SERVER being offline (every source
+                        // call fails the same way). Probe connectivity now instead of sitting in a pointless
+                        // retry-wait; if offline, the monitor flips and the queue parks as offlinewait (auto-resume).
+                        NetMonitor.reportPossibleOutage()
+                    }
                     // A rate limit / busy source mid-run strands a batch of chapters, all retryable. A quick
                     // inline retry is the wrong move — it just keeps the source's window hot — and burying it
                     // as a dead "failed" row forces a manual click. Park it and re-run after a real quiet gap,
@@ -249,7 +255,9 @@ object DownloadQueue {
             // instead of stranding it as a hard "failed" row the batch never comes back to.
             val vfHost = sourceHost(task.sourceId)?.takeIf { HumanCheckState.isPending(it) }
             when {
-                Thread.currentThread().isInterrupted || it is InterruptedException -> task.state = "stopped"
+                // pauseForOffline() marks the task offlinewait BEFORE interrupting it, so preserve that
+                // (auto-resume on reconnect) rather than clobbering it to a manual "stopped".
+                Thread.currentThread().isInterrupted || it is InterruptedException -> { if (task.state != "offlinewait") task.state = "stopped" }
                 vfHost != null -> {
                     task.failed.clear(); task.failed.addAll(task.chapters.filter { c -> c.url !in task.finishedUrls })
                     task.failedCount = task.failed.size
@@ -340,6 +348,33 @@ object DownloadQueue {
             log.info("DOWNLOAD resuming after verification - '{}'", it.mangaTitle)
         }
         if (any) { pump(); persist() }
+    }
+
+    /** Server lost internet: park active/queued/retry-waiting downloads so they stop hammering doomed
+     *  fetches. Distinct from a user Stop and from waitvf; [resumeFromOffline] brings them back automatically. */
+    @Synchronized
+    fun pauseForOffline() {
+        var any = false
+        tasks.values.forEach {
+            if (it.state == "running" || it.state == "queued" || it.state == "retrywait") {
+                it.state = "offlinewait" // set FIRST so the interrupt below preserves it (see run() onFailure)
+                it.bytesPerSec = 0.0
+                any = true
+            }
+        }
+        futures.values.forEach { it.cancel(true) } // interrupt any in-flight download
+        if (any) { log.info("DOWNLOAD paused - server went offline"); persist() }
+    }
+
+    /** Connectivity returned: requeue everything parked by [pauseForOffline]. */
+    @Synchronized
+    fun resumeFromOffline() {
+        // Clear source cooldowns first: while offline every source "failed", which set a bogus rest timer.
+        // Those aren't real rate-limits, so drop them or the resumed downloads would sit in "source resting".
+        sourceCooldownUntil.clear()
+        var any = false
+        tasks.values.filter { it.state == "offlinewait" }.forEach { it.state = "queued"; it.error = ""; it.failClass = ""; any = true }
+        if (any) { log.info("DOWNLOAD resuming - server back online"); pump(); persist() }
     }
 
     // ---- persistence: survive a restart (Part B) ------------------------------------------------

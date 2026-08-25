@@ -76,7 +76,7 @@ export function Downloads() {
   const tasks = data.tasks
   const sourceOf = (t: DlTask) => t.sourceId || t.mangaKey.split('|')[0]
   // Live work vs history. Interrupted (post-restart, awaiting Resume) counts as live — it needs attention.
-  const active = tasks.filter((t) => t.state === 'running' || t.state === 'queued' || t.state === 'retrywait' || t.state === 'interrupted' || t.state === 'waitvf')
+  const active = tasks.filter((t) => t.state === 'running' || t.state === 'queued' || t.state === 'retrywait' || t.state === 'interrupted' || t.state === 'waitvf' || t.state === 'offlinewait')
   const completed = tasks.filter((t) => t.state === 'done' || t.state === 'failed' || t.state === 'stopped')
   const queuedIds = tasks.filter((t) => t.state === 'queued').map((t) => t.id) // global order — reorder is global
 
@@ -155,6 +155,8 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
   const [solving, setSolving] = useState(false)
   // Parked after a transient (rate-limit / busy-source) failure: waiting out a cooldown, then re-runs itself.
   const parked = t.state === 'retrywait'
+  // Server lost internet: paused, auto-resumes when connectivity returns (no timer, no user action).
+  const offline = t.state === 'offlinewait'
   const retryIn = parked ? (t.retryAt || 0) - Date.now() : 0
   // Queued behind a source that's resting after a rate-limit — show when it'll get its turn, not just "Queued".
   const resting = queued ? (t.sourceRestUntil || 0) - Date.now() : 0
@@ -192,14 +194,16 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
               ? <button className="dl-link dl-resume" onClick={onResume}>Resume</button>
               : parked
                 ? <button className="dl-link dl-resume" onClick={onForce}>Retry now</button>
-                : failed && t.failedChapters.length
+                : offline
+                  ? <span className="dl-state">Paused</span>
+                  : failed && t.failedChapters.length
                   ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
                   : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}
         </div>
       </div>
       <div className="dlc-sub">
         <span>
-          {waitvf ? `🔒 Waiting for verification · solve the human-check for ${t.vfHost || 'the source'}, then it resumes` : interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : parked
+          {offline ? `No internet · ${t.done}/${t.total} done — paused, resumes automatically when back online` : waitvf ? `🔒 Waiting for verification · solve the human-check for ${t.vfHost || 'the source'}, then it resumes` : interrupted ? `Interrupted · ${t.done}/${t.total} done — tap Resume` : parked
             ? `Source was busy · ${t.failed} chapter${t.failed === 1 ? '' : 's'} to retry · in ${fmtCountdown(retryIn)}`
             : queued ? (resting > 0 ? `Source resting · ready in ${fmtCountdown(resting)}` : 'Queued') : running
             ? `Chapter ${chapterNo} of ${t.total}${t.currentChapter ? ` · ${t.currentChapter}` : ''}`
