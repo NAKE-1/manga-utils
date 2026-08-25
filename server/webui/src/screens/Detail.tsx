@@ -98,6 +98,7 @@ export function Detail() {
   const [stateLoaded, setStateLoaded] = useState(false)
   const [source, setSource] = useState<Source | null>(null)
   const [srcKnown, setSrcKnown] = useState<boolean | null>(null) // is this source installed? null = still loading
+  const [titleOpen, setTitleOpen] = useState(false) // very long (untranslated) titles clamp to a few lines; tap to expand
   const [dlMsg, setDlMsg] = useState('')
   const [dlProg, setDlProg] = useState<Record<string, { done: number; total: number; state: string }>>({})
   const [selecting, setSelecting] = useState(false)
@@ -360,7 +361,11 @@ export function Detail() {
             : <img src={noPoster} alt="" />}
         </div>
         <div className="detail-head-info">
-          <h1 className="detail-title">{m.title}</h1>
+          <h1
+            className={'detail-title' + (m.title.length > 100 ? ' xs' : m.title.length > 55 ? ' sm' : '') + (titleOpen ? ' open' : ' clamp')}
+            onClick={() => setTitleOpen((o) => !o)}
+            title={titleOpen ? 'Tap to collapse' : 'Tap to show the full title'}
+          >{m.title}</h1>
           {source && (
             <div className="meta-tag">
               <span className="meta-tag-k">Source</span>
