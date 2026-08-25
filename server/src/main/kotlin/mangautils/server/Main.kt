@@ -1430,6 +1430,14 @@ fun Application.module() {
             val entries = withContext(Dispatchers.IO) {
                 LibraryService.list().map {
                     val last = it.knownChapters.maxByOrNull { c -> c.number }
+                    // "Recently updated" should track a genuinely NEW chapter number, not a re-scan of the
+                    // current top chapter. So date the series by the EARLIEST known upload among the highest
+                    // number's versions: a later re-scan of that number won't bump it; only a new number will.
+                    val lastDate = last?.let { l ->
+                        it.knownChapters.filter { c -> c.number == l.number }
+                            .mapNotNull { c -> c.dateUpload.takeIf { d -> d > 0 } }
+                            .minOrNull() ?: l.dateUpload
+                    } ?: 0L
                     // Group known chapters by number (dedup multi-scanlator variants); a chapter counts as
                     // downloaded if ANY of its variants has a file on disk. Badge = unique chapters, not the
                     // scanlator-inflated total, so a fully-downloaded series reads green (not perpetual yellow).
@@ -1444,7 +1452,7 @@ fun Application.module() {
                     val total = groups.size
                     val downloaded = groups.count { (_, vs) -> vs.any { c -> c.url in have || c.number in haveNums } }
                     LibraryDto(it.sourceId.toString(), it.mangaUrl, it.title, it.thumbnailUrl, it.author, it.status, it.newChapters.size,
-                        last?.number ?: -1f, last?.name ?: "", last?.dateUpload ?: 0, downloaded, total)
+                        last?.number ?: -1f, last?.name ?: "", lastDate, downloaded, total)
                 }
             }
             call.respond(entries)
