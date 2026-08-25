@@ -55,7 +55,16 @@ object NetMonitor {
     private val exec = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "net-monitor").apply { isDaemon = true } }
 
     fun start() {
-        scheduleNext(0)
+        // Probe once SYNCHRONOUSLY before returning so `online` is accurate the moment we start serving —
+        // otherwise it defaults to true and a download/search fired right after boot (or the debounce) can
+        // misfire as "source busy" until the first async probe lands. No debounce at boot: nothing to flap
+        // against yet, so trust the first read.
+        online = runCatching { probes.any { reach(it) } }.getOrDefault(true)
+        lastChecked = System.currentTimeMillis()
+        since = lastChecked
+        consecutiveFails = if (online) 0 else FAIL_THRESHOLD // internally "confirmed offline" so later logic is consistent
+        if (!online) log.info("network OFFLINE at startup - no egress to any probe host")
+        scheduleNext(if (online) INTERVAL_ONLINE_SEC else INTERVAL_OFFLINE_SEC)
         log.info("network monitor started (probing every {}s, {}s while offline)", INTERVAL_ONLINE_SEC, INTERVAL_OFFLINE_SEC)
     }
 

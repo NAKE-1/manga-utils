@@ -227,6 +227,12 @@ object DownloadQueue {
                     if (vfHost != null) {
                         task.vfHost = vfHost
                         task.state = "waitvf"
+                    } else if (task.failClass == "transient" && !NetMonitor.online) {
+                    // Server is already offline: this "busy source" is really no-internet (started a download
+                    // while offline). Park it as offlinewait so it shows "Paused" and auto-resumes on reconnect,
+                    // instead of a bogus source-rest timer. No cooldown - the source isn't the problem.
+                    task.state = "offlinewait"
+                    task.error = ""
                     } else {
                     // A rate limit / busy source is source-wide, not manga-specific: rest the whole source so
                     // pump() doesn't immediately throw the next queued manga at it and cascade the failure.
@@ -263,6 +269,13 @@ object DownloadQueue {
                     task.failedCount = task.failed.size
                     task.vfHost = vfHost
                     task.state = "waitvf"
+                }
+                // Threw because the server is offline (e.g. host-unknown on the details fetch): park as
+                // offlinewait ("Paused", auto-resumes on reconnect) instead of a dead "failed" row.
+                !NetMonitor.online -> {
+                    task.failed.clear(); task.failed.addAll(task.chapters.filter { c -> c.url !in task.finishedUrls })
+                    task.failedCount = task.failed.size
+                    task.state = "offlinewait"; task.error = ""
                 }
                 else -> { task.state = "failed"; task.error = it.message ?: it::class.simpleName ?: "failed" }
             }
