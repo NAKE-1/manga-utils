@@ -176,8 +176,12 @@ taskkill /f /im jcef_helper.exe >nul 2>&1
 if exist "%RESTART_FLAG%" del "%RESTART_FLAG%" >nul 2>&1
 REM --no-daemon: keeps Ctrl+C-ed servers from leaving busy gradle daemons that pile up and stall launch.
 call "%GRADLE%" --no-daemon :server:run
+set "EXITCODE=%errorlevel%"
 REM The in-app "Restart server" (dev) drops restart.flag before exiting; relaunch when we see it.
 if exist "%RESTART_FLAG%" ( echo. & echo --- Restart requested - relaunching... --- & goto :m_web_loop )
+REM Auto-recover from an unexpected exit (non-zero, no restart asked) - e.g. a JVM/JCEF native crash
+REM while away - so the server doesn't sit dead for hours. A clean stop (exit 0) or Ctrl+C is respected.
+if not "%EXITCODE%"=="0" ( echo. & echo --- Server stopped unexpectedly ^(exit %EXITCODE%^) - relaunching in 5s, press Ctrl+C to cancel... --- & timeout /t 5 & goto :m_web_loop )
 goto :after
 
 :after
