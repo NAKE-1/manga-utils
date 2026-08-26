@@ -94,8 +94,8 @@ img { display: block; }
   padding-top: var(--safe-t);
   display: flex; align-items: center; gap: 6px;
   padding-left: 16px; padding-right: 8px;
-  background: linear-gradient(var(--bg), rgba(26,26,28,0.86));
-  backdrop-filter: blur(8px);
+  /* Opaque, no backdrop-filter — same iOS standalone blur-flash fix as .tabbar. */
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .topbar .wordmark { font-weight: 800; letter-spacing: .14em; font-size: 17px; flex: 1; cursor: pointer; }
@@ -170,8 +170,10 @@ img { display: block; }
   height: calc(var(--tabbar-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-  background: rgba(26,26,28,0.94);
-  backdrop-filter: blur(10px);
+  /* Opaque, NO backdrop-filter: iOS Safari flashes the blur layer black during page transitions in
+     standalone (home-screen) mode — the "black bar" at the bottom. Desktop handles blur fine, so this
+     only showed on the iPhone. Solid theme bg looks nearly identical (it was already 94% opaque). */
+  background: var(--bg);
   border-top: 1px solid var(--border);
 }
 .tabbar a {
