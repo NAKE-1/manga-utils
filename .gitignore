@@ -16,8 +16,19 @@ Thumbs.db
 /android-compat/lib/android.jar
 /tmp-androidjar/
 
-# Runtime data dir (db, downloads, logs, cached extension jars)
-/data/
+# The data/ dir is BOTH a Gradle module (build.gradle.kts — 4 modules depend on :data) AND, when
+# the app is run from the repo root, a runtime data dir. Track the module file; ignore the runtime
+# spew. (A fresh clone needs data/ to exist or the Gradle build fails: "project ':data' … does not exist".)
+/data/build/
+/data/downloads/
+/data/extensions/
+/data/logs/
+/data/settings/
+/data/covers/
+/data/cache/
+/data/bin/
+/data/*.json
+/data/.flare-probed
 *.log
 
 # Local env
