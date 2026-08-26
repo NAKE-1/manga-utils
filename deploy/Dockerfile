@@ -9,8 +9,9 @@
 FROM eclipse-temurin:21-jdk-jammy AS build
 
 # Node is needed because :server's processResources runs the web UI's `npm run build`.
+# git is needed because generateBuildInfo stamps the commit + changelog into /api/version.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends curl ca-certificates git \
  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
@@ -19,7 +20,10 @@ WORKDIR /src
 COPY . .
 # installDist builds :core/:source-api/:android-compat, bundles the built web UI into resources,
 # and produces a runnable dist at server/build/install/server (bin/server launcher + lib/*.jar).
-RUN chmod +x gradlew && ./gradlew :server:installDist --no-daemon -x test
+# safe.directory so generateBuildInfo's `git` calls work on the COPY'd tree (avoids git's
+# dubious-ownership refusal → would leave commit "unknown").
+RUN git config --global --add safe.directory /src \
+ && chmod +x gradlew && ./gradlew :server:installDist --no-daemon -x test
 
 # ---- Stage 2: runtime ------------------------------------------------------------------------
 FROM eclipse-temurin:21-jre-jammy AS runtime

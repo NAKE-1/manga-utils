@@ -1,7 +1,8 @@
 # Keep the build context small + STABLE so editing deploy/ or docs doesn't bust the Gradle build
 # cache. Send source, gradlew, and gradle config — nothing else. (BuildKit reads this automatically
 # for deploy/Dockerfile; on old Docker, copy it to a root .dockerignore.)
-.git
+# NB: .git is intentionally NOT ignored — generateBuildInfo runs `git` at build time to stamp the
+# commit + changelog into /api/version. Excluding it made the About screen show "unknown" / "(0)".
 .github
 .gradle
 **/.gradle
