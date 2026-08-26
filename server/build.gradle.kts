@@ -28,6 +28,7 @@ dependencies {
     implementation("io.ktor:ktor-server-status-pages:$ktorVersion")
     implementation("io.ktor:ktor-server-default-headers:$ktorVersion")
     implementation("io.ktor:ktor-server-compression:$ktorVersion")
+    implementation("io.ktor:ktor-server-caching-headers:$ktorVersion")
 
     implementation(libs.logback.classic) // was runtimeOnly — LogBuffer attaches a logback appender
 

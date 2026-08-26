@@ -25,6 +25,9 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
+import io.ktor.http.CacheControl
+import io.ktor.http.content.CachingOptions
+import io.ktor.server.plugins.cachingheaders.CachingHeaders
 import io.ktor.server.plugins.compression.Compression
 import io.ktor.server.plugins.compression.deflate
 import io.ktor.server.plugins.compression.excludeContentType
@@ -1197,6 +1200,20 @@ fun Application.module() {
         deflate()
         minimumSize(1024)
         excludeContentType(ContentType.Image.Any, ContentType.Video.Any)
+    }
+    // Cache strategy for the SPA so a home-screen PWA reliably picks up new builds: hashed bundles under
+    // /assets/ never change under a given name → cache hard; index.html (served for "/" and every SPA
+    // route) must revalidate every load, or iOS keeps serving a stale index that references old asset
+    // hashes forever. API/image responses set their own policy (left untouched).
+    install(CachingHeaders) {
+        options { call, _ ->
+            val p = call.request.path()
+            when {
+                p.startsWith("/assets/") -> CachingOptions(CacheControl.MaxAge(maxAgeSeconds = 31_536_000, visibility = CacheControl.Visibility.Public))
+                p.startsWith("/api/") || p.startsWith("/img/") -> null
+                else -> CachingOptions(CacheControl.NoCache(visibility = CacheControl.Visibility.Public)) // index.html + root static
+            }
+        }
     }
     install(CallLogging) {
         // Don't log the high-frequency poll + static-asset traffic (the Downloads screen hits
