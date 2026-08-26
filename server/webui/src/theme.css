@@ -89,10 +89,14 @@ img { display: block; }
    can't shift them off the bottom, and <main> is the only scroller. This is the robust fix for the
    iOS-standalone fixed-bar drift/strip — the bars are structurally pinned, not positioned. */
 .app {
+  /* position:fixed + inset:0 = exactly the physical viewport (with viewport-fit=cover), which 100dvh
+     does NOT reliably span in an iOS standalone PWA (it excludes the bottom safe area → the tab bar
+     floats above the home indicator). The shell is a full-screen fixed flex column; only <main> scrolls. */
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  overflow: hidden; /* the shell itself never scrolls; <main> does */
+  overflow: hidden;
 }
 main {
   flex: 1 1 auto;
