@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { Routes, Route, useLocation } from 'react-router-dom'
 import { TopBar } from './components/TopBar'
 import { TabBar } from './components/TabBar'
@@ -27,11 +27,25 @@ import { HumanCheckWatcher } from './components/HumanCheckWatcher'
 import { PullToRefresh } from './components/PullToRefresh'
 import { NetProvider, OfflineBanner } from './components/NetStatus'
 
+// Persist the app's scroll (now on <main>, the flex-shell scroller) across full-screen reader visits —
+// the shell unmounts while reading, so returning from a chapter lands you where you left off.
+let appMainScroll = 0
+
 export function App() {
   const loc = useLocation()
   const isReader = loc.pathname.startsWith('/reader/')
+  const mainRef = useRef<HTMLElement>(null)
   // Mute background toasts (FlareSolverr solves, download progress, scans) while reading.
   useEffect(() => { setReaderActive(isReader) }, [isReader])
+  useEffect(() => {
+    if (isReader) return
+    const m = mainRef.current
+    if (!m) return
+    m.scrollTop = appMainScroll // restore when returning from the reader (or first mount)
+    const onScroll = () => { appMainScroll = m.scrollTop }
+    m.addEventListener('scroll', onScroll, { passive: true })
+    return () => m.removeEventListener('scroll', onScroll)
+  }, [isReader])
   // DownloadWatcher + Toasts are mounted ONCE here (not inside each branch) so switching in/out of the
   // full-screen reader doesn't remount them — otherwise the FlareSolverr/download watchers reset and
   // swallow the very events (a Cloudflare solve on chapter open) we want to toast.
@@ -49,7 +63,7 @@ export function App() {
           <PullToRefresh />
           <TopBar />
           <OfflineBanner />
-          <main>
+          <main ref={mainRef}>
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/list/:kind" element={<ListPage />} />
