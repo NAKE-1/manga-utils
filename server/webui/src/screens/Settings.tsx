@@ -403,13 +403,14 @@ export function Settings() {
               <div className="set-row-label">Max series on Home</div>
               <div className="set-hint">Cap how many library covers the Home screen shows. The rest stay one tap away via “Library →”.</div>
             </div>
+            {/* Multiples of 3 so the cap lands on a full row of the 3-wide cover grid. */}
             <select className="set-select" style={{ width: 'auto' }} value={homeLimit} onChange={(e) => setHomeLimitVal(Number(e.target.value))}>
               <option value={0}>Unlimited</option>
-              <option value={20}>20</option>
-              <option value={40}>40</option>
+              <option value={21}>21</option>
+              <option value={42}>42</option>
               <option value={60}>60</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
+              <option value={99}>99</option>
+              <option value={201}>201</option>
             </select>
           </div>
         </div>

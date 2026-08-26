@@ -60,7 +60,10 @@ export function Search() {
   const busy = useRef(false)
   const pageAbort = useRef<AbortController | null>(null)
   const cfTimer = useRef<number | undefined>(undefined)
-  const didHydrate = useRef(!!searchCache) // skip the initial auto-fetch when restoring cached results
+  // Skip the initial auto-fetch only when we actually restored results — otherwise a cache saved while a
+  // (slow) load was still in flight has empty items, and skipping the fetch strands the page on "No
+  // results" until a reload. Empty cache → fetch normally.
+  const didHydrate = useRef(!!searchCache && ((searchCache.items?.length ?? 0) > 0 || (searchCache.globalRows?.length ?? 0) > 0))
 
   // A source that just revealed Cloudflare gets re-coloured in the picker (debounced refetch).
   function refreshSourcesSoon() {
