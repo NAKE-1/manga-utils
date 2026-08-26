@@ -25,6 +25,11 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
+import io.ktor.server.plugins.compression.Compression
+import io.ktor.server.plugins.compression.deflate
+import io.ktor.server.plugins.compression.excludeContentType
+import io.ktor.server.plugins.compression.gzip
+import io.ktor.server.plugins.compression.minimumSize
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
 import io.ktor.server.request.path
 import io.ktor.server.request.receive
@@ -1184,6 +1189,15 @@ private fun waitSolved(ms: Long): Boolean {
 
 fun Application.module() {
     install(DefaultHeaders)
+    // gzip text/JSON/JS/CSS so reloads over Tailscale/phone aren't shipping the ~400KB bundle + the
+    // 315-series library JSON uncompressed. Images/video are already compressed — excluded so we don't
+    // burn CPU re-deflating the high-volume page/cover streams.
+    install(Compression) {
+        gzip()
+        deflate()
+        minimumSize(1024)
+        excludeContentType(ContentType.Image.Any, ContentType.Video.Any)
+    }
     install(CallLogging) {
         // Don't log the high-frequency poll + static-asset traffic (the Downloads screen hits
         // /api/downloads every second, images stream constantly) — it floods the console.

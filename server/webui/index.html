@@ -14,6 +14,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="manga-utils" />
     <title>manga-utils</title>
+    <!-- Dark background from the very first frame, BEFORE theme.css loads — otherwise a slow reload
+         flashes a black bar (bare html) behind the translucent tab bar until the stylesheet applies.
+         All themes are dark, so a neutral dark here matches closely; theme.css refines it. -->
+    <style>html,body{background:#1a1a1c;margin:0}</style>
     <!-- Apply the saved colour theme before first paint so there's no flash of the default theme. -->
     <script>try{var t=localStorage.getItem('app.theme');if(t&&t!=='default')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   </head>
