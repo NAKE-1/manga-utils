@@ -130,20 +130,27 @@ object CefManager {
                 val config =
                     JCefAppConfig.getInstance(cefDir.toString(), false).apply {
                         appArgsAsList.addAll(
-                            listOf(
-                                "--disable-gpu",
-                                "--off-screen-rendering-enabled",
-                                "--disable-dev-shm-usage",
-                                "--change-stack-guard-on-fork=disable",
+                            buildList {
+                                add("--disable-gpu")
+                                add("--off-screen-rendering-enabled")
+                                add("--disable-dev-shm-usage")
+                                add("--change-stack-guard-on-fork=disable")
                                 // Offscreen rendering streams video into the frame buffer but audio still
                                 // goes to the HOST speakers — mute it; this is a captcha/solve browser.
-                                "--mute-audio",
+                                add("--mute-audio")
                                 // Silence background-service log spam we never use: GCM push
                                 // ("ConnectionHandler failed with net error: -2") and Cast/media-router
                                 // cert checks ("CRL - Verification failed"). Cosmetic only.
-                                "--disable-background-networking",
-                                "--disable-features=MediaRouter,OptimizationHints,Translate",
-                            ),
+                                add("--disable-background-networking")
+                                add("--disable-features=MediaRouter,OptimizationHints,Translate")
+                                // In a container (non-root, no user namespaces) Chromium's sandbox can't
+                                // start, so CEF fails init entirely ("CEF client unavailable"). Opt in via
+                                // MU_JCEF_NO_SANDBOX=1 (set in the Docker image); desktop keeps its sandbox.
+                                if (System.getenv("MU_JCEF_NO_SANDBOX") == "1") {
+                                    add("--no-sandbox")
+                                    add("--no-zygote")
+                                }
+                            },
                         )
                         cefSettings.apply {
                             windowless_rendering_enabled = true

@@ -59,7 +59,8 @@ RUN chmod +x /entrypoint.sh
 RUN mkdir -p /data && chown -R app:app /data /app
 
 ENV MU_DATA_DIR=/data \
-    MANGA_WEB_PORT=8080
+    MANGA_WEB_PORT=8080 \
+    MU_JCEF_NO_SANDBOX=1
 
 USER app
 WORKDIR /app
