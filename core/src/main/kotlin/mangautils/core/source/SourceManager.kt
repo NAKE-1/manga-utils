@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.source.online.HttpSource
+import mangautils.core.config.AppConfig
 import mangautils.core.extension.InstalledExtension
 import mangautils.core.extension.InstalledSource
 import mangautils.core.extension.InstalledStore
@@ -34,8 +35,13 @@ object SourceManager {
     /** Instantiate every [Source] an extension provides (boots the runtime as needed). */
     fun loadSourcesOf(ext: InstalledExtension): List<Source> {
         ExtensionRuntime.ensureStarted()
+        // Resolve the jar by package under the CURRENT data dir, not the stored ext.jarPath — that's an
+        // absolute path captured at install time and breaks the moment the data dir moves (e.g. a
+        // Windows -> container migration), giving ClassNotFoundException for every source. The jar is
+        // always installed as <extensionsDir>/<pkg>.jar (see ExtensionInstaller), so this is portable.
+        val jarPath = AppConfig.extensionsDir.resolve("${ext.pkg}.jar").toString()
         return ext.classNames.flatMap { className ->
-            val instance = ExtensionLoader.loadExtensionInstance(ext.jarPath, className)
+            val instance = ExtensionLoader.loadExtensionInstance(jarPath, className)
             expand(instance)
         }
     }
