@@ -5,12 +5,19 @@
  */
 package mangautils.core.download
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
+import mangautils.core.util.SafeFile
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
+import kotlin.io.path.Path
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 
@@ -30,6 +37,7 @@ object ChapterIdentity {
     private val log = LoggerFactory.getLogger(javaClass)
 
     /** One downloaded chapter folder (or .cbz) and what it says about itself. */
+    @Serializable
     data class Version(
         /** Folder or file name on disk — display only, never used as identity. */
         val folder: String,
@@ -49,17 +57,61 @@ object ChapterIdentity {
 
     // A manga's folder listing rarely changes, and the detail page asks per chapter row. Cache on the
     // directory's mtime so an external change (a manual delete, a restore) still invalidates.
-    // ponytail: in-memory only, rebuilt on restart. A persisted index is the upgrade if this measures slow.
+    // Persisted to badge-cache.json (see [loadPersisted]/[persist]) so a restart doesn't re-parse every
+    // downloaded chapter's ComicInfo — cold that's ~35s over a network/FUSE downloads drive.
     private val cache = ConcurrentHashMap<String, Pair<Long, List<Version>>>()
+
+    // ---- persistence ------------------------------------------------------------------------------
+    // Keyed by folder NAME (the sanitized title), not the absolute path, so the file survives a
+    // downloads-dir move (Windows -> container). The per-series mtime check still validates each entry
+    // on first access, so a folder that changed since the last save is re-scanned, not trusted blindly.
+    @Serializable
+    private data class Cached(val stamp: Long, val versions: List<Version>)
+
+    private val json = Json { ignoreUnknownKeys = true }
+    private val cacheFile: Path get() = AppConfig.dataDir.resolve("badge-cache.json")
+    @Volatile private var loaded = false
+    private val persistExec = Executors.newSingleThreadScheduledExecutor { Thread(it, "badge-cache").apply { isDaemon = true } }
+    @Volatile private var pendingPersist: ScheduledFuture<*>? = null
+
+    /** Load the persisted cache once, lazily, on the first lookup (e.g. the boot badge prewarm). */
+    private fun ensureLoaded() {
+        if (loaded) return
+        synchronized(this) {
+            if (loaded) return
+            loaded = true
+            val map = SafeFile.read(cacheFile) { runCatching { json.decodeFromString<Map<String, Cached>>(it) }.getOrNull() }
+            if (map != null) {
+                map.forEach { (folder, c) -> cache[AppConfig.downloadsDir.resolve(folder).toString()] = c.stamp to c.versions }
+                log.info("badge cache loaded: {} series (skips a cold ComicInfo re-scan)", map.size)
+            }
+        }
+    }
+
+    /** Write the in-memory cache atomically (.tmp + fsync + rename, with a .old fallback). */
+    fun persist() {
+        runCatching {
+            val snapshot = cache.entries.associate { (dirKey, v) -> Path(dirKey).name to Cached(v.first, v.second) }
+            SafeFile.writeAtomic(cacheFile, json.encodeToString(snapshot))
+        }.onFailure { log.debug("badge-cache persist failed: {}", it.message) }
+    }
+
+    /** Coalesce bursts of scans (the boot prewarm, a batch download) into one atomic write. */
+    private fun persistSoon() {
+        pendingPersist?.cancel(false)
+        pendingPersist = persistExec.schedule({ persist() }, 3, TimeUnit.SECONDS)
+    }
 
     /** Every downloaded version of every chapter for [title], read from disk. */
     fun versionsOf(title: String): List<Version> {
+        ensureLoaded()
         val dir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))
         if (!dir.isDirectory()) return emptyList()
         val stamp = runCatching { Files.getLastModifiedTime(dir).toMillis() }.getOrDefault(0L)
         cache[dir.toString()]?.let { (cachedStamp, cached) -> if (cachedStamp == stamp) return cached }
         val scanned = scan(dir)
         cache[dir.toString()] = stamp to scanned
+        persistSoon() // this series changed (or is new) — refresh the on-disk cache, debounced
         return scanned
     }
 
@@ -102,6 +154,7 @@ object ChapterIdentity {
         } else {
             cache.remove(AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title)).toString())
         }
+        persistSoon() // keep the on-disk cache in step with the drop (debounced)
     }
 
     private fun scan(dir: Path): List<Version> =
