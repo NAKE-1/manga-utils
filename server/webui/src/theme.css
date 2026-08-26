@@ -239,6 +239,16 @@ img { display: block; }
 .dl-badge svg { width: 13px; height: 13px; }
 .dl-badge.all { background: #22c55e; }
 .dl-badge.some { background: #eab308; }
+
+/* Offline + nothing downloaded: dim the cover and tag it as unavailable-while-offline.
+   Dim the image/title only (not the whole frame) so the tag above stays fully readable. */
+.cover-card.dimmed .cover-img, .cover-card.dimmed .cover-fail-img { opacity: .4; filter: grayscale(.4); }
+.cover-card.dimmed .cover-title { opacity: .5; }
+.offline-tag {
+  position: absolute; bottom: 6px; left: 6px; z-index: 3;
+  padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  color: #ffd9d9; background: rgba(236,106,106,.85); box-shadow: 0 1px 3px rgba(0,0,0,0.45);
+}
 .cover-remove {
   position: absolute; top: 6px; right: 6px; z-index: 3; width: 26px; height: 26px;
   border-radius: 50%; background: rgba(0,0,0,0.62); color: #fff; font-size: 12px; line-height: 1;

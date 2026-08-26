@@ -117,7 +117,7 @@ export function ListPage() {
     }
     libTotal = entries.length
     cards = entries.slice(libPage * PS, libPage * PS + PS).map((e) => (
-      <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} subtitle={lastLine(e)} badge={e.newChapters} dl={dlState(e)} />
+      <CoverCard key={e.sourceId + e.url} grid sourceId={e.sourceId} url={e.url} title={e.title} cover={coverUrl(e.sourceId, e.thumbnailUrl, e.title)} subtitle={lastLine(e)} badge={e.newChapters} dl={dlState(e)} dimmed={!online && !dlState(e)} />
     ))
   }
 

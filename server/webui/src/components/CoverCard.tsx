@@ -28,9 +28,11 @@ type Props = {
   grid?: boolean
   onRemove?: () => void
   dl?: 'all' | 'some'
+  /** Offline + nothing downloaded → dim it and mark it unreadable-while-offline. */
+  dimmed?: boolean
 }
 
-export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid, onRemove, dl }: Props) {
+export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, grid, onRemove, dl, dimmed }: Props) {
   const nav = useNavigate()
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -44,7 +46,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
   const go = () => nav(`/manga/${sourceId}?url=${encodeURIComponent(url)}`)
   return (
     <div
-      className={'cover-card' + (grid ? ' full' : '')}
+      className={'cover-card' + (grid ? ' full' : '') + (dimmed ? ' dimmed' : '')}
       onClick={go}
       // Prefetch only on hover-capable (mouse) devices: on touch, pointerenter fires at tap time so
       // it gives no head start — it just double-fetches the detail and slows the info page. Phone-first.
@@ -68,6 +70,7 @@ export function CoverCard({ sourceId, url, title, cover, subtitle, type, badge, 
         {type && <span className={'type-badge ' + type}>{type}</span>}
         {!!badge && badge > 0 && <span className="badge-tl" title={`${badge} new chapter${badge === 1 ? '' : 's'}`}>!</span>}
         {dl && <span className={'dl-badge ' + dl} title={dl === 'all' ? 'All chapters downloaded' : 'Some chapters downloaded'}><IconDownload /></span>}
+        {dimmed && <span className="offline-tag" title="Not downloaded — unavailable while offline">Offline</span>}
       </div>
       <div className="cover-title">{title}</div>
       {subtitle && <div className="cover-sub">{subtitle}</div>}
