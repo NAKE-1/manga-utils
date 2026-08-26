@@ -11,3 +11,10 @@ createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </React.StrictMode>,
 )
+
+// App-shell service worker: caches the hashed JS/CSS so a reload / cold launch on the home-screen PWA
+// paints instantly (no blank load-window where the tab bar shifts). Registered after load so it never
+// competes with the first render. sw.js is served no-cache, so SW updates take on the next visit.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}) })
+}
