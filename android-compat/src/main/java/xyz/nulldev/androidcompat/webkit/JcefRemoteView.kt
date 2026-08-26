@@ -117,10 +117,11 @@ object JcefRemoteView {
         val b = browser ?: return
         runCatching {
             // MouseWheelEvent(source, id, when, mods, x, y, clicks, popupTrigger, scrollType, scrollAmount, wheelRotation).
-            // JCEF turns wheelRotation into the Chromium scroll delta; positive rotation scrolls the page down.
+            // JCEF/CEF inverts wheelRotation relative to the caller's convention (the client sends deltaY>0
+            // to mean "scroll the page DOWN"), so negate it here — otherwise a drag/scroll goes the wrong way.
             val ev = java.awt.event.MouseWheelEvent(
                 panel, java.awt.event.MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(), 0, x, y, 0, false,
-                java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, deltaY,
+                java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, -deltaY,
             )
             b.sendMouseWheelEvent(ev)
         }
