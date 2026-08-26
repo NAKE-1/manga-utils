@@ -12,8 +12,8 @@ build/
 Thumbs.db
 .DS_Store
 
-# Generated Android stub jar (recreate with: start.bat android-jar)
-/android-compat/lib/android.jar
+# The patched Android stub jar is TRACKED (20MB, changes ~never) so a fresh clone / the Docker
+# build compiles without PowerShell + the Android SDK. Regenerate with: start.bat android-jar.
 /tmp-androidjar/
 
 # The data/ dir is BOTH a Gradle module (build.gradle.kts — 4 modules depend on :data) AND, when
