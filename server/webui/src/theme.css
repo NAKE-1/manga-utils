@@ -85,33 +85,20 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 img { display: block; }
 
 /* ---- App shell ---------------------------------------------------------- */
-/* App shell as a fixed-height flex column: the bars are laid-out rows (NOT position:fixed), so iOS
-   can't shift them off the bottom, and <main> is the only scroller. This is the robust fix for the
-   iOS-standalone fixed-bar drift/strip — the bars are structurally pinned, not positioned. */
 .app {
-  /* position:fixed + inset:0 = exactly the physical viewport (with viewport-fit=cover), which 100dvh
-     does NOT reliably span in an iOS standalone PWA (it excludes the bottom safe area → the tab bar
-     floats above the home indicator). The shell is a full-screen fixed flex column; only <main> scrolls. */
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-main {
-  flex: 1 1 auto;
-  min-height: 0; /* let it shrink so overflow-y works in the flex column */
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  min-height: 100%;
+  padding-top: calc(var(--topbar-h) + var(--safe-t));
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
 }
 
 .topbar {
-  flex: none; z-index: 30; /* laid-out flex row, not position:fixed */
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
   height: calc(var(--topbar-h) + var(--safe-t));
   padding-top: var(--safe-t);
   display: flex; align-items: center; gap: 6px;
   padding-left: 16px; padding-right: 8px;
-  background: var(--bg-2);
+  background: linear-gradient(var(--bg), rgba(26,26,28,0.86));
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
 .topbar .wordmark { font-weight: 800; letter-spacing: .14em; font-size: 17px; flex: 1; cursor: pointer; }
@@ -182,12 +169,12 @@ main {
 
 /* ---- Bottom tab bar ----------------------------------------------------- */
 .tabbar {
-  flex: none; z-index: 30; /* laid-out flex row at the bottom of .app — can't drift off the bottom */
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   height: calc(var(--tabbar-h) + var(--safe-b));
-  padding-bottom: var(--safe-b); /* keep icons above the home indicator */
+  padding-bottom: var(--safe-b);
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-  /* --bg-2 (elevated surface), theme-aware and opaque so the bar reads as a distinct surface. */
-  background: var(--bg-2);
+  background: rgba(26,26,28,0.94);
+  backdrop-filter: blur(10px);
   border-top: 1px solid var(--border);
 }
 .tabbar a {
@@ -679,8 +666,7 @@ main {
 
 /* ---- Search / Browse ---------------------------------------------------- */
 /* Pin the search bar + source selector together so they stay reachable while scrolling results. */
-/* sticky within <main> (the scroller) → top:0, not offset by the (now laid-out) top bar. */
-.search-head { position: sticky; top: 0; z-index: 6; background: var(--bg); box-shadow: 0 6px 8px -6px rgba(0,0,0,.5); }
+.search-head { position: sticky; top: calc(var(--topbar-h) + var(--safe-t)); z-index: 6; background: var(--bg); box-shadow: 0 6px 8px -6px rgba(0,0,0,.5); }
 .search-bar-wrap { padding: 10px 16px 4px; }
 .search-bar { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 0 12px; }
 .search-bar .sb-ic { width: 20px; height: 20px; color: var(--muted); flex: 0 0 auto; }

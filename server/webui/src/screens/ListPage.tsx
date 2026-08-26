@@ -168,8 +168,8 @@ export function ListPage() {
       )}
       {cards.length ? <div className="grid">{cards}</div> : <div className="center-msg">Nothing here yet.</div>}
       {kind === 'continue'
-        ? <Pager page={contPage} total={historyTotal} size={PS} onPage={(p) => { setContPage(p); document.querySelector('main')?.scrollTo(0, 0) }} />
-        : <Pager page={libPage} total={libTotal} size={PS} onPage={(p) => { setLibPage(p); document.querySelector('main')?.scrollTo(0, 0) }} />}
+        ? <Pager page={contPage} total={historyTotal} size={PS} onPage={(p) => { setContPage(p); window.scrollTo(0, 0) }} />
+        : <Pager page={libPage} total={libTotal} size={PS} onPage={(p) => { setLibPage(p); window.scrollTo(0, 0) }} />}
     </>
   )
 }

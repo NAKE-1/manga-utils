@@ -266,14 +266,18 @@ export function Reader() {
     if (pendingRestore.current != null) applyRestore() // page loaded → doc taller → re-pin resume point
   }, [])
 
-  // The reader is a full-screen view (outside the flex app shell) and uses the window scroll for its
-  // pages. Reset to top on entry and disable the browser's own restoration so our per-chapter reset
-  // wins. The app-shell scroll position (now on <main>) is preserved by App, not here.
+  // Take over the window scroll while the reader is mounted: save the app-shell scroll position and
+  // reset to top, restore it on exit, and disable the browser's own restoration so our per-chapter
+  // reset wins. Runs before the chapter effect below so it captures the position before that resets it.
   useEffect(() => {
     const prevRestore = history.scrollRestoration
     try { history.scrollRestoration = 'manual' } catch { /* older browsers */ }
+    const savedAppScroll = window.scrollY
     window.scrollTo(0, 0)
-    return () => { try { history.scrollRestoration = prevRestore } catch { /* */ } }
+    return () => {
+      try { history.scrollRestoration = prevRestore } catch { /* */ }
+      window.scrollTo(0, savedAppScroll)
+    }
   }, [])
 
   useEffect(() => {
