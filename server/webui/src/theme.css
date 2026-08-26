@@ -72,22 +72,13 @@
 /* min-height:100dvh, not height:100%: in an iOS standalone (home-screen) PWA, height:100% resolves to
    the safe-area-EXCLUDED viewport, so a fixed `bottom:0` bar sits ABOVE the home indicator and leaves a
    black strip below it. The dynamic viewport unit spans to the physical bottom (100% kept as fallback). */
-html, body, #root { min-height: 100%; min-height: 100dvh; background: var(--bg); }
+html, body, #root { height: 100%; background: var(--bg); }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   overscroll-behavior-y: none;
-}
-/* Paint the home-indicator strip below the fixed tab bar with the bar's colour, at the CSS level so it's
-   there the instant the stylesheet loads (covers reload, before React mounts the tab bar) and on every
-   page. Fixed to the physical bottom; height = the bottom safe-area inset. */
-body::after {
-  content: ''; position: fixed; left: 0; right: 0;
-  bottom: calc(-1 * env(safe-area-inset-bottom, 0px)); /* into the home-indicator strip below bottom:0 */
-  height: env(safe-area-inset-bottom, 0px);
-  background: var(--bg-2); z-index: 0; pointer-events: none;
 }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
@@ -96,7 +87,7 @@ img { display: block; }
 /* ---- App shell ---------------------------------------------------------- */
 .app {
   min-height: 100%;
-  min-height: 100dvh;
+  min-height: 100dvh; /* span the full physical viewport in an iOS standalone PWA (safe-area included) */
   padding-top: calc(var(--topbar-h) + var(--safe-t));
   padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
 }
@@ -110,6 +101,7 @@ img { display: block; }
   /* Opaque --bg-2 surface, no backdrop-filter — same iOS standalone fix + theme-aware as .tabbar. */
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
+  transform: translateZ(0); /* own compositing layer → iOS keeps this fixed bar pinned (see .tabbar) */
 }
 .topbar .wordmark { font-weight: 800; letter-spacing: .14em; font-size: 17px; flex: 1; cursor: pointer; }
 
@@ -189,6 +181,10 @@ img { display: block; }
      like the bar "floated up" off the bottom exposing background. Theme-aware on every theme. */
   background: var(--bg-2);
   border-top: 1px solid var(--border);
+  /* Own GPU compositing layer. backdrop-filter used to provide this; without a layer, iOS Safari
+     mis-positions a position:fixed bar during the dynamic-viewport changes on load/scroll (it "moves
+     up" and leaves a strip below). translateZ(0) pins it to the viewport bottom WITHOUT the blur/flash. */
+  transform: translateZ(0);
 }
 .tabbar a {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
