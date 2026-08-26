@@ -69,7 +69,10 @@
 /* Paint the theme bg on html + #root too (not just body): the tab bar is translucent, so during a
    reload / route-swap when body/scroll momentarily collapses, a bare html element shows its default
    (black on iOS) as a bar behind the tab bar / in the bottom safe area. */
-html, body, #root { height: 100%; background: var(--bg); }
+/* min-height:100dvh, not height:100%: in an iOS standalone (home-screen) PWA, height:100% resolves to
+   the safe-area-EXCLUDED viewport, so a fixed `bottom:0` bar sits ABOVE the home indicator and leaves a
+   black strip below it. The dynamic viewport unit spans to the physical bottom (100% kept as fallback). */
+html, body, #root { min-height: 100%; min-height: 100dvh; background: var(--bg); }
 body {
   margin: 0;
   background: var(--bg);
@@ -84,6 +87,7 @@ img { display: block; }
 /* ---- App shell ---------------------------------------------------------- */
 .app {
   min-height: 100%;
+  min-height: 100dvh;
   padding-top: calc(var(--topbar-h) + var(--safe-t));
   padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
 }
@@ -176,6 +180,13 @@ img { display: block; }
      like the bar "floated up" off the bottom exposing background. Theme-aware on every theme. */
   background: var(--bg-2);
   border-top: 1px solid var(--border);
+}
+/* Belt for iOS standalone: if the fixed bar's bottom:0 lands ABOVE the home indicator (leaving a black
+   strip), this paints the bar's colour into that strip. Off-screen (harmless) when the bar already
+   reaches the physical bottom. */
+.tabbar::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 80px;
+  background: var(--bg-2);
 }
 .tabbar a {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
