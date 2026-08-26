@@ -1,9 +1,54 @@
 # ! DOCKER SERVER PLAN — MAIN
 
-**Status:** DECIDED (architecture) / NOT STARTED (build). Last updated 2026-07-31.
+**Status:** ✅ **LIVE (2026-08-26).** Architecture below is the original plan; §0 records what actually
+shipped (it diverged — no gluetun; image built on-box; downloads on a passed-through NTFS NVMe).
 **Scope:** Deploy `:server` (the phone-first web UI + source engine) as a Docker container on a
 Proxmox-hosted Debian VM, with MangaFire working via in-container JCEF (real Chromium), source egress
 behind Mullvad, and web access over Tailscale.
+
+---
+
+## 0. AS-BUILT (what actually shipped, 2026-08-26) — read this first
+
+**Host/VM:** LattePanda → Proxmox `pve` → Debian VM **`manga-utils`** (tailnet **100.67.109.13**,
+`root@manga-utils` via Tailscale SSH). Docker 29 + compose v5 preinstalled.
+
+**Divergences from the plan below:**
+- **No gluetun.** VPN egress is handled at the host/network layer (Mullvad-via-Tailscale exit,
+  see memory `proxmox-openwrt-deploy`), not a gluetun container. Compose = `manga-utils` +
+  `flaresolverr` + `autoheal` only. Access is the raw tailnet port `100.67.109.13:8080`, not
+  `tailscale serve`.
+- **Image built ON the VM from source**, not pulled. The Docker Hub `nake1/manga-utils:latest` is a
+  frozen manual push (no CI). Clone `~/manga-src`; compose `~/manga/docker-compose.yml` uses
+  `image: manga-utils:local`.
+- **Downloads on a passed-through 3.6 TB NTFS NVMe** (`nvme0n1p2`), mounted `/mnt/mangadrive`
+  (fstab `ntfs-3g uid=1000,gid=1000,umask=022,nofail`), bind `…/manga-utils/downloads:/data/downloads`.
+  `/data` itself is the `mu-data` named volume on the 79 GB root (grown from a 2.9 GB cloud partition
+  with `growpart /dev/sda 1 && resize2fs`).
+- **Data moved via `.mudata`** (`GET/POST /api/dev/migrate/*`), not a fresh drive copy. Blank the
+  Windows `downloadDir` in the exported settings so it defaults to `/data/downloads`.
+
+**Update procedure:**
+```
+cd ~/manga-src && git pull
+docker build -f deploy/Dockerfile -t manga-utils:local .
+docker compose -f ~/manga/docker-compose.yml up -d --force-recreate manga-utils
+```
+
+**Bugs that HAD to be fixed for the container to work (all on main now):**
+1. `:data` module + `android-compat/lib/android.jar` were gitignored → fresh clone couldn't build. Tracked now.
+2. Extension `jarPath` stored absolute (Windows path) → `ClassNotFoundException: …ExtensionGenerated`
+   for every source after the move. `SourceManager.loadSourcesOf` now resolves `<extensionsDir>/<pkg>.jar`.
+3. JCEF `--no-sandbox` (+`--no-zygote`) missing → "CEF client unavailable" in-container. Added, gated on
+   `MU_JCEF_NO_SANDBOX=1` (set in the Dockerfile). MangaFire/JCEF works.
+4. iOS home-screen PWA black bar during load = iOS-only `backdrop-filter` compositor flash; bars made
+   opaque + `html/#root` bg + inline dark first-paint + Ktor gzip. (Service worker app-shell cache still TODO.)
+
+**Harmless log noise:** Chromium `dbus`/`gcm` errors (no system bus in the container) — ignore.
+**Perf note:** first `/api/library` after a container start is slow (~16 s) because the badge prewarm
+scans 26,751 chapters' ComicInfo over ntfs-3g (FUSE); ~35 s cold, then instant. Startup-only.
+
+---
 
 This is the single source of truth for the deploy. Companion docs:
 `docs/PLAN-vpn-split-mullvad-tailscale.md` (network detail), memory `deploy-plan` (VM sizing).
