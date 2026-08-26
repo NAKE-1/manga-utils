@@ -146,9 +146,12 @@ object CefManager {
                                 // In a container (non-root, no user namespaces) Chromium's sandbox can't
                                 // start, so CEF fails init entirely ("CEF client unavailable"). Opt in via
                                 // MU_JCEF_NO_SANDBOX=1 (set in the Docker image); desktop keeps its sandbox.
+                                // NOTE: --no-sandbox ONLY. Do NOT add --no-zygote: with the sandbox off the
+                                // zygote works fine, and disabling it spawns renderers wrong ("process type
+                                // 'renderer' should be created through the zygote") — they crash after the
+                                // first fetch, killing the CEF client and hanging the browser pool.
                                 if (System.getenv("MU_JCEF_NO_SANDBOX") == "1") {
                                     add("--no-sandbox")
-                                    add("--no-zygote")
                                 }
                             },
                         )
