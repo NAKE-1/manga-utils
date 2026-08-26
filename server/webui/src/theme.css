@@ -94,8 +94,8 @@ img { display: block; }
   padding-top: var(--safe-t);
   display: flex; align-items: center; gap: 6px;
   padding-left: 16px; padding-right: 8px;
-  /* Opaque, no backdrop-filter — same iOS standalone blur-flash fix as .tabbar. */
-  background: var(--bg);
+  /* Opaque --bg-2 surface, no backdrop-filter — same iOS standalone fix + theme-aware as .tabbar. */
+  background: var(--bg-2);
   border-bottom: 1px solid var(--border);
 }
 .topbar .wordmark { font-weight: 800; letter-spacing: .14em; font-size: 17px; flex: 1; cursor: pointer; }
@@ -171,9 +171,10 @@ img { display: block; }
   padding-bottom: var(--safe-b);
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   /* Opaque, NO backdrop-filter: iOS Safari flashes the blur layer black during page transitions in
-     standalone (home-screen) mode — the "black bar" at the bottom. Desktop handles blur fine, so this
-     only showed on the iPhone. Solid theme bg looks nearly identical (it was already 94% opaque). */
-  background: var(--bg);
+     standalone mode. Use --bg-2 (a slightly elevated surface) NOT --bg, so the bar reads as a distinct
+     surface instead of merging into the page — otherwise the safe-area padding under the icons looks
+     like the bar "floated up" off the bottom exposing background. Theme-aware on every theme. */
+  background: var(--bg-2);
   border-top: 1px solid var(--border);
 }
 .tabbar a {
@@ -396,7 +397,9 @@ img { display: block; }
 .detail-bottombar {
   position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--safe-b));
   z-index: 25; display: flex; align-items: center; gap: 12px; padding: 10px 16px;
-  background: rgba(26,26,28,0.96); backdrop-filter: blur(10px); border-top: 1px solid var(--border);
+  /* Theme-aware surface (was hardcoded rgba(26,26,28) = the DEFAULT theme's grey, which showed as a
+     grey bar on AMOLED/other themes). Opaque, no backdrop-filter (iOS standalone flashes the blur). */
+  background: var(--bg-2); border-top: 1px solid var(--border);
 }
 .bb-icon {
   flex: 0 0 auto; width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
@@ -787,7 +790,7 @@ img { display: block; }
 .chapter-dlbtn.done { color: var(--accent); cursor: default; }
 @media (hover: hover) { .chapter-dlbtn:not(.done):hover { background: var(--card-2); color: var(--text); } }
 .dl-toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--safe-b) + 16px); z-index: 30;
-  background: rgba(26,26,28,0.96); color: var(--text); font-size: 13px; font-weight: 700; padding: 10px 16px; border-radius: 999px;
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text); font-size: 13px; font-weight: 700; padding: 10px 16px; border-radius: 999px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5); animation: fade-in .14s ease; }
 .dl-head-actions { display: flex; gap: 16px; }
 .dl-link { font-size: 14px; font-weight: 700; color: var(--accent); cursor: pointer; background: none; }
