@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { api, coverUrl, dlState, pageSize, LibraryEntry, HistoryItem } from '../api'
+import { api, coverUrl, dlState, pageSize, screenCache, LibraryEntry, HistoryItem } from '../api'
 import { CoverCard } from '../components/CoverCard'
 import { Pager } from '../components/Pager'
 import { useNet } from '../components/NetStatus'
@@ -30,9 +30,11 @@ function lastLine(e: LibraryEntry): string {
 export function ListPage() {
   const { kind = 'library' } = useParams()
   const { online } = useNet()
-  const [library, setLibrary] = useState<LibraryEntry[]>([])
+  // Seed from the in-memory cache so switching back to Library paints instantly (no spinner → no layout
+  // collapse → no fixed-tab-bar reflow over a network link). Still refetched below to refresh.
+  const [library, setLibrary] = useState<LibraryEntry[]>(screenCache.library ?? [])
   const [history, setHistory] = useState<HistoryItem[]>([])
-  const [ready, setReady] = useState(false)
+  const [ready, setReady] = useState(screenCache.library != null)
   const [updating, setUpdating] = useState(false)
   const [updatePct, setUpdatePct] = useState(0)
   const [updateMsg, setUpdateMsg] = useState('')
@@ -51,7 +53,7 @@ export function ListPage() {
 
   // Library loads once. Library/Updates paint as soon as it arrives — never gated on the 1.5 MB history.
   useEffect(() => {
-    api.library().then(setLibrary).catch(() => {}).finally(() => { if (kind !== 'continue') setReady(true) })
+    api.library().then((l) => { screenCache.library = l; setLibrary(l) }).catch(() => {}).finally(() => { if (kind !== 'continue') setReady(true) })
   }, [kind])
 
   // Continue: fetch the current history page server-side (deduped there), one page at a time.
@@ -65,7 +67,7 @@ export function ListPage() {
     setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatedFailed([]); setUpdatePct(0)
     // Starts the update and polls to completion — no long-held request to drop → no false "Update failed".
     const r = await api.runLibraryUpdate((pct) => setUpdatePct(pct)).catch(() => null)
-    await api.library().then(setLibrary).catch(() => {})
+    await api.library().then((l) => { screenCache.library = l; setLibrary(l) }).catch(() => {})
     setUpdating(false); setUpdatePct(0)
     if (!r) { setUpdateMsg('Update failed'); return } // only a genuine server error / unreachable now
     const checked = r.checked ?? 0
