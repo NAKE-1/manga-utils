@@ -49,6 +49,7 @@ export function Dev() {
   const [pool, setPool] = useState<JcefPool[]>([])
   const [poolMsg, setPoolMsg] = useState('')
   const [poolBusy, setPoolBusy] = useState(false)
+  const [client, setClient] = useState<Record<string, string>>({})
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanMsg, setScanMsg] = useState('')
@@ -172,6 +173,29 @@ export function Dev() {
     await (kind === 'restart' ? api.devRestart() : api.devShutdown()).catch(() => {})
     toast(kind === 'restart' ? 'Restarting… reconnecting shortly' : 'Server shutting down', 'info', 8000)
   }
+  function readClient(): Record<string, string> {
+    // Read the ACTUAL safe-area insets: only a live element resolves env(); getComputedStyle gives px.
+    const probe = document.createElement('div')
+    probe.style.cssText = 'position:fixed;visibility:hidden;top:0;left:0;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);'
+    document.body.appendChild(probe)
+    const cs = getComputedStyle(probe)
+    const insets = `T ${cs.paddingTop} · R ${cs.paddingRight} · B ${cs.paddingBottom} · L ${cs.paddingLeft}`
+    probe.remove()
+    const mm = (q: string) => window.matchMedia(q).matches
+    const display = ['standalone', 'fullscreen', 'minimal-ui', 'browser'].find((m) => mm(`(display-mode: ${m})`)) || '?'
+    const vv = window.visualViewport
+    return {
+      'safe-area insets': insets,
+      'iOS standalone (navigator.standalone)': String((navigator as { standalone?: boolean }).standalone ?? 'n/a'),
+      'display-mode': display,
+      'innerHeight / screen.height': `${window.innerHeight} / ${window.screen.height}`,
+      'visualViewport h / offsetTop': vv ? `${Math.round(vv.height)} / ${Math.round(vv.offsetTop)}` : 'n/a',
+      'devicePixelRatio': String(window.devicePixelRatio),
+      'userAgent': navigator.userAgent,
+    }
+  }
+  useEffect(() => { setClient(readClient()) }, [])
+
   function refreshPool() { api.jcefPool().then(setPool).catch(() => {}) }
   useEffect(() => { refreshPool(); const t = setInterval(refreshPool, 4000); return () => clearInterval(t) }, [])
   async function resetPool() {
@@ -641,6 +665,21 @@ export function Dev() {
             <button className="btn danger" disabled={poolBusy} onClick={resetPool}>Reset JCEF pool</button>
           </div>
           {poolMsg && <div className="set-hint" style={{ marginTop: 6 }}>{poolMsg}</div>}
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">Client / device</div>
+          <div className="set-hint">What THIS install reports at runtime — the server can't see it (same User-Agent for every install). Open this in each home-screen app and compare: the floating one should show <b>display-mode: standalone</b> and a <b>bottom inset of 0px</b>, the good one won't.</div>
+          <div className="set-actions" style={{ marginTop: 6 }}>
+            <button className="btn" onClick={() => setClient(readClient())}>Re-read</button>
+          </div>
+          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: 12, wordBreak: 'break-all' }}>
+            {Object.entries(client).map(([k, v]) => (
+              <div key={k} style={{ display: 'contents' }}>
+                <span style={{ color: 'var(--muted-2)' }}>{k}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="set-card">
