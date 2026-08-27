@@ -56,6 +56,30 @@ object JcefFetch {
     data class Result(val status: Int, val body: String, val headers: Map<String, String>)
 
     private val pools = ConcurrentHashMap<String, HostPool>()
+    private val wedge = ConcurrentHashMap<String, AtomicInteger>() // consecutive "no free browser" per host
+
+    /** Live per-host pool state for the dev UI. */
+    data class PoolStat(val host: String, val size: Int, val busy: Int, val free: Int, val max: Int)
+
+    fun poolStatus(): List<PoolStat> =
+        pools.values.map { PoolStat(it.host, it.size, it.busy, it.free, it.max) }.sortedBy { it.host }
+
+    /** Dispose every browser in every pool (recovers a wedged pool without a container restart). */
+    fun resetPools(): Int {
+        var n = 0
+        pools.values.toList().forEach { n += it.disposeAll() }
+        pools.clear(); wedge.clear()
+        log.info { "JCEF: reset ALL browser pools ($n browser(s) disposed)" }
+        return n
+    }
+
+    /** Dispose one host's pool. The next fetch to that host builds a fresh one. */
+    fun resetPool(host: String): Int {
+        val n = pools.remove(host)?.disposeAll() ?: 0
+        wedge.remove(host)
+        if (n > 0) log.info { "JCEF: reset pool for $host ($n browser(s))" }
+        return n
+    }
 
     private val renderHandler = object : CefRenderHandlerAdapter() {
         override fun getViewRect(browser: CefBrowser) = Rectangle(0, 0, 1280, 900)
@@ -72,9 +96,15 @@ object JcefFetch {
         val started = System.currentTimeMillis()
         val browser = pool.borrow(timeoutMs)
         if (browser == null) {
-            log.info { "JCEF[$host]: no free browser after ${System.currentTimeMillis() - started}ms (${pool.size}/$POOL_SIZE busy) → falling back" }
+            val w = wedge.computeIfAbsent(host) { AtomicInteger(0) }.incrementAndGet()
+            log.info { "JCEF[$host]: no free browser after ${System.currentTimeMillis() - started}ms (${pool.busy}/$POOL_SIZE busy) → falling back" }
+            // Auto-recover: a pool that can't lease a browser twice in a row is wedged (browsers stuck on
+            // an unclearable challenge). Dispose it so the next call rebuilds fresh instead of every
+            // request waiting the full timeout forever.
+            if (w >= 2) { log.warn { "JCEF[$host]: pool wedged ($w consecutive failures) — auto-resetting" }; resetPool(host) }
             return null
         }
+        wedge.remove(host) // a successful borrow means the pool is healthy again
         try {
             val js = buildFetchJs(url, method, headers, body)
             var res = runFetch(browser, js, host, u.path, timeoutMs)
@@ -162,15 +192,18 @@ object JcefFetch {
      */
     private class HostPool(val host: String, val max: Int, val create: () -> CefBrowser?) {
         private val available = LinkedBlockingQueue<CefBrowser>()
+        private val allBrowsers = java.util.concurrent.ConcurrentHashMap.newKeySet<CefBrowser>()
         private val count = AtomicInteger(0)
         val size get() = count.get()
+        val free get() = available.size
+        val busy get() = (count.get() - available.size).coerceAtLeast(0)
 
         fun borrow(timeoutMs: Long): CefBrowser? {
             available.poll()?.let { return it }
             if (count.get() < max) {
                 synchronized(this) {
                     if (available.isEmpty() && count.get() < max) {
-                        create()?.let { count.incrementAndGet(); return it }
+                        create()?.let { allBrowsers.add(it); count.incrementAndGet(); return it }
                     }
                 }
             }
@@ -178,6 +211,16 @@ object JcefFetch {
         }
 
         fun giveBack(b: CefBrowser) { available.offer(b) }
+
+        /** Force-close every browser and reset the pool — the recovery lever for a wedged pool. A browser
+         *  still held by a (stuck) fetch is force-closed too; that fetch was going to time out anyway, and
+         *  its late giveBack lands on this now-orphaned instance, not the fresh pool the next fetch creates. */
+        fun disposeAll(): Int {
+            val n = allBrowsers.size
+            allBrowsers.forEach { runCatching { it.close(true) } }
+            allBrowsers.clear(); available.clear(); count.set(0)
+            return n
+        }
     }
 
     /** Poll until the site is cleared (cf_clearance present + document loaded), or give up after 45s. */

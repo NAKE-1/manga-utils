@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost } from '../api'
+import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost, JcefPool } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
@@ -46,6 +46,9 @@ export function Dev() {
   const [cookieMsg, setCookieMsg] = useState('')
   const [ckHosts, setCkHosts] = useState<CookieHost[]>([])
   const [ckHost, setCkHost] = useState('') // '' = no selection (default)
+  const [pool, setPool] = useState<JcefPool[]>([])
+  const [poolMsg, setPoolMsg] = useState('')
+  const [poolBusy, setPoolBusy] = useState(false)
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
   const [scanMsg, setScanMsg] = useState('')
@@ -169,6 +172,14 @@ export function Dev() {
     await (kind === 'restart' ? api.devRestart() : api.devShutdown()).catch(() => {})
     toast(kind === 'restart' ? 'Restarting… reconnecting shortly' : 'Server shutting down', 'info', 8000)
   }
+  function refreshPool() { api.jcefPool().then(setPool).catch(() => {}) }
+  useEffect(() => { refreshPool(); const t = setInterval(refreshPool, 4000); return () => clearInterval(t) }, [])
+  async function resetPool() {
+    setPoolBusy(true); setPoolMsg('')
+    try { const r = await api.jcefReset(); setPoolMsg(`Reset — ${r.disposed} browser(s) disposed. New ones build on the next request.`); refreshPool() }
+    catch { setPoolMsg('Reset failed') } finally { setPoolBusy(false) }
+  }
+
   function refreshCookieHosts() {
     api.cookieHosts().then((h) => {
       setCkHosts(h)
@@ -612,6 +623,24 @@ export function Dev() {
             <button className="btn danger" disabled={cookieBusy} onClick={() => clearCookies()}>Clear all cookies</button>
           </div>
           {cookieMsg && <div className="set-hint" style={{ marginTop: 6 }}>{cookieMsg}</div>}
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">JCEF browser pool</div>
+          <div className="set-hint">Real-Chromium browsers that fetch Cloudflare-protected sources (e.g. MangaFire). Each shows <b>busy/open</b>. If a pool gets stuck on an unsolvable challenge it auto-recovers after 2 failures, but you can force-recycle it here. Per-host size is set by the <code>MU_JCEF_POOL</code> env var.</div>
+          <div className="set-actions" style={{ alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+            {pool.length === 0
+              ? <span className="set-hint">No active pools (no WebView source used yet).</span>
+              : pool.map((p) => (
+                  <span key={p.host} className="dev-chip" title={`${p.busy} busy / ${p.free} free of ${p.size} open (max ${p.max})`}>
+                    {p.host}: <b>{p.busy}</b>/{p.size}{p.busy >= p.max && p.free === 0 ? ' ⚠ wedged' : ''}
+                  </span>
+                ))}
+            <button className="btn" title="Refresh pool status" disabled={poolBusy} onClick={refreshPool}>↻</button>
+          </div>
+          <div className="set-actions" style={{ marginTop: 8 }}>
+            <button className="btn danger" disabled={poolBusy} onClick={resetPool}>Reset JCEF pool</button>
+          </div>
+          {poolMsg && <div className="set-hint" style={{ marginTop: 6 }}>{poolMsg}</div>}
         </div>
 
         <div className="set-card">

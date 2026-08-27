@@ -659,6 +659,8 @@ private data class DiagDto(
 )
 
 @Serializable private data class ErrorDto(val error: String)
+@Serializable private data class JcefPoolDto(val host: String, val size: Int, val busy: Int, val free: Int, val max: Int)
+@Serializable private data class JcefResetDto(val disposed: Int)
 
 @Serializable private data class CookieHostDto(val host: String, val count: Int, val hasClearance: Boolean)
 
@@ -2343,6 +2345,15 @@ fun Application.module() {
         }
         // Every installed source's host (so the picker lists them all, even at 0 cookies), merged with the
         // live cookie counts + cf_clearance flag. Any stray cookie host not tied to a source is kept too.
+        // JCEF browser-pool status + manual recovery (the pool can wedge on an unclearable challenge).
+        get("/api/dev/jcef/pool") {
+            val stats = withContext(Dispatchers.IO) { runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.poolStatus() }.getOrDefault(emptyList()) }
+            call.respond(stats.map { JcefPoolDto(it.host, it.size, it.busy, it.free, it.max) })
+        }
+        post("/api/dev/jcef/reset") {
+            val n = withContext(Dispatchers.IO) { runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.resetPools() }.getOrDefault(0) }
+            call.respond(JcefResetDto(n))
+        }
         get("/api/dev/webview/cookie-hosts") {
             val out = withContext(Dispatchers.IO) {
                 val buckets = runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.cookieHosts() }.getOrDefault(emptyList())

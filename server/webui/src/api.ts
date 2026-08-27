@@ -337,6 +337,8 @@ export const api = {
   },
   clearWebviewCookies: (host?: string) => fetch(`/api/dev/webview/clear-cookies${host ? `?host=${encodeURIComponent(host)}` : ''}`, { method: 'POST' }).then((r) => r.json() as Promise<{ cleared: number }>),
   cookieHosts: () => getJson<CookieHost[]>('/api/dev/webview/cookie-hosts'),
+  jcefPool: () => getJson<JcefPool[]>('/api/dev/jcef/pool', 0, 8000),
+  jcefReset: () => fetch('/api/dev/jcef/reset', { method: 'POST' }).then((r) => r.json() as Promise<{ disposed: number }>),
   devShutdown: () => fetch('/api/dev/shutdown', { method: 'POST' }),
   devCaptcha: () => getJson<DevCaptcha>('/api/dev/captcha/generate', 0, 60000),
   autosolveEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; phase: string; detail: string }[] }>(`/api/webview/autosolve/events${since != null ? `?since=${since}` : ''}`),
@@ -488,6 +490,7 @@ export interface DevCaptcha { captchaId: string; count: number; imageA: string; 
 export interface CapAttempt { at: number; result: string; clicks: number; tries: number; ms: number }
 export interface CapStats { solved: number; failed: number; reloads: number; avgMs: number; recent: CapAttempt[] }
 export interface Mullvad { ip: string; country: string; city: string; mullvad_exit_ip: boolean; mullvad_exit_ip_hostname: string; organization: string }
+export interface JcefPool { host: string; size: number; busy: number; free: number; max: number }
 export interface NetStatus { online: boolean; lastChecked: number; since: number }
 export interface CapDet { name: string; conf: number; x0: number; y0: number; x1: number; y1: number }
 export interface CapSolve { aDets: CapDet[]; bDets: CapDet[]; clicks: CapDet[]; missing: string[]; solved: boolean }
