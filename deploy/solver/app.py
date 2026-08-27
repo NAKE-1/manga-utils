@@ -86,21 +86,21 @@ def fetch():
                 # cheap webdriver touch is fine once we're already cleared/parked
                 needs_open = not _cleared(sb)
             if needs_open:
-                # Canonical UC Cloudflare flow: open with the webdriver DISCONNECTED, then click the
-                # Turnstile via PyAutoGUI (OS-level — never reconnects, so navigator.webdriver stays hidden).
-                # Only AFTER the click + a wait do we touch the driver to check. Retry the whole cycle once.
-                for attempt in range(3):
-                    print(f"solver: opening {origin}/ (try {attempt + 1})…", flush=True)
-                    sb.uc_open_with_reconnect(origin + "/", reconnect_time=5)
-                    try:
-                        sb.uc_gui_click_captcha()
-                        print("solver: uc_gui_click_captcha done", flush=True)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"solver: uc_gui_click_captcha error: {e}", flush=True)
-                    time.sleep(6)  # let the challenge resolve after the click
+                # Open ONCE with the webdriver disconnected (uc), then be patient: the managed challenge can
+                # take a while to surface a clickable checkbox (or auto-clear). Click periodically via
+                # PyAutoGUI (OS-level, no reconnect) and only poll the title every ~8s.
+                print(f"solver: opening {origin}/ …", flush=True)
+                sb.uc_open_with_reconnect(origin + "/", reconnect_time=8)
+                deadline = time.time() + 50
+                while time.time() < deadline:
                     if _cleared(sb):
                         break
-                    print(f"solver: still challenged (title={sb.get_title()!r})", flush=True)
+                    print(f"solver: still challenged (title={sb.get_title()!r}) — clicking…", flush=True)
+                    try:
+                        sb.uc_gui_click_captcha()
+                    except Exception as e:  # noqa: BLE001
+                        print(f"solver: uc_gui_click_captcha error: {e}", flush=True)
+                    time.sleep(8)
                 print(f"solver: cleared={_cleared(sb)} title={sb.get_title()!r}", flush=True)
                 _origin = origin
 
