@@ -70,6 +70,15 @@ class FlareSolverrInterceptor(
         val host = request.url.host
         FlareSolverrConfig.recordSolveStart(host) // so the UI can toast "solving…" during the pause
 
+        // Hard hosts (MangaFire): our own fingerprint is Cloudflare-flagged, so cookie replay just gets
+        // re-challenged. Skip it — have FlareSolverr's (accepted) browser FETCH the URL and hand back the
+        // body. GET text only (a browser returns HTML, not binary images).
+        if (FlareSolverrConfig.fetchesThrough(host) && request.method.equals("GET", true) && !isImageUrl(request.url)) {
+            val out = runCatching { fetchThrough(request) }.getOrNull()
+            if (out != null) { FlareSolverrConfig.recordSolveDone(host, 0); HumanCheckState.cleared(host); return out }
+            log.info { "FS fetch-through failed for $host — falling back to cookie replay" }
+        }
+
         // FIRST warm a full session via the site ROOT. A per-URL solve of an /api endpoint only yields
         // cf_clearance; a real page load also sets the SESSION cookie some sites (MangaFire) now require
         // ("Missing token" without it). Load the root, keep its cookies + UA, and retry the original — if
@@ -318,16 +327,65 @@ class FlareSolverrInterceptor(
         return IMAGE_EXTS.any { name.endsWith(it) }
     }
 
-    /** Wrap FlareSolverr's rendered page body as an OkHttp response the extension can parse. */
-    private fun flareResponse(request: Request, sol: FsSolution): Response =
-        Response.Builder()
+    /**
+     * Run [request] entirely inside FlareSolverr's cleared browser and return its body. This is the fix for
+     * hosts where our own fingerprint is flagged: FS's browser passes Cloudflare AND makes the request, so
+     * there's no cookie/fingerprint transplant to reject. Warms the session first (root load sets
+     * cf_clearance + the site's session cookie), then `request.get`s the exact URL (vrf already in it) and
+     * returns the body — JSON extracted from Chrome's `<pre>` wrapper for API calls. Null on any failure.
+     */
+    private fun fetchThrough(request: Request): Response? {
+        val host = request.url.host
+        if (shouldWarm(host)) warmFsSession(host, request.url.scheme) // reuse the same FS session for the fetch
+        val sol = solve(request, returnOnlyCookies = false) ?: return null
+        if (sol.response.isNullOrBlank()) return null
+        sol.userAgent?.takeIf { it.isNotBlank() }?.let { solvedUa[host] = it }
+        log.info { "FlareSolverr fetch-through $host${request.url.encodedPath}: ${sol.response!!.length}B (status ${sol.status})" }
+        return flareResponse(request, sol)
+    }
+
+    /** Warm FlareSolverr's persistent session by loading the site root through it (no okhttp retry — the
+     *  session keeps the cookies, so the follow-up request.get reuses the clearance). */
+    private fun warmFsSession(host: String, scheme: String) {
+        warmedAt[host] = System.currentTimeMillis()
+        val sol = runCatching { solve(Request.Builder().url("$scheme://$host/").build()) }.getOrNull()
+        if (sol != null) {
+            sol.userAgent?.takeIf { it.isNotBlank() }?.let { solvedUa[host] = it }
+            log.info { "Warmed $host FS session via root (${sol.cookies.size} cookie(s))" }
+        } else {
+            log.info { "FS session warm for $host failed — root didn't clear" }
+        }
+    }
+
+    /** Pull the JSON out of Chrome's `<pre>…</pre>` JSON-viewer wrapper and HTML-unescape it. Null if there's
+     *  no `<pre>` or its content isn't a JSON object/array. */
+    private fun extractPreJson(html: String): String? {
+        val inner = Regex("<pre[^>]*>(.*)</pre>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+            .find(html)?.groupValues?.get(1) ?: return null
+        val json = inner
+            .replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&") // &amp; LAST to avoid double-unescape
+            .trim()
+        return json.takeIf { it.startsWith("{") || it.startsWith("[") }
+    }
+
+    /** Wrap FlareSolverr's rendered page body as an OkHttp response the extension can parse. An API endpoint
+     *  answers JSON, which Chrome renders inside a `<pre>` viewer — so unwrap that to clean JSON (with the
+     *  right Content-Type) when we can; otherwise hand back the HTML as-is (search/browse/details pages). */
+    private fun flareResponse(request: Request, sol: FsSolution): Response {
+        val raw = sol.response ?: ""
+        val jsonBody = if (request.url.encodedPath.contains("/api", true) || raw.contains("<pre", true)) extractPreJson(raw) else null
+        val (body, ctype) = if (jsonBody != null) jsonBody to "application/json; charset=utf-8"
+                            else raw to "text/html; charset=utf-8"
+        return Response.Builder()
             .request(request)
             .protocol(Protocol.HTTP_1_1)
             .code(if (sol.status in 100..599) sol.status else 200)
             .message("OK (FlareSolverr)")
-            .header("Content-Type", "text/html; charset=utf-8")
-            .body((sol.response ?: "").toResponseBody("text/html; charset=utf-8".toMediaType()))
+            .header("Content-Type", ctype)
+            .body(body.toResponseBody(ctype.toMediaType()))
             .build()
+    }
 
     companion object {
         // host -> last session-warm attempt. Process-wide so an egress reset can wipe it after a VPN switch
