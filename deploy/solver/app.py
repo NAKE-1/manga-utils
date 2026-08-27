@@ -22,11 +22,12 @@ import time
 from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request
-from seleniumbase import Driver
+from seleniumbase import SB
 
 app = Flask(__name__)
 _lock = threading.Lock()
-_driver = None
+_sb_ctx = None  # the SB() context manager, entered once and kept open for the server's life
+_sb = None      # the SB test object (has .uc_* helpers + .driver)
 _origin = None  # origin the single tab is parked on (None = fresh)
 
 # JS run IN the page: same-origin fetch, resolved via Selenium's async callback (arguments[-1]).
@@ -39,27 +40,29 @@ _FETCH_JS = (
 )
 
 
-def _get_driver():
-    global _driver
-    if _driver is None:
+def _get_sb():
+    global _sb_ctx, _sb
+    if _sb is None:
         print("solver: launching Chrome (SeleniumBase UC, xvfb)…", flush=True)
-        # xvfb=True → SeleniumBase runs its own correctly-sized virtual display (so uc_gui_click_captcha's
-        # PyAutoGUI clicks land on-screen). No cdp_mode — it would break execute_async_script + the click.
-        _driver = Driver(uc=True, headless=False, xvfb=True)
+        # SB(xvfb=True) runs its own correctly-sized virtual display (so uc_gui_click_captcha's PyAutoGUI
+        # clicks land on-screen). Enter the context manually and keep it open for the server's lifetime.
+        # No cdp_mode — it would break execute_async_script + the captcha click.
+        _sb_ctx = SB(uc=True, headless=False, xvfb=True)
+        _sb = _sb_ctx.__enter__()
         print("solver: Chrome ready", flush=True)
-    return _driver
+    return _sb
 
 
-def _cleared(d) -> bool:
+def _cleared(sb) -> bool:
     try:
-        return "just a moment" not in (d.title or "").lower()
+        return "just a moment" not in (sb.get_title() or "").lower()
     except Exception:
         return False
 
 
 @app.get("/health")
 def health():
-    return jsonify(ok=_driver is not None, origin=_origin)
+    return jsonify(ok=_sb is not None, origin=_origin)
 
 
 @app.post("/fetch")
@@ -75,23 +78,23 @@ def fetch():
 
     with _lock:  # one Chrome; a navigation mutates shared page state
         try:
-            d = _get_driver()
-            if _origin != origin or not _cleared(d):
+            sb = _get_sb()
+            if _origin != origin or not _cleared(sb):
                 print(f"solver: opening {origin}/ …", flush=True)
-                d.uc_open_with_reconnect(origin + "/", reconnect_time=6)
+                sb.uc_open_with_reconnect(origin + "/", reconnect_time=6)
                 for attempt in range(4):
-                    if _cleared(d):
+                    if _cleared(sb):
                         break
-                    print(f"solver: challenge up (title={d.title!r}) — click captcha (try {attempt + 1})", flush=True)
+                    print(f"solver: challenge up (title={sb.get_title()!r}) — click captcha (try {attempt + 1})", flush=True)
                     try:
-                        d.uc_gui_click_captcha()
+                        sb.uc_gui_click_captcha()
                     except Exception as e:  # noqa: BLE001
                         print(f"solver: uc_gui_click_captcha error: {e}", flush=True)
                     time.sleep(4)
-                print(f"solver: cleared={_cleared(d)} title={d.title!r}", flush=True)
+                print(f"solver: cleared={_cleared(sb)} title={sb.get_title()!r}", flush=True)
                 _origin = origin
 
-            raw = d.execute_async_script(_FETCH_JS, url, headers)
+            raw = sb.driver.execute_async_script(_FETCH_JS, url, headers)
             out = json.loads(raw) if isinstance(raw, str) else (raw or {"status": 0, "error": "no result"})
             st, body = out.get("status"), (out.get("body") or "")
             tail = "" if st == 200 else f" snippet={body[:200]!r}"
