@@ -28,6 +28,16 @@ object SolverClient {
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     private val SKIP = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")
 
+    /** Drop the solver's per-host sessions + cached cf_clearance (part of the egress reset — the clearance
+     *  is IP-bound, so a new exit node must re-solve). Best-effort. */
+    fun reset() {
+        val base = SolverConfig.url?.trimEnd('/') ?: return
+        val req = Request.Builder().url("$base/reset").post(ByteArray(0).toRequestBody(null)).build()
+        runCatching { client.newCall(req).execute().use { } }
+            .onSuccess { log.info { "solver: session/clearance reset" } }
+            .onFailure { log.info { "solver reset failed: ${it.message}" } }
+    }
+
     /** Run [request] (with its vrf) through the solver. Null on any failure so the caller can fall back. */
     fun fetch(request: Request): Response? {
         val base = SolverConfig.url?.trimEnd('/') ?: return null

@@ -2137,6 +2137,9 @@ fun Application.module() {
                 mangautils.core.source.SourceCircuits.resetAll()
                 eu.kanade.tachiyomi.network.interceptor.JcefFetchInterceptor.resetManagedFails()
                 eu.kanade.tachiyomi.network.interceptor.FlareSolverrInterceptor.resetWarmSessions()
+                // The solver holds MangaFire's whole IP-bound session (cf_clearance + WAF cookie) — flush it
+                // too so a new exit node re-solves fresh instead of replaying the old IP's clearance.
+                runCatching { eu.kanade.tachiyomi.network.interceptor.SolverClient.reset() }
                 runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.clearCookies(null) }.getOrDefault(0)
             }
             log.info("egress reset: flushed cookies + evicted connections + un-stuck sources (JCEF {} cookie(s))", jcefCookies)

@@ -129,6 +129,18 @@ def health():
     return jsonify(ok=True, impersonate=IMPERSONATE, sessions=list(_sessions.keys()))
 
 
+@app.post("/reset")
+def reset():
+    """Egress reset (VPN/exit-node switch): drop every session + cached clearance so the next request
+    re-solves fresh on the new IP (cf_clearance is IP-bound)."""
+    with _lock:
+        n = len(_sessions)
+        _sessions.clear()
+        _clearance.clear()
+    print(f"solver: reset — cleared {n} session(s) + clearances", flush=True)
+    return jsonify(ok=True, cleared=n)
+
+
 @app.post("/fetch")
 def fetch():
     data = request.get_json(force=True, silent=True) or {}
