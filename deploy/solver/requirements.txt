@@ -1,2 +1,5 @@
 curl_cffi>=0.7
 flask>=3.0
+onnxruntime>=1.17
+numpy>=1.26
+pillow>=10.0
