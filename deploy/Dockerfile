@@ -53,9 +53,11 @@ rm -f /tmp/.X99-lock 2>/dev/null || true
 Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
 i=0
 while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 25 ]; do i=$((i + 1)); sleep 0.2; done
-# Clear stale Chromium profile-singleton locks left in /data by a previous run (a crash, or a new
-# container hostname) — otherwise JCEF exits 21 with "profile appears to be in use ... on another
-# computer". maxdepth keeps the scan off the deep downloads tree.
+# Clear the JCEF runtime profile's locks + GPU/shader/crash caches on every boot. A hard-killed
+# container (every --force-recreate) can leave these half-locked or corrupt, which shows up as a
+# BLANK offscreen render + a wedged fetch pool ("0/3 busy → CEF client unavailable"). Cookies
+# (cf_clearance) are preserved. maxdepth keeps the scan off the deep downloads tree.
+find /data/cache -maxdepth 4 \( -name 'Singleton*' -o -name 'lockfile' -o -name 'GPUCache' -o -name 'ShaderCache' -o -name 'Crashpad' -o -name 'GrShaderCache' \) -exec rm -rf {} + 2>/dev/null || true
 find /data -maxdepth 4 -name 'Singleton*' -delete 2>/dev/null || true
 exec /app/bin/server "$@"
 SH

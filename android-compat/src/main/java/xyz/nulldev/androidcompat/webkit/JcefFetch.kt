@@ -43,9 +43,10 @@ object JcefFetch {
     private val log = KotlinLogging.logger {}
     private val json = Json { ignoreUnknownKeys = true }
 
-    // ponytail: each browser is a full Chromium (RAM-heavy); 3 covers a library-update fan-out without
-    // exhausting memory. Bump if a very large library still queues on "no free browser".
-    private const val POOL_SIZE = 3
+    // Env-tunable via MU_JCEF_POOL. Each browser is a full Chromium (RAM-heavy) — raise it if you have
+    // RAM and a large library queues on "no free browser"; LOWER it (e.g. 2) if the box is memory-bound
+    // and browsers OOM. Default 3.
+    private val POOL_SIZE = System.getenv("MU_JCEF_POOL")?.toIntOrNull()?.coerceIn(1, 12) ?: 3
 
     // A stale cf_clearance makes the same-origin fetch come back as one of these CF interstitials.
     private val CHALLENGE_MARKERS = listOf("just a moment", "challenge-platform", "cf-mitigated", "cf_chl", "cf-browser-verification", "checking your browser")
