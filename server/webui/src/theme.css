@@ -54,6 +54,41 @@
   --manga: #c4a7e7; --manhwa: #9ccfd8; --manhua: #f6c177;
 }
 
+/* ---- Debug Grid theme: a layout diagnostic ----------------------------------------------------
+   Outlines the shell elements (each a distinct colour, labelled) and overlays a 10px (cyan) / 50px
+   (magenta) pixel grid so you can measure exactly where the tab bar sits vs the physical bottom. */
+:root[data-theme="debug"] {
+  --bg: #101014; --bg-2: #16161c; --card: #1c1c24; --card-2: #24242e; --border: #33333f;
+  --text: #eaeaf0; --muted: #9a9aa6; --muted-2: #6a6a76;
+  --accent: #00e5ff; --accent-press: #00b8cc;
+}
+/* Full-viewport pixel grid, on top of everything. */
+:root[data-theme="debug"] body::before {
+  content: ''; position: fixed; inset: 0; z-index: 99998; pointer-events: none;
+  background-image:
+    repeating-linear-gradient(0deg,  transparent 0 9px,  rgba(0,229,255,.18) 9px 10px),
+    repeating-linear-gradient(90deg, transparent 0 9px,  rgba(0,229,255,.18) 9px 10px),
+    repeating-linear-gradient(0deg,  transparent 0 49px, rgba(255,0,200,.45) 49px 50px),
+    repeating-linear-gradient(90deg, transparent 0 49px, rgba(255,0,200,.45) 49px 50px);
+}
+/* Outline + name each shell element. Labels are position:absolute so they don't shift layout. */
+:root[data-theme="debug"] .app     { outline: 2px solid #ff3b3b; outline-offset: -2px; }
+:root[data-theme="debug"] .topbar  { outline: 2px solid #35d07f; outline-offset: -2px; }
+:root[data-theme="debug"] main     { outline: 2px solid #ffd166; outline-offset: -2px; }
+:root[data-theme="debug"] .tabbar  { outline: 2px solid #4d9dff; outline-offset: -2px; }
+:root[data-theme="debug"] .app, :root[data-theme="debug"] main { position: relative; }
+:root[data-theme="debug"] .app::after,
+:root[data-theme="debug"] .topbar::after,
+:root[data-theme="debug"] main::after,
+:root[data-theme="debug"] .tabbar::after {
+  position: absolute; left: 2px; z-index: 99999; pointer-events: none;
+  font: 700 10px/1.2 ui-monospace, monospace; padding: 1px 4px; border-radius: 0 0 4px 0; color: #000;
+}
+:root[data-theme="debug"] .app::after    { content: '.app';    top: 2px; background: #ff3b3b; }
+:root[data-theme="debug"] .topbar::after { content: '.topbar'; bottom: 2px; top: auto; background: #35d07f; }
+:root[data-theme="debug"] main::after    { content: 'main';    top: 2px; background: #ffd166; }
+:root[data-theme="debug"] .tabbar::after { content: '.tabbar (bottom:0) — gap below = bar not at physical bottom'; top: -14px; background: #4d9dff; white-space: nowrap; }
+
 /* Theme picker swatches (Settings → Appearance) */
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
 .theme-swatch { display: flex; flex-direction: column; gap: 7px; padding: 9px; border-radius: 12px;
