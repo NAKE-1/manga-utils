@@ -63,19 +63,56 @@ async def _has_clearance(b) -> bool:
     return any(getattr(c, "name", "") == "cf_clearance" for c in cookies)
 
 
+async def _page_state(tab):
+    """(title, url) of the current page — for logging what wall we're on."""
+    try:
+        raw = await tab.evaluate(
+            "JSON.stringify({t: document.title || '', u: location.href || ''})", await_promise=False
+        )
+        d = json.loads(raw) if isinstance(raw, str) else {}
+        return d.get("t", ""), d.get("u", "")
+    except Exception:
+        return "", ""
+
+
+async def _try_click_turnstile(tab):
+    """Best-effort: click the Cloudflare Turnstile widget if it's on the page. Turnstile lives in a
+    cross-origin iframe, so we click the iframe element's center (where the checkbox sits)."""
+    try:
+        el = await tab.select("iframe[src*='challenges.cloudflare.com']", timeout=4)
+        if el:
+            await el.click()
+            print("solver: clicked Turnstile iframe", flush=True)
+            await asyncio.sleep(3)
+    except Exception as ex:  # noqa: BLE001
+        print(f"solver: no Turnstile click ({ex})", flush=True)
+
+
 async def _ensure_on_origin(b, origin: str):
     """Park the tab on `origin` (navigating clears Cloudflare + sets the site session cookie), so a
     subsequent in-page fetch is same-origin. Reuses the tab if already parked there."""
     global _origin
     if _origin == origin:
         return b.main_tab
+    print(f"solver: navigating to {origin}/", flush=True)
     tab = await b.get(origin + "/")
-    # Give nodriver + Cloudflare time to clear (nodriver auto-handles the Turnstile). Wait for the
-    # cf_clearance cookie, then a beat for the page's own session to settle.
-    for _ in range(CLEAR_TIMEOUT_S):
+    clicked = False
+    for i in range(CLEAR_TIMEOUT_S):
         if await _has_clearance(b):
+            print(f"solver: cf_clearance obtained after {i}s", flush=True)
             break
-        await asyncio.sleep(1)
+        title, url = await _page_state(tab)
+        if i in (2, 8, 16, 28):  # periodic state so we can see what wall we're stuck on
+            print(f"solver: waiting… t={i}s title={title!r} url={url!r}", flush=True)
+        if "/@waf/" in url:
+            print("solver: hit MangaFire /@waf shapes captcha — nodriver can't solve this", flush=True)
+        # Turnstile is usually a passive managed challenge, but try a click once if it lingers.
+        if not clicked and i == 4:
+            await _try_click_turnstile(tab)
+            clicked = True
+    else:
+        title, url = await _page_state(tab)
+        print(f"solver: NEVER cleared in {CLEAR_TIMEOUT_S}s — title={title!r} url={url!r}", flush=True)
     await asyncio.sleep(1)
     _origin = origin
     return tab
@@ -113,6 +150,12 @@ async def fetch(req: Request):
             )
             raw = await tab.evaluate(js, await_promise=True)
             out = json.loads(raw) if isinstance(raw, str) else (raw or {"status": 0, "error": "no result"})
+            st = out.get("status")
+            body = out.get("body") or ""
+            if st != 200:  # show what came back so we can tell a CF wall from a shapes captcha from empty
+                print(f"solver: /fetch {url} -> status={st} {len(body)}B snippet={body[:300]!r}", flush=True)
+            else:
+                print(f"solver: /fetch {url} -> 200 {len(body)}B", flush=True)
             return JSONResponse(out)
         except Exception as e:  # noqa: BLE001 — report anything so the caller can fall back
             _origin = None  # force a fresh navigation next time (tab may be wedged)
