@@ -39,6 +39,7 @@ object NetMonitor {
     private const val INTERVAL_ONLINE_SEC = 45L // healthy: probe rarely, near-zero overhead
     private const val INTERVAL_OFFLINE_SEC = 8L // down: probe often so coming back online is caught fast
     private const val PROBE_TIMEOUT_SEC = 4L
+    private const val OUTAGE_PROBE_THROTTLE_MS = 3_000L // min gap between failure-triggered probes
 
     private val client = HttpClient.newBuilder()
         .version(HttpClient.Version.HTTP_1_1)
@@ -91,7 +92,12 @@ object NetMonitor {
      *  (skip the debounce) so we don't sit in a doomed retry-wait. If the internet IS reachable, no-op — the
      *  source was genuinely busy. Runs on the monitor thread, serialized with the periodic probe. */
     fun reportPossibleOutage() {
+        // Throttle: a library update can fire this on every failed title (dozens/sec on a real outage).
+        // One probe within a short window is enough to flip offline; skip the rest so we don't queue a
+        // storm of probes on the single monitor thread.
+        if (System.currentTimeMillis() - lastChecked < OUTAGE_PROBE_THROTTLE_MS) return
         exec.execute {
+            if (System.currentTimeMillis() - lastChecked < OUTAGE_PROBE_THROTTLE_MS) return@execute
             val reachable = probes.any { reach(it) }
             lastChecked = System.currentTimeMillis()
             if (reachable) consecutiveFails = 0

@@ -112,11 +112,28 @@ object LibraryService {
     fun update(
         entries: List<LibraryEntry> = LibraryStore.list(),
         onProgress: ((done: Int, total: Int) -> Unit)? = null,
+        // Injected by the server (core can't see NetMonitor). [isOnline] is checked between titles so a
+        // mid-run network drop stops the scan instead of grinding every remaining title through a 30s DNS
+        // timeout; [onFailure] pings the net monitor so an outage is detected within seconds, not the full
+        // probe interval. Both default to "online, no-op" for callers that don't care (CLI/tests).
+        isOnline: () -> Boolean = { true },
+        onFailure: (() -> Unit)? = null,
     ): List<UpdateResult> {
         val total = entries.size
-        val results = entries.mapIndexed { i, entry ->
-            updateOne(entry).also { onProgress?.invoke(i + 1, total) }
-        }.toMutableList()
+        val results = mutableListOf<UpdateResult>()
+        for ((i, entry) in entries.withIndex()) {
+            if (!isOnline()) {
+                val left = total - i
+                log.warn("Update paused: network went offline at {}/{} — {} title(s) left unchecked", i, total, left)
+                entries.drop(i).forEach { results.add(UpdateResult(it, emptyList(), failed = true)) }
+                break
+            }
+            val res = updateOne(entry).also { onProgress?.invoke(i + 1, total) }
+            results.add(res)
+            // A failed title is corroborating evidence of an outage — probe now (throttled) so the very next
+            // isOnline() check can short-circuit the rest of the run instead of timing out on each.
+            if (res.failed) onFailure?.invoke()
+        }
         retryAfterHumanCheckCleared(results)
         return results
     }

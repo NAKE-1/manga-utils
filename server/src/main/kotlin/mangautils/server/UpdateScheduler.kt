@@ -70,7 +70,10 @@ object UpdateScheduler {
 
     /** Run one update pass over the whole library now (used by the scheduler). */
     fun runNow(): List<UpdateResult> {
-        val results = LibraryService.update()
+        val results = LibraryService.update(
+            isOnline = { NetMonitor.online },
+            onFailure = { NetMonitor.reportPossibleOutage() },
+        )
         lastRunAt = System.currentTimeMillis()
         val newCount = results.sumOf { it.newChapters.size }
         log.info("scheduled update: {} new chapter(s) across {} title(s)", newCount, results.count { it.newChapters.isNotEmpty() })

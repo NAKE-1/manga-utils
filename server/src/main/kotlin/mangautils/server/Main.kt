@@ -1525,7 +1525,11 @@ fun Application.module() {
                 libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0; libUpdateSummary = null
                 libUpdateExec.submit {
                     try {
-                        val results = LibraryService.update(onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total })
+                        val results = LibraryService.update(
+                            onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total },
+                            isOnline = { NetMonitor.online },
+                            onFailure = { NetMonitor.reportPossibleOutage() },
+                        )
                         Notifier.onLibraryChecked(results, scheduled = false) // notify on manual checks too
                         UpdateScheduler.autoDownloadNew(results) // honor auto-download on manual checks too
                         val titles = results.filter { it.newChapters.isNotEmpty() }
