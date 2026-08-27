@@ -64,6 +64,20 @@ object JcefFetch {
     private val HEADED = System.getenv("MU_JCEF_HEADED") == "1"
     private val headedFrames = ConcurrentHashMap<CefBrowser, java.awt.Frame>() // one host window per headed browser
 
+    // A small ring of recent headed-solve events so the web UI can toast "JCEF cleared <host>", mirroring the
+    // FlareSolverr feed. Only a GENUINE Turnstile pass is recorded — one where the windowed browser minted a
+    // *fresh* cf_clearance value — never a cookie it already held. So the toast truthfully means the browser
+    // did the work itself; a persisted/seeded cookie produces no toast.
+    data class SolveEvent(val id: Long, val host: String, val phase: String, val at: Long)
+    private val solveSeq = java.util.concurrent.atomic.AtomicLong()
+    private val solveEvents = java.util.concurrent.ConcurrentLinkedDeque<SolveEvent>()
+    private fun pushSolve(host: String, phase: String) {
+        solveEvents.addLast(SolveEvent(solveSeq.incrementAndGet(), host, phase, System.currentTimeMillis()))
+        while (solveEvents.size > 30) solveEvents.pollFirst()
+    }
+    fun lastSolveEventId(): Long = solveSeq.get()
+    fun solveEventsSince(id: Long): List<SolveEvent> = solveEvents.filter { it.id > id }
+
     /** Live per-host pool state for the dev UI. */
     data class PoolStat(val host: String, val size: Int, val busy: Int, val free: Int, val max: Int)
 
@@ -229,6 +243,11 @@ object JcefFetch {
     /** Create one cleared browser for a host. Called under the pool's growth lock. Windowed (headed on Xvfb)
      *  when MU_JCEF_HEADED=1 so it passes Cloudflare itself; offscreen otherwise. */
     private fun newBrowser(scheme: String, host: String): CefBrowser? {
+        // Snapshot the cf_clearance value BEFORE we navigate. If it changes by the time we're cleared, this
+        // browser genuinely passed Turnstile; if it's the same (or was already present), it just reused a
+        // cookie — the difference is what makes the "cleared" toast honest (and answers "did it really pass?").
+        val before = if (HEADED) cfClearanceValue(host) else null
+        if (HEADED && before == null) pushSolve(host, "solving") // no cookie yet → we expect a real solve
         val client = runCatching { runBlocking { CefHelper.createClient() } }.getOrNull() ?: return null
         val root = "$scheme://$host/"
         val browser = if (HEADED) {
@@ -251,6 +270,17 @@ object JcefFetch {
                 .apply { createImmediately() }
         }
         waitCleared(host, browser)
+        if (HEADED) {
+            val after = cfClearanceValue(host)
+            when {
+                after != null && after != before -> {
+                    pushSolve(host, "cleared") // fresh clearance value → the windowed browser really passed
+                    log.info { "JCEF[$host]: windowed browser PASSED Cloudflare itself — minted a fresh cf_clearance" }
+                }
+                after != null -> log.info { "JCEF[$host]: windowed browser reused an existing cf_clearance (not a fresh pass)" }
+                else -> { if (before == null) pushSolve(host, "stuck"); log.warn { "JCEF[$host]: windowed browser did not obtain cf_clearance" } }
+            }
+        }
         log.info { "JCEF[$host]: opened ${if (HEADED) "windowed" else "offscreen"} browser (cf_clearance=${hasCfClearance(host)})" }
         return browser
     }
@@ -360,6 +390,27 @@ object JcefFetch {
         }
         latch.await(2, TimeUnit.SECONDS)
         return ready
+    }
+
+    /** The current cf_clearance VALUE for [host], or null. Lets a caller tell a genuine fresh solve
+     *  (value changed) from reusing a cookie the browser already held. */
+    private fun cfClearanceValue(host: String): String? {
+        val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return null
+        val latch = CountDownLatch(1)
+        var value: String? = null
+        val ok = runCatching {
+            mgr.visitAllCookies(object : CefCookieVisitor {
+                override fun visit(cookie: CefCookie, curr: Int, total: Int, delete: BoolRef): Boolean {
+                    val dom = cookie.domain?.trimStart('.') ?: ""
+                    if (cookie.name == "cf_clearance" && (host.endsWith(dom) || dom.endsWith(host))) value = cookie.value
+                    if (curr + 1 >= total) latch.countDown()
+                    return true
+                }
+            })
+        }.getOrDefault(false)
+        if (!ok) return null
+        latch.await(2, TimeUnit.SECONDS)
+        return value
     }
 
     private fun hasCfClearance(host: String): Boolean {

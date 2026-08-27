@@ -66,6 +66,7 @@ export function Toasts() {
 // the events we want to toast).
 let flareCursor: number | null = null
 let mfCursor: number | null = null // MangaFire captcha auto-solver event cursor
+let jcefCursor: number | null = null // headed-JCEF Turnstile-pass event cursor
 let notifyRateAt = -1 // last-seen Discord rate-limit timestamp (-1 = not yet synced)
 
 export function DownloadWatcher() {
@@ -104,9 +105,24 @@ export function DownloadWatcher() {
         mfCursor = r.lastId
       } catch { /* ignore */ }
     }
+    // Headed JCEF passing Cloudflare's Turnstile on its own (only genuine passes are pushed server-side).
+    const jcefTick = async () => {
+      try {
+        const r = await api.jcefEvents(jcefCursor ?? undefined)
+        if (jcefCursor == null) { jcefCursor = r.lastId; return } // first poll: sync only, no backlog
+        for (const e of r.events) {
+          const key = 'jcef:' + e.host // one toast per host, updated in place
+          if (e.phase === 'solving') toast(`JCEF · ${e.host} clearing Cloudflare…`, 'info', 6000, key, { bg: true })
+          else if (e.phase === 'cleared') toast(`JCEF · ${e.host} passed Cloudflare`, 'success', 2800, key, { bg: true })
+          else if (e.phase === 'stuck') toast(`JCEF · ${e.host} couldn’t clear — falling back`, 'error', 4500, key, { bg: true })
+        }
+        jcefCursor = r.lastId
+      } catch { /* ignore */ }
+    }
     const tick = async () => {
       flareTick()
       mfTick()
+      jcefTick()
       try {
         const d = await api.downloads()
         for (const t of d.tasks) {

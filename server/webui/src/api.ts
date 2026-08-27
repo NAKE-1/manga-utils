@@ -213,6 +213,8 @@ export const api = {
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
   flaresolverrTest: (url?: string) => getJson<FlareTest>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
+  // Headed-JCEF ("MU_JCEF_HEADED") solve feed — a windowed browser passing Cloudflare's Turnstile itself.
+  jcefEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string }[] }>(`/api/jcef/events${since != null ? `?since=${since}` : ''}`),
   backupPreview: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/preview', { method: 'POST', body: data })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Preview failed')

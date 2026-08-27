@@ -1225,7 +1225,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/jcef/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -2326,6 +2326,14 @@ fun Application.module() {
             val since = call.queryParam("since")?.toLongOrNull() ?: cfg.lastEventId()
             val evs = cfg.eventsSince(since).map { FlareEventDto(it.id, it.host, it.phase, it.cookies) }
             call.respond(FlareEventsDto(cfg.lastEventId(), evs))
+        }
+        // Headed-JCEF ("MU_JCEF_HEADED") solve feed — a windowed browser passing Cloudflare's Turnstile
+        // itself. Only genuine passes are pushed (fresh cf_clearance), so the toast never lies.
+        get("/api/jcef/events") {
+            val jf = xyz.nulldev.androidcompat.webkit.JcefFetch
+            val since = call.queryParam("since")?.toLongOrNull() ?: jf.lastSolveEventId()
+            val evs = jf.solveEventsSince(since).map { FlareEventDto(it.id, it.host, it.phase, 0) }
+            call.respond(FlareEventsDto(jf.lastSolveEventId(), evs))
         }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
