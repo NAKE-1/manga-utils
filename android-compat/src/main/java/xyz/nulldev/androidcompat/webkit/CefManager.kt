@@ -131,7 +131,31 @@ object CefManager {
                     JCefAppConfig.getInstance(cefDir.toString(), false).apply {
                         appArgsAsList.addAll(
                             buildList {
-                                add("--disable-gpu")
+                                // GPU / WebGL. In a container there is no real display/GPU, and the old
+                                // "--disable-gpu" made the browser report NO WebGL renderer — a headless
+                                // tell that makes Cloudflare Turnstile escalate to the slow custom shapes
+                                // captcha (60-90s per cold solve) instead of the quick checkbox path a
+                                // real desktop browser gets. Give the offscreen browser a real WebGL
+                                // renderer via SwiftShader (CPU software GL; needs no physical GPU). When
+                                // an Intel iGPU is passed through to the VM and /dev/dri is mounted into
+                                // the container, set MU_JCEF_HW_GL=1 to use ANGLE-on-hardware instead (a
+                                // real "Intel" renderer string = strongest anti-bot fingerprint).
+                                // Desktop (Windows/macOS/Linux with a real GPU) keeps --disable-gpu: it's
+                                // already fast there (real display + working WebRTC), and enabling GPU
+                                // under JCEF offscreen rendering on the desktop risks init flakiness.
+                                if (System.getenv("MU_JCEF_NO_SANDBOX") == "1") {
+                                    if (System.getenv("MU_JCEF_HW_GL") == "1") {
+                                        add("--ignore-gpu-blocklist")
+                                        add("--use-gl=angle")
+                                        add("--use-angle=gl-egl")
+                                    } else {
+                                        add("--enable-unsafe-swiftshader") // Chrome 137+ gates software WebGL behind this
+                                        add("--use-gl=angle")
+                                        add("--use-angle=swiftshader")
+                                    }
+                                } else {
+                                    add("--disable-gpu")
+                                }
                                 add("--off-screen-rendering-enabled")
                                 add("--disable-dev-shm-usage")
                                 add("--change-stack-guard-on-fork=disable")
@@ -142,6 +166,11 @@ object CefManager {
                                 // ("ConnectionHandler failed with net error: -2") and Cast/media-router
                                 // cert checks ("CRL - Verification failed"). Cosmetic only.
                                 add("--disable-background-networking")
+                                // WebRTC: on a UDP-blocked network (e.g. campus) Turnstile's STUN probe to
+                                // stun.cloudflare.com never resolves/connects, spamming p2p socket errors
+                                // and leaving a broken WebRTC fingerprint. Pin a deterministic IP-handling
+                                // policy so ICE candidate gathering doesn't stall on unreachable STUN.
+                                add("--force-webrtc-ip-handling-policy=default_public_interface")
                                 add("--disable-features=MediaRouter,OptimizationHints,Translate")
                                 // In a container (non-root, no user namespaces) Chromium's sandbox can't
                                 // start, so CEF fails init entirely ("CEF client unavailable"). Opt in via

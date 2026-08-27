@@ -36,6 +36,10 @@ RUN apt-get update \
       libpango-1.0-0 libcairo2 libx11-6 libxcb1 libxi6 libxtst6 libglib2.0-0 \
       fonts-liberation fontconfig ca-certificates wget \
       xvfb \
+      # GL stack for JCEF's ANGLE/SwiftShader software WebGL (so the offscreen browser presents a
+      # real WebGL renderer to Cloudflare Turnstile instead of "no GPU"). mesa DRI + Vulkan loader
+      # also let it use a passed-through Intel iGPU (/dev/dri) when MU_JCEF_HW_GL=1 is set.
+      libgl1 libegl1 libgles2 libglx-mesa0 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers \
  && rm -rf /var/lib/apt/lists/*
 
 # Run as a non-root user; /data is the single persisted volume (library, extensions, settings,

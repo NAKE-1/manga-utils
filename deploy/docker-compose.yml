@@ -38,6 +38,10 @@ services:
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
       - MU_DYNO_DIR=/dyno                              # where "Back up to USB" writes (matches the bind mount above)
       - MU_JCEF_POOL=5                                 # real-Chromium browsers per Cloudflare host (1–12); 5 = more parallel MangaFire fetches
+      # - MU_JCEF_HW_GL=1                               # <- uncomment ONLY after passing the Intel iGPU through + the /dev/dri device below.
+                                                        #    Uses real hardware WebGL (Intel renderer) instead of software SwiftShader. Software works with no GPU.
+    # devices:
+    #   - /dev/dri:/dev/dri                             # <- Intel iGPU passthrough: pass the iGPU to the VM in Proxmox first, then map it in here for hardware WebGL.
     depends_on:
       - flaresolverr
     restart: unless-stopped
