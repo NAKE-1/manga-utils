@@ -42,6 +42,9 @@ services:
                                                         #    Uses real hardware WebGL (Intel renderer) instead of software SwiftShader. Software works with no GPU.
     # devices:
     #   - /dev/dri:/dev/dri                             # <- Intel iGPU passthrough: pass the iGPU to the VM in Proxmox first, then map it in here for hardware WebGL.
+    # group_add:                                        # <- REQUIRED with /dev/dri: the non-root 'app' user needs the host's video+render GIDs
+    #   - "44"                                          #    to open the DRI nodes. Get the real numbers on the VM: `getent group render video`
+    #   - "993"                                         #    (video is usually 44; render varies — replace 993 with what getent prints), then recreate.
     depends_on:
       - flaresolverr
     restart: unless-stopped
