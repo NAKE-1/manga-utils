@@ -79,18 +79,26 @@ def fetch():
     with _lock:  # one Chrome; a navigation mutates shared page state
         try:
             sb = _get_sb()
-            if _origin != origin or not _cleared(sb):
-                print(f"solver: opening {origin}/ …", flush=True)
-                sb.uc_open_with_reconnect(origin + "/", reconnect_time=6)
-                for attempt in range(4):
-                    if _cleared(sb):
-                        break
-                    print(f"solver: challenge up (title={sb.get_title()!r}) — click captcha (try {attempt + 1})", flush=True)
+            needs_open = _origin != origin
+            if not needs_open:
+                # cheap webdriver touch is fine once we're already cleared/parked
+                needs_open = not _cleared(sb)
+            if needs_open:
+                # Canonical UC Cloudflare flow: open with the webdriver DISCONNECTED, then click the
+                # Turnstile via PyAutoGUI (OS-level — never reconnects, so navigator.webdriver stays hidden).
+                # Only AFTER the click + a wait do we touch the driver to check. Retry the whole cycle once.
+                for attempt in range(3):
+                    print(f"solver: opening {origin}/ (try {attempt + 1})…", flush=True)
+                    sb.uc_open_with_reconnect(origin + "/", reconnect_time=5)
                     try:
                         sb.uc_gui_click_captcha()
+                        print("solver: uc_gui_click_captcha done", flush=True)
                     except Exception as e:  # noqa: BLE001
                         print(f"solver: uc_gui_click_captcha error: {e}", flush=True)
-                    time.sleep(4)
+                    time.sleep(6)  # let the challenge resolve after the click
+                    if _cleared(sb):
+                        break
+                    print(f"solver: still challenged (title={sb.get_title()!r})", flush=True)
                 print(f"solver: cleared={_cleared(sb)} title={sb.get_title()!r}", flush=True)
                 _origin = origin
 
