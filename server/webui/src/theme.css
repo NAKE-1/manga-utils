@@ -76,7 +76,7 @@
 :root[data-theme="debug"] .topbar  { outline: 2px solid #35d07f; outline-offset: -2px; }
 :root[data-theme="debug"] main     { outline: 2px solid #ffd166; outline-offset: -2px; }
 :root[data-theme="debug"] .tabbar  { outline: 2px solid #4d9dff; outline-offset: -2px; }
-:root[data-theme="debug"] .app, :root[data-theme="debug"] main { position: relative; }
+:root[data-theme="debug"] .app, :root[data-theme="debug"] .topbar, :root[data-theme="debug"] .tabbar, :root[data-theme="debug"] main { position: relative; }
 :root[data-theme="debug"] .app::after,
 :root[data-theme="debug"] .topbar::after,
 :root[data-theme="debug"] main::after,
@@ -120,24 +120,30 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 img { display: block; }
 
 /* ---- App shell ---------------------------------------------------------- */
+/* Flex app-shell: .app is a height:100% column (the debug grid proved 100% reaches the PHYSICAL bottom,
+   whereas a fixed bottom:0 or 100dvh stop at the safe-area boundary). The bars are laid-out flex rows
+   (NOT position:fixed), so they sit at the true top/bottom edges regardless of page length; <main> is
+   the only scroller. */
 .app {
-  /* +1px so the page is ALWAYS just barely scrollable. On iOS standalone, a fixed `bottom:0` bar only
-     reaches the physical bottom when the page can scroll; on a short (non-scrollable) page iOS pins it
-     to the safe-area boundary, leaving a gap under the bar. This nudge keeps it scrollable everywhere.
-     ponytail: a 1px scroll hack — the flex-shell rewrite is the real fix; revisit after more testing. */
-  min-height: calc(100% + 1px);
-  padding-top: calc(var(--topbar-h) + var(--safe-t));
-  padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+main {
+  flex: 1 1 auto;
+  min-height: 0; /* allow overflow-y in a flex column */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .topbar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+  flex: none; z-index: 30; /* laid-out flex row (not position:fixed) */
   height: calc(var(--topbar-h) + var(--safe-t));
   padding-top: var(--safe-t);
   display: flex; align-items: center; gap: 6px;
   padding-left: 16px; padding-right: 8px;
-  background: linear-gradient(var(--bg), rgba(26,26,28,0.86));
-  backdrop-filter: blur(8px);
+  background: var(--bg-2);
   border-bottom: 1px solid var(--border);
 }
 .topbar .wordmark { font-weight: 800; letter-spacing: .14em; font-size: 17px; flex: 1; cursor: pointer; }
@@ -208,12 +214,11 @@ img { display: block; }
 
 /* ---- Bottom tab bar ----------------------------------------------------- */
 .tabbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  flex: none; z-index: 30; /* laid-out flex row at the bottom of the height:100% shell → reaches physical bottom */
   height: calc(var(--tabbar-h) + var(--safe-b));
-  padding-bottom: var(--safe-b);
+  padding-bottom: var(--safe-b); /* keep icons above the home indicator */
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-  background: rgba(26,26,28,0.94);
-  backdrop-filter: blur(10px);
+  background: var(--bg-2);
   border-top: 1px solid var(--border);
 }
 .tabbar a {
@@ -705,7 +710,7 @@ img { display: block; }
 
 /* ---- Search / Browse ---------------------------------------------------- */
 /* Pin the search bar + source selector together so they stay reachable while scrolling results. */
-.search-head { position: sticky; top: calc(var(--topbar-h) + var(--safe-t)); z-index: 6; background: var(--bg); box-shadow: 0 6px 8px -6px rgba(0,0,0,.5); }
+.search-head { position: sticky; top: 0; z-index: 6; background: var(--bg); box-shadow: 0 6px 8px -6px rgba(0,0,0,.5); }
 .search-bar-wrap { padding: 10px 16px 4px; }
 .search-bar { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 0 12px; }
 .search-bar .sb-ic { width: 20px; height: 20px; color: var(--muted); flex: 0 0 auto; }
