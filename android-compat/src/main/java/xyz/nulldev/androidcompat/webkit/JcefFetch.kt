@@ -238,8 +238,30 @@ object JcefFetch {
         while (System.currentTimeMillis() < deadline) {
             Thread.sleep(700)
             if (hasCfClearance(host) && documentReady(browser)) return
+            // If the page has already landed on the interactive shapes captcha (/@waf/challenge), no amount
+            // of passive waiting produces cf_clearance — stop stalling and let the fetch return the challenge
+            // so the autosolver fires NOW. This is what makes unattended solving fast (like desktop): don't
+            // burn the full 20s on a wall only the YOLO solver can pass.
+            if (showsInteractiveChallenge(browser)) {
+                log.info { "JCEF: $host hit the interactive captcha — skipping the clear-wait, handing to autosolve" }
+                return
+            }
         }
         log.warn { "JCEF: $host didn't visibly clear Cloudflare within 20s — trying the fetch anyway" }
+    }
+
+    /** True if the browser is currently sitting on MangaFire's interactive shapes captcha (which no passive
+     *  reload can clear — only the autosolver/WebView can). Lets [waitCleared] bail immediately. */
+    private fun showsInteractiveChallenge(browser: CefBrowser): Boolean {
+        val latch = CountDownLatch(1)
+        var hit = false
+        runCatching {
+            browser.evaluateJavaScript(
+                "(/@waf\\/challenge/i.test(location.href) || /click the shapes|verify you.?re human/i.test(document.body ? document.body.innerText : ''))",
+            ) { r -> hit = r == "true"; latch.countDown() }
+        }
+        latch.await(1, TimeUnit.SECONDS)
+        return hit
     }
 
     private fun documentReady(browser: CefBrowser): Boolean {

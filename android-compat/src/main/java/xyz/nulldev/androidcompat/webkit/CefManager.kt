@@ -149,11 +149,12 @@ object CefManager {
                                 // ("ConnectionHandler failed with net error: -2") and Cast/media-router
                                 // cert checks ("CRL - Verification failed"). Cosmetic only.
                                 add("--disable-background-networking")
-                                // WebRTC: on a UDP-blocked network (e.g. campus) Turnstile's STUN probe to
-                                // stun.cloudflare.com never resolves/connects, spamming p2p socket errors
-                                // and leaving a broken WebRTC fingerprint. Pin a deterministic IP-handling
-                                // policy so ICE candidate gathering doesn't stall on unreachable STUN.
-                                add("--force-webrtc-ip-handling-policy=default_public_interface")
+                                // WebRTC: the container resolves STUN hosts (stun.cloudflare.com) to a
+                                // broken/link-local IPv6 it can't reach, so Turnstile's ICE gathering spams
+                                // "errorcode: -105" forever. disable_non_proxied_udp makes WebRTC skip
+                                // non-proxied UDP entirely → it never tries STUN → no -105 spam. WebRTC/STUN
+                                // isn't used for anything here, and Turnstile passes fine without it.
+                                add("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
                                 add("--disable-features=MediaRouter,OptimizationHints,Translate")
                                 // In a container (non-root, no user namespaces) Chromium's sandbox can't
                                 // start, so CEF fails init entirely ("CEF client unavailable"). Opt in via
