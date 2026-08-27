@@ -32,11 +32,12 @@ services:
       - mu-data:/data
       # - /mnt/manga-downloads:/data/downloads   # <- uncomment on Proxmox; point at the extra drive's mount
       # - /mnt/usb:/dyno                          # <- uncomment to enable USB backup; host mount of the drive
-    shm_size: "1gb"                            # Chromium (JCEF) needs a roomy /dev/shm
+    shm_size: "2gb"                            # Chromium (JCEF) needs a roomy /dev/shm; 5-browser pool = more tabs sharing it
     environment:
       - MANGA_WEB_PORT=8080
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
       - MU_DYNO_DIR=/dyno                              # where "Back up to USB" writes (matches the bind mount above)
+      - MU_JCEF_POOL=5                                 # real-Chromium browsers per Cloudflare host (1–12); 5 = more parallel MangaFire fetches
     depends_on:
       - flaresolverr
     restart: unless-stopped
