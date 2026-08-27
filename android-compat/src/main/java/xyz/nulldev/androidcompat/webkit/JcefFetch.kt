@@ -104,6 +104,14 @@ object JcefFetch {
         httpOnly: Boolean = false,
         expiresEpochSec: Long? = null,
     ): Boolean {
+        // Headed JCEF mints its own cf_clearance with its real fingerprint. FlareSolverr earns cf_clearance
+        // with a *different* browser, so seeding it here poisons the jar (Cloudflare re-challenges JCEF) AND
+        // falsely satisfies hasCfClearance() → the pool grows and every windowed browser stampedes a 40s solve.
+        // So in headed mode, refuse a foreign cf_clearance; let the windowed browser clear itself.
+        if (HEADED && name == "cf_clearance") {
+            log.info { "JCEF[$host]: headed mode mints its own cf_clearance — ignoring FlareSolverr's" }
+            return false
+        }
         val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return false
         val now = java.util.Date()
         val cookie = CefCookie(
@@ -130,8 +138,8 @@ object JcefFetch {
         val pool = pools.computeIfAbsent(host) { HostPool(host, POOL_SIZE, isCleared = { hasCfClearance(host) }) { newBrowser(scheme, host) } }
 
         val started = System.currentTimeMillis()
-        val browser = pool.borrow(timeoutMs)
-        if (browser == null) {
+        val leased = pool.borrow(timeoutMs)
+        if (leased == null) {
             val w = wedge.computeIfAbsent(host) { AtomicInteger(0) }.incrementAndGet()
             log.info { "JCEF[$host]: no free browser after ${System.currentTimeMillis() - started}ms (${pool.busy}/$POOL_SIZE busy) → falling back" }
             // Auto-recover: a pool that can't lease a browser twice in a row is wedged (browsers stuck on
@@ -141,19 +149,27 @@ object JcefFetch {
             return null
         }
         wedge.remove(host) // a successful borrow means the pool is healthy again
+        var active: CefBrowser? = leased // the browser we give back (swapped for a fresh one on a headed re-clear)
         try {
             val js = buildFetchJs(url, method, headers, body)
-            var res = runFetch(browser, js, host, u.path, timeoutMs)
+            var res = runFetch(leased, js, host, u.path, timeoutMs)
             // Self-heal: the browser's cf_clearance can expire while it sits idle. When it does, the
             // same-origin fetch comes back as Cloudflare's "Just a moment" challenge (or a 1015 rate
-            // limit) instead of data. Reload the root to re-clear, or back off for a rate limit, and
-            // retry once — otherwise EVERY call on a stale browser fails and stampedes the fallback path
-            // (which is what turned one expired cookie into a whole failed library update).
+            // limit) instead of data. Recover and retry once — otherwise EVERY call on a stale browser fails
+            // and stampedes the fallback path (which is what turned one expired cookie into a failed update).
             val first = res
             if (first != null && isChallenge(first) && !isInteractive(first)) {
-                log.info { "JCEF[$host]: ${first.status} challenge on ${u.path} — reloading root to re-clear, retry once" }
-                reclear("$scheme://$host/", host, browser)
-                res = runFetch(browser, js, host, u.path, timeoutMs)
+                if (HEADED) {
+                    // A windowed browser can't re-pass Turnstile by reloading — only a fresh navigation does
+                    // (that's the path that clears in ~2s). Swap in a brand-new windowed browser.
+                    log.info { "JCEF[$host]: ${first.status} challenge on ${u.path} — recreating windowed browser (reload won't re-pass Turnstile)" }
+                    active = pool.replace(leased) // disposes the stale one; null if create failed
+                } else {
+                    log.info { "JCEF[$host]: ${first.status} challenge on ${u.path} — reloading root to re-clear, retry once" }
+                    reclear("$scheme://$host/", host, leased)
+                }
+                val b = active ?: return null // headed recreate failed → give up (finally gives back nothing)
+                res = runFetch(b, js, host, u.path, timeoutMs)
             } else if (first != null && isInteractive(first)) {
                 // A human captcha (e.g. /@waf/challenge "click the shapes") — no reload can auto-solve it, so
                 // return immediately (don't burn the 45s reclear). The interceptor flags it for the UI prompt.
@@ -161,12 +177,12 @@ object JcefFetch {
             } else if (first != null && isRateLimited(first)) {
                 log.info { "JCEF[$host]: ${first.status} rate-limited on ${u.path} — backing off ${RATE_LIMIT_BACKOFF_MS}ms, retry once" }
                 Thread.sleep(RATE_LIMIT_BACKOFF_MS)
-                res = runFetch(browser, js, host, u.path, timeoutMs)
+                res = runFetch(leased, js, host, u.path, timeoutMs)
             }
             res?.let { log.info { "JCEF[$host]: ${it.status} ${u.path} in ${System.currentTimeMillis() - started}ms (${it.body.length}B)" } }
             return res
         } finally {
-            pool.giveBack(browser)
+            active?.let { pool.giveBack(it) }
         }
     }
 
@@ -271,6 +287,19 @@ object JcefFetch {
         }
 
         fun giveBack(b: CefBrowser) { available.offer(b) }
+
+        /** Headed mode: a browser whose cf_clearance went stale can't re-pass Turnstile by reloading — only a
+         *  fresh windowed navigation clears it. Dispose [old] and create a replacement in its place, keeping
+         *  count/allBrowsers bookkeeping straight. Returns null (pool one smaller) if create fails. Held under
+         *  the pool lock so concurrent callers queue on this one solve instead of each spawning their own. */
+        fun replace(old: CefBrowser): CefBrowser? = synchronized(this) {
+            if (allBrowsers.remove(old)) {
+                count.decrementAndGet()
+                runCatching { old.close(true) }
+                runCatching { headedFrames.remove(old)?.dispose() }
+            }
+            create()?.also { allBrowsers.add(it); count.incrementAndGet() }
+        }
 
         /** Force-close every browser and reset the pool — the recovery lever for a wedged pool. A browser
          *  still held by a (stuck) fetch is force-closed too; that fetch was going to time out anyway, and
