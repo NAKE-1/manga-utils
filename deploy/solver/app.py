@@ -151,15 +151,17 @@ def fetch():
 
             r = sess.get(url, headers=headers, timeout=30)
             body = r.text or ""
+            waf_solved = False
             if _is_captcha(r.status_code, body):
                 print(f"solver: {url} -> captcha_required, solving /@waf…", flush=True)
                 if _solve_waf(sess, origin, ua):
+                    waf_solved = True
                     r = sess.get(url, headers=headers, timeout=30)  # retry with the WAF cookie now set
                     body = r.text or ""
 
             tail = "" if r.status_code == 200 else f" snippet={body[:160]!r}"
             print(f"solver: {url} -> {r.status_code} {len(body)}B{tail}", flush=True)
-            return jsonify(status=r.status_code, body=body)
+            return jsonify(status=r.status_code, body=body, waf_solved=waf_solved, host=host)
         except Exception as e:  # noqa: BLE001 — report anything so the caller can fall back
             _sessions.pop(host, None)  # drop a possibly-wedged session
             print(f"solver: error: {e}", flush=True)

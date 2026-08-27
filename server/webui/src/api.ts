@@ -223,6 +223,8 @@ export const api = {
   // Self-test the MangaFire → solver pipeline (health + a real popular fetch). Slow (a real cold solve).
   solverTest: () => getJson<SolverTest>('/api/dev/solver/test', 0, 120000),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
+  // MangaFire solver sidecar events — a fresh /@waf captcha solve.
+  solverEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string }[] }>(`/api/solver/events${since != null ? `?since=${since}` : ''}`),
   backupPreview: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/preview', { method: 'POST', body: data })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Preview failed')

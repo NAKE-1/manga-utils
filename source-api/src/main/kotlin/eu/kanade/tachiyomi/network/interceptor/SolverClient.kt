@@ -42,6 +42,7 @@ object SolverClient {
             log.info { "solver ${request.url.host}${request.url.encodedPath}: status ${out.status}, ${out.body?.length ?: 0}B${out.error?.let { " err=$it" } ?: ""}" }
             return null
         }
+        if (out.wafSolved) SolverConfig.record(out.host ?: request.url.host, "solved") // fresh captcha solve → UI toast
         val ct = if (request.url.encodedPath.contains("/api", true)) "application/json; charset=utf-8" else "text/html; charset=utf-8"
         log.info { "solver ${request.url.host}${request.url.encodedPath}: ${out.body.length}B (status ${out.status})" }
         return Response.Builder()
@@ -56,5 +57,11 @@ object SolverClient {
     private data class SolverReq(val url: String, val headers: Map<String, String>)
 
     @Serializable
-    private data class SolverResp(val status: Int = 0, val body: String? = null, val error: String? = null)
+    private data class SolverResp(
+        val status: Int = 0,
+        val body: String? = null,
+        val error: String? = null,
+        @kotlinx.serialization.SerialName("waf_solved") val wafSolved: Boolean = false,
+        val host: String? = null,
+    )
 }
