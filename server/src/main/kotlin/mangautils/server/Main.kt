@@ -999,6 +999,14 @@ fun main() {
         }
         log.info("library badges prewarmed in {} ms ({} series)", System.currentTimeMillis() - t0, entries.size)
     }.apply { isDaemon = true; name = "lib-warm" }.start()
+    // Warm CEF (JCEF) in the background so the WebView is ready the instant it's opened. Previously a
+    // MangaFire search implicitly warmed it via JcefFetch; now MangaFire routes to the solver, so nothing
+    // triggers CEF until the first WebView click — which made "Opening…" hang on the cold init. Warming here
+    // also surfaces any CEF init failure in the boot log instead of on first WebView use.
+    Thread {
+        runCatching { xyz.nulldev.androidcompat.webkit.CefManager.ensureStarted() }
+            .onFailure { log.warn("CEF warmup failed (WebView-based sources may be unavailable): {}", it.message) }
+    }.apply { isDaemon = true; name = "cef-warmup" }.start()
     // Restore + resume the download queue from disk (survives a crash/restart).
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     NetMonitor.start() // watch server internet reachability so the app can degrade gracefully offline
