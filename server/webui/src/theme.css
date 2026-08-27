@@ -86,7 +86,11 @@ img { display: block; }
 
 /* ---- App shell ---------------------------------------------------------- */
 .app {
-  min-height: 100%;
+  /* +1px so the page is ALWAYS just barely scrollable. On iOS standalone, a fixed `bottom:0` bar only
+     reaches the physical bottom when the page can scroll; on a short (non-scrollable) page iOS pins it
+     to the safe-area boundary, leaving a gap under the bar. This nudge keeps it scrollable everywhere.
+     ponytail: a 1px scroll hack — the flex-shell rewrite is the real fix; revisit after more testing. */
+  min-height: calc(100% + 1px);
   padding-top: calc(var(--topbar-h) + var(--safe-t));
   padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
 }
