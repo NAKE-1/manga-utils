@@ -91,7 +91,7 @@ object JcefFetch {
         val u = runCatching { URI(url) }.getOrNull() ?: return null
         val host = u.host ?: return null
         val scheme = u.scheme ?: "https"
-        val pool = pools.computeIfAbsent(host) { HostPool(host, POOL_SIZE) { newBrowser(scheme, host) } }
+        val pool = pools.computeIfAbsent(host) { HostPool(host, POOL_SIZE, isCleared = { hasCfClearance(host) }) { newBrowser(scheme, host) } }
 
         val started = System.currentTimeMillis()
         val browser = pool.borrow(timeoutMs)
@@ -190,7 +190,7 @@ object JcefFetch {
      * borrowed browser handles exactly one in-flight eval until [giveBack]. After warm-up the hot path is
      * a lock-free queue poll/offer.
      */
-    private class HostPool(val host: String, val max: Int, val create: () -> CefBrowser?) {
+    private class HostPool(val host: String, val max: Int, val isCleared: () -> Boolean, val create: () -> CefBrowser?) {
         private val available = LinkedBlockingQueue<CefBrowser>()
         private val allBrowsers = java.util.concurrent.ConcurrentHashMap.newKeySet<CefBrowser>()
         private val count = AtomicInteger(0)
@@ -200,9 +200,15 @@ object JcefFetch {
 
         fun borrow(timeoutMs: Long): CefBrowser? {
             available.poll()?.let { return it }
+            // Grow the pool ONLY when we have no browser yet, or the host is already cleared. While a host is
+            // still behind an uncleared Cloudflare challenge, extra browsers can't help clear it — each new
+            // one independently burns the full clear-timeout (that's how one cold solve turned into 5-6
+            // stacked 45-90s solves). So keep exactly ONE browser doing the solve and let concurrent callers
+            // queue on it (fast ~200ms cycles through the interactive-captcha path while the autosolver runs
+            // in the background) instead of stampeding. Once the host clears, grow to max for throughput.
             if (count.get() < max) {
                 synchronized(this) {
-                    if (available.isEmpty() && count.get() < max) {
+                    if (available.isEmpty() && count.get() < max && (count.get() == 0 || isCleared())) {
                         create()?.let { allBrowsers.add(it); count.incrementAndGet(); return it }
                     }
                 }
@@ -225,12 +231,15 @@ object JcefFetch {
 
     /** Poll until the site is cleared (cf_clearance present + document loaded), or give up after 45s. */
     private fun waitCleared(host: String, browser: CefBrowser) {
-        val deadline = System.currentTimeMillis() + 45_000
+        // 20s, not 45s: a passive JS Turnstile clears in a few seconds; if it hasn't cleared by 20s it's an
+        // interactive shapes-captcha that no amount of waiting auto-solves, so stop stalling and let the
+        // fetch return the challenge to the autosolver/WebView path sooner.
+        val deadline = System.currentTimeMillis() + 20_000
         while (System.currentTimeMillis() < deadline) {
             Thread.sleep(700)
             if (hasCfClearance(host) && documentReady(browser)) return
         }
-        log.warn { "JCEF: $host didn't visibly clear Cloudflare within 45s — trying the fetch anyway" }
+        log.warn { "JCEF: $host didn't visibly clear Cloudflare within 20s — trying the fetch anyway" }
     }
 
     private fun documentReady(browser: CefBrowser): Boolean {
