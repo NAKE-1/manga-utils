@@ -47,7 +47,9 @@ def _get_sb():
         # SB(xvfb=True) runs its own correctly-sized virtual display (so uc_gui_click_captcha's PyAutoGUI
         # clicks land on-screen). Enter the context manually and keep it open for the server's lifetime.
         # No cdp_mode — it would break execute_async_script + the captcha click.
-        _sb_ctx = SB(uc=True, headless=False, xvfb=True)
+        # --enable-unsafe-swiftshader: allow software WebGL (no GPU on Xvfb). Cloudflare's Turnstile
+        # fingerprints WebGL, so without it the challenge never clears.
+        _sb_ctx = SB(uc=True, headless=False, xvfb=True, chromium_arg="--enable-unsafe-swiftshader")
         _sb = _sb_ctx.__enter__()
         print("solver: Chrome ready", flush=True)
     return _sb
