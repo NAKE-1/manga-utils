@@ -2333,6 +2333,9 @@ fun Application.module() {
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        // Solver self-test: pings the sidecar's health + runs a REAL popular fetch through the full
+        // chain (→ solver) and reports whether MangaFire data actually came back.
+        get("/api/dev/solver/test") { call.respond(SolverTest.run(call.queryParam("id")?.toLongOrNull())) }
         // Backfill .series.json into download folders that lack one (library → queue → history). Preview
         // writes nothing; POST does it. Safe: only ever writes a missing sidecar, never overwrites/renames/deletes.
         get("/api/dev/series-backfill/preview") { call.respond(withContext(Dispatchers.IO) { SeriesBackfill.run(dryRun = true) }) }

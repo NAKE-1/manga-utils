@@ -137,6 +137,14 @@ async function getJson<T>(url: string, retries = 2, timeoutMs = 15000, signal?: 
 /** Result of probing FlareSolverr. `url` is set when auto-discovery found a working endpoint. */
 export interface FlareTest { ok: boolean; version?: string; error?: string; url?: string }
 
+/** Result of the solver self-test: solver health + a real MangaFire popular fetch through the full chain. */
+export interface SolverTest {
+  solverConfigured: boolean; solverUrl?: string | null; solverHealthy: boolean; solverOrigin?: string | null
+  flareReachable: boolean
+  sourceId?: string | null; sourceName?: string | null; host?: string | null
+  ok: boolean; results: number; ms: number; error?: string | null
+}
+
 export const api = {
   sources: () => getJson<Source[]>('/api/sources'),
   sourcePrefs: (id: string) => getJson<SourcePref[]>(`/api/sources/${id}/preferences`),
@@ -212,6 +220,8 @@ export const api = {
 
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
   flaresolverrTest: (url?: string) => getJson<FlareTest>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
+  // Self-test the MangaFire → solver pipeline (health + a real popular fetch). Slow (a real cold solve).
+  solverTest: () => getJson<SolverTest>('/api/dev/solver/test', 0, 120000),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
   backupPreview: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/preview', { method: 'POST', body: data })

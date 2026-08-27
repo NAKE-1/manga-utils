@@ -49,6 +49,8 @@ export function Dev() {
   const [pool, setPool] = useState<JcefPool[]>([])
   const [poolMsg, setPoolMsg] = useState('')
   const [poolBusy, setPoolBusy] = useState(false)
+  const [solverTest, setSolverTest] = useState<import('../api').SolverTest | null>(null)
+  const [solverBusy, setSolverBusy] = useState(false)
   const [client, setClient] = useState<Record<string, string>>({})
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
@@ -202,6 +204,13 @@ export function Dev() {
     setPoolBusy(true); setPoolMsg('')
     try { const r = await api.jcefReset(); setPoolMsg(`Reset — ${r.disposed} browser(s) disposed. New ones build on the next request.`); refreshPool() }
     catch { setPoolMsg('Reset failed') } finally { setPoolBusy(false) }
+  }
+
+  async function runSolverTest() {
+    setSolverBusy(true); setSolverTest(null)
+    try { setSolverTest(await api.solverTest()) }
+    catch (e) { setSolverTest({ solverConfigured: false, solverHealthy: false, flareReachable: false, ok: false, results: 0, ms: 0, error: e instanceof Error ? e.message : 'test failed' }) }
+    finally { setSolverBusy(false) }
   }
 
   function refreshCookieHosts() {
@@ -647,6 +656,22 @@ export function Dev() {
             <button className="btn danger" disabled={cookieBusy} onClick={() => clearCookies()}>Clear all cookies</button>
           </div>
           {cookieMsg && <div className="set-hint" style={{ marginTop: 6 }}>{cookieMsg}</div>}
+        </div>
+        <div className="set-card">
+          <div className="set-row-label">MangaFire / solver self-test</div>
+          <div className="set-hint">Pings the anti-detect <b>solver sidecar</b> (<code>MU_SOLVER_URL</code>) and runs a REAL popular-page fetch through the full chain (okhttp 403 → JCEF skipped for the hard host → FlareSolverr interceptor → solver in-page XHR). Green = MangaFire actually loads data. The first run is slow (a real cold solve).</div>
+          <div className="set-actions" style={{ marginTop: 8 }}>
+            <button className="btn" disabled={solverBusy} onClick={runSolverTest}>{solverBusy ? 'Testing…' : 'Run test'}</button>
+          </div>
+          {solverTest && (
+            <div className="set-hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
+              <div><b style={{ color: solverTest.ok ? 'var(--good, #5fce8f)' : 'var(--bad, #e86e8f)' }}>{solverTest.ok ? '✓ WORKING' : '✕ FAILED'}</b>{solverTest.sourceName ? ` — ${solverTest.sourceName}` : ''}{solverTest.host ? ` (${solverTest.host})` : ''}</div>
+              <div>Results: <b>{solverTest.results}</b> · took <b>{(solverTest.ms / 1000).toFixed(1)}s</b></div>
+              <div>Solver: {solverTest.solverConfigured ? (solverTest.solverHealthy ? `✓ healthy${solverTest.solverOrigin ? ` (on ${solverTest.solverOrigin})` : ''}` : '✕ unreachable') : 'not configured (MU_SOLVER_URL unset)'}</div>
+              <div>FlareSolverr: {solverTest.flareReachable ? '✓ reachable' : '✕ unreachable'}</div>
+              {solverTest.error && <div style={{ color: 'var(--bad, #e86e8f)' }}>Error: {solverTest.error}</div>}
+            </div>
+          )}
         </div>
         <div className="set-card">
           <div className="set-row-label">JCEF browser pool</div>
