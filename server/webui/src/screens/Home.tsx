@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, coverUrl, dlState, pageSize, screenCache, LibraryEntry, HistoryItem } from '../api'
+import { api, coverUrl, dlState, pageSize, LibraryEntry, HistoryItem } from '../api'
 import { Carousel, GridSection } from '../components/Section'
 import { CoverCard } from '../components/CoverCard'
 import { SkeletonGrid } from '../components/Skeleton'
@@ -7,19 +7,16 @@ import { ErrorPanel } from '../components/ErrorPanel'
 import { Footer } from '../components/Footer'
 
 export function Home() {
-  // Seed from the in-memory cache so returning to Home paints instantly instead of a skeleton flash
-  // (which, over a network link, collapses the layout and reflows the fixed tab bar). Refreshed below.
-  const [library, setLibrary] = useState<LibraryEntry[] | null>(screenCache.library)
-  const [history, setHistory] = useState<HistoryItem[]>(screenCache.history ?? [])
+  const [library, setLibrary] = useState<LibraryEntry[] | null>(null)
+  const [history, setHistory] = useState<HistoryItem[]>([])
   const [failed, setFailed] = useState(false)
   const [devRemove] = useState(() => localStorage.getItem('dev.continueRemove') === '1')
 
   function load() {
-    setFailed(false)
-    if (!screenCache.library) setLibrary(null) // only skeleton on the very first ever load, not on revisit
-    api.library().then((l) => { screenCache.library = l; setLibrary(l) }).catch(() => setFailed(true))
+    setFailed(false); setLibrary(null)
+    api.library().then(setLibrary).catch(() => setFailed(true))
     // Only the recent slice — the carousel doesn't need the whole (now server-deduped) history.
-    api.history(0, pageSize()).then((r) => { screenCache.history = r.items; setHistory(r.items) }).catch(() => {})
+    api.history(0, pageSize()).then((r) => setHistory(r.items)).catch(() => {})
   }
   useEffect(load, [])
 

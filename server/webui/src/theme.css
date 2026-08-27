@@ -54,41 +54,6 @@
   --manga: #c4a7e7; --manhwa: #9ccfd8; --manhua: #f6c177;
 }
 
-/* ---- Debug Grid theme: a layout diagnostic ----------------------------------------------------
-   Outlines the shell elements (each a distinct colour, labelled) and overlays a 10px (cyan) / 50px
-   (magenta) pixel grid so you can measure exactly where the tab bar sits vs the physical bottom. */
-:root[data-theme="debug"] {
-  --bg: #101014; --bg-2: #16161c; --card: #1c1c24; --card-2: #24242e; --border: #33333f;
-  --text: #eaeaf0; --muted: #9a9aa6; --muted-2: #6a6a76;
-  --accent: #00e5ff; --accent-press: #00b8cc;
-}
-/* Full-viewport pixel grid, on top of everything. */
-:root[data-theme="debug"] body::before {
-  content: ''; position: fixed; inset: 0; z-index: 99998; pointer-events: none;
-  background-image:
-    repeating-linear-gradient(0deg,  transparent 0 9px,  rgba(0,229,255,.18) 9px 10px),
-    repeating-linear-gradient(90deg, transparent 0 9px,  rgba(0,229,255,.18) 9px 10px),
-    repeating-linear-gradient(0deg,  transparent 0 49px, rgba(255,0,200,.45) 49px 50px),
-    repeating-linear-gradient(90deg, transparent 0 49px, rgba(255,0,200,.45) 49px 50px);
-}
-/* Outline + name each shell element. Labels are position:absolute so they don't shift layout. */
-:root[data-theme="debug"] .app     { outline: 2px solid #ff3b3b; outline-offset: -2px; }
-:root[data-theme="debug"] .topbar  { outline: 2px solid #35d07f; outline-offset: -2px; }
-:root[data-theme="debug"] main     { outline: 2px solid #ffd166; outline-offset: -2px; }
-:root[data-theme="debug"] .tabbar  { outline: 2px solid #4d9dff; outline-offset: -2px; }
-:root[data-theme="debug"] .app, :root[data-theme="debug"] .topbar, :root[data-theme="debug"] .tabbar, :root[data-theme="debug"] main { position: relative; }
-:root[data-theme="debug"] .app::after,
-:root[data-theme="debug"] .topbar::after,
-:root[data-theme="debug"] main::after,
-:root[data-theme="debug"] .tabbar::after {
-  position: absolute; left: 2px; z-index: 99999; pointer-events: none;
-  font: 700 10px/1.2 ui-monospace, monospace; padding: 1px 4px; border-radius: 0 0 4px 0; color: #000;
-}
-:root[data-theme="debug"] .app::after    { content: '.app';    top: 2px; background: #ff3b3b; }
-:root[data-theme="debug"] .topbar::after { content: '.topbar'; bottom: 2px; top: auto; background: #35d07f; }
-:root[data-theme="debug"] main::after    { content: 'main';    top: 2px; background: #ffd166; }
-:root[data-theme="debug"] .tabbar::after { content: '.tabbar (bottom:0) — gap below = bar not at physical bottom'; top: -14px; background: #4d9dff; white-space: nowrap; }
-
 /* Theme picker swatches (Settings → Appearance) */
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
 .theme-swatch { display: flex; flex-direction: column; gap: 7px; padding: 9px; border-radius: 12px;
@@ -104,9 +69,6 @@
 /* Paint the theme bg on html + #root too (not just body): the tab bar is translucent, so during a
    reload / route-swap when body/scroll momentarily collapses, a bare html element shows its default
    (black on iOS) as a bar behind the tab bar / in the bottom safe area. */
-/* min-height:100dvh, not height:100%: in an iOS standalone (home-screen) PWA, height:100% resolves to
-   the safe-area-EXCLUDED viewport, so a fixed `bottom:0` bar sits ABOVE the home indicator and leaves a
-   black strip below it. The dynamic viewport unit spans to the physical bottom (100% kept as fallback). */
 html, body, #root { height: 100%; background: var(--bg); }
 body {
   margin: 0;
@@ -120,29 +82,19 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 img { display: block; }
 
 /* ---- App shell ---------------------------------------------------------- */
-/* Flex app-shell: .app is a height:100% column (the debug grid proved 100% reaches the PHYSICAL bottom,
-   whereas a fixed bottom:0 or 100dvh stop at the safe-area boundary). The bars are laid-out flex rows
-   (NOT position:fixed), so they sit at the true top/bottom edges regardless of page length; <main> is
-   the only scroller. */
 .app {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-main {
-  flex: 1 1 auto;
-  min-height: 0; /* allow overflow-y in a flex column */
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  min-height: 100%;
+  padding-top: calc(var(--topbar-h) + var(--safe-t));
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
 }
 
 .topbar {
-  flex: none; z-index: 30; /* laid-out flex row (not position:fixed) */
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
   height: calc(var(--topbar-h) + var(--safe-t));
   padding-top: var(--safe-t);
   display: flex; align-items: center; gap: 6px;
   padding-left: 16px; padding-right: 8px;
+  /* Opaque --bg-2 surface, no backdrop-filter — same iOS standalone fix + theme-aware as .tabbar. */
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
 }
@@ -214,10 +166,14 @@ main {
 
 /* ---- Bottom tab bar ----------------------------------------------------- */
 .tabbar {
-  flex: none; z-index: 30; /* laid-out flex row at the bottom of the height:100% shell → reaches physical bottom */
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   height: calc(var(--tabbar-h) + var(--safe-b));
-  padding-bottom: var(--safe-b); /* keep icons above the home indicator */
+  padding-bottom: var(--safe-b);
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  /* Opaque, NO backdrop-filter: iOS Safari flashes the blur layer black during page transitions in
+     standalone mode. Use --bg-2 (a slightly elevated surface) NOT --bg, so the bar reads as a distinct
+     surface instead of merging into the page — otherwise the safe-area padding under the icons looks
+     like the bar "floated up" off the bottom exposing background. Theme-aware on every theme. */
   background: var(--bg-2);
   border-top: 1px solid var(--border);
 }
@@ -710,7 +666,7 @@ main {
 
 /* ---- Search / Browse ---------------------------------------------------- */
 /* Pin the search bar + source selector together so they stay reachable while scrolling results. */
-.search-head { position: sticky; top: 0; z-index: 6; background: var(--bg); box-shadow: 0 6px 8px -6px rgba(0,0,0,.5); }
+.search-head { position: sticky; top: calc(var(--topbar-h) + var(--safe-t)); z-index: 6; background: var(--bg); box-shadow: 0 6px 8px -6px rgba(0,0,0,.5); }
 .search-bar-wrap { padding: 10px 16px 4px; }
 .search-bar { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 0 12px; }
 .search-bar .sb-ic { width: 20px; height: 20px; color: var(--muted); flex: 0 0 auto; }

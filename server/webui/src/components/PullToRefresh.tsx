@@ -16,8 +16,7 @@ export function PullToRefresh() {
       // iOS Safari home-screen apps
       (navigator as unknown as { standalone?: boolean }).standalone === true
     if (!standalone) return
-    // <main> is the app's scroll container now (flex shell), not the document.
-    const scroller = document.querySelector('main') || document.scrollingElement || document.documentElement
+    const scroller = document.scrollingElement || document.documentElement
 
     const onStart = (e: TouchEvent) => {
       if (e.touches.length === 1 && scroller.scrollTop <= 0) {

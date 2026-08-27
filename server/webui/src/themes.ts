@@ -2,7 +2,7 @@
 // `data-theme` attribute on <html>. 'default' = the built-in Midnight violet (no attribute). The
 // preview colours below drive the swatches in Settings — keep them in sync with the CSS blocks.
 
-export type ThemeId = 'default' | 'amoled' | 'monokai' | 'dracula' | 'nord' | 'rosepine' | 'debug'
+export type ThemeId = 'default' | 'amoled' | 'monokai' | 'dracula' | 'nord' | 'rosepine'
 
 export interface ThemeMeta { id: ThemeId; name: string; bg: string; card: string; accent: string }
 
@@ -13,8 +13,6 @@ export const THEMES: ThemeMeta[] = [
   { id: 'dracula', name: 'Dracula', bg: '#282a36', card: '#343746', accent: '#bd93f9' },
   { id: 'nord', name: 'Nord', bg: '#2e3440', card: '#3b4252', accent: '#88c0d0' },
   { id: 'rosepine', name: 'Rosé Pine', bg: '#191724', card: '#1f1d2e', accent: '#ebbcba' },
-  // Diagnostic: outlines the shell elements (labelled) + a 10px/50px pixel grid to measure layout.
-  { id: 'debug', name: 'Debug Grid', bg: '#101014', card: '#1c1c24', accent: '#00e5ff' },
 ]
 
 export function currentTheme(): string {

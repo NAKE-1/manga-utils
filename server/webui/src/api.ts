@@ -99,12 +99,6 @@ export interface HistoryItem {
   readAt: number
 }
 
-/** Last-fetched library/history, kept in memory across tab switches. Home/Library seed their initial
- *  render from this so revisiting a tab paints instantly instead of refetching to a spinner/skeleton —
- *  that reflow is invisible on localhost but, over a network link, visibly collapses the page and shifts
- *  the fixed tab bar. Screens still refetch on mount to refresh it in the background. */
-export const screenCache: { library: LibraryEntry[] | null; history: HistoryItem[] | null } = { library: null, history: null }
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Fetch JSON with a timeout and a couple of retries (transient network / 5xx) for resilience.
