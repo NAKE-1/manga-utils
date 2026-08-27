@@ -2336,6 +2336,19 @@ fun Application.module() {
         // Solver self-test: pings the sidecar's health + runs a REAL popular fetch through the full
         // chain (→ solver) and reports whether MangaFire data actually came back.
         get("/api/dev/solver/test") { call.respond(SolverTest.run(call.queryParam("id")?.toLongOrNull())) }
+        // Dev: fetch a raw MangaFire URL through the full solver path (okhttp → FS clearance → curl_cffi).
+        // Used to inspect e.g. /@waf/challenge so we can wire the shapes-captcha solve into curl_cffi.
+        get("/api/dev/solver/raw") {
+            val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("?url= required"))
+            val src = SolverTest.hardHostSource() ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("no MangaFire source installed"))
+            val body = withContext(Dispatchers.IO) {
+                runCatching {
+                    val req = okhttp3.Request.Builder().url(url).headers(src.headers).build()
+                    src.client.newCall(req).execute().use { "HTTP ${it.code}\n" + (it.body?.string() ?: "") }
+                }.getOrElse { "ERROR: ${it.message}" }
+            }
+            call.respondText(body)
+        }
         // Backfill .series.json into download folders that lack one (library → queue → history). Preview
         // writes nothing; POST does it. Safe: only ever writes a missing sidecar, never overwrites/renames/deletes.
         get("/api/dev/series-backfill/preview") { call.respond(withContext(Dispatchers.IO) { SeriesBackfill.run(dryRun = true) }) }

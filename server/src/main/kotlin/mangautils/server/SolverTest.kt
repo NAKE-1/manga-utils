@@ -54,7 +54,7 @@ object SolverTest {
     }
 
     /** First installed source whose host routes through the solver (i.e. MangaFire). */
-    private fun hardHostSource(): HttpSource? =
+    fun hardHostSource(): HttpSource? =
         SourceManager.listInstalledSources().asSequence()
             .mapNotNull { SourceManager.loadSource(it.id) as? HttpSource }
             .firstOrNull { src ->
