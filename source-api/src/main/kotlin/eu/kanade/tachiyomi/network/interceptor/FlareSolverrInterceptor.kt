@@ -336,6 +336,14 @@ class FlareSolverrInterceptor(
      */
     private fun fetchThrough(request: Request): Response? {
         val host = request.url.host
+        // Preferred: the anti-detect solver runs the request as a same-origin IN-PAGE fetch — the only thing
+        // that gets MangaFire's XHR-only /api data (a bare FS navigation returns an empty stub). Falls
+        // through to the FlareSolverr navigation below when the solver is off or unreachable.
+        if (SolverConfig.enabled) {
+            val viaSolver = runCatching { solverFetch(request) }.getOrNull()
+            if (viaSolver != null) return viaSolver
+            log.info { "solver fetch unavailable for $host — falling back to FlareSolverr navigation" }
+        }
         if (shouldWarm(host)) warmFsSession(host, request.url.scheme) // reuse the same FS session for the fetch
         val sol = solve(request, returnOnlyCookies = false) ?: return null
         if (sol.response.isNullOrBlank()) return null
@@ -346,6 +354,39 @@ class FlareSolverrInterceptor(
         // won't serve a bare navigation). Log the raw so we can see exactly what came back.
         if (len < 2000) log.info { "FS fetch-through SMALL body for $host — raw: ${sol.response!!.take(500).replace("\n", " ")}" }
         return flareResponse(request, sol)
+    }
+
+    /**
+     * Run [request] through the anti-detect solver sidecar's in-page fetch (same-origin XHR inside the
+     * cleared page). Returns null on any failure — unreachable, non-2xx, or empty body — so the caller
+     * falls back to FlareSolverr. The solver's real browser handles Cloudflare AND supplies the same-origin
+     * context MangaFire's API requires; we just hand it the URL (vrf already in it) + the safe headers.
+     */
+    private fun solverFetch(request: Request): Response? {
+        val base = SolverConfig.url?.trimEnd('/') ?: return null
+        val hdrs = request.headers.names()
+            .filter { it.lowercase() !in SOLVER_SKIP_HEADERS } // the browser sets UA/Referer/Cookie/encoding itself
+            .associateWith { request.headers[it] ?: "" }
+        val payload = json.encodeToString(SolverReq.serializer(), SolverReq(request.url.toString(), hdrs))
+        val client = OkHttpClient.Builder()
+            .callTimeout(90, TimeUnit.SECONDS).readTimeout(90, TimeUnit.SECONDS).connectTimeout(10, TimeUnit.SECONDS).build()
+        val req = Request.Builder().url("$base/fetch").post(payload.toRequestBody(JSON_MEDIA)).build()
+        val text = runCatching { client.newCall(req).execute().use { it.body?.string().orEmpty() } }
+            .getOrElse { log.info { "solver unreachable at $base: ${it.message}" }; return null }
+        if (text.isBlank()) return null
+        val out = runCatching { json.decodeFromString(SolverResp.serializer(), text) }.getOrNull() ?: return null
+        if (out.status !in 200..399 || out.body.isNullOrEmpty()) {
+            log.info { "solver /fetch ${request.url.host}: status ${out.status}, ${out.body?.length ?: 0}B${out.error?.let { " err=$it" } ?: ""}" }
+            return null
+        }
+        val ct = if (request.url.encodedPath.contains("/api", true)) "application/json; charset=utf-8" else "text/html; charset=utf-8"
+        log.info { "solver fetch-through ${request.url.host}${request.url.encodedPath}: ${out.body.length}B (status ${out.status})" }
+        return Response.Builder()
+            .request(request).protocol(Protocol.HTTP_1_1)
+            .code(out.status).message("OK (solver)")
+            .header("Content-Type", ct)
+            .body(out.body.toResponseBody(ct.toMediaType()))
+            .build()
     }
 
     /** Warm FlareSolverr's persistent session by loading the site root through it (no okhttp retry — the
@@ -400,6 +441,8 @@ class FlareSolverrInterceptor(
         fun resetWarmSessions() = warmedAt.clear()
 
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+        // Headers the sidecar's browser sets itself — don't forward ours (they'd invalidate the fetch/clearance).
+        private val SOLVER_SKIP_HEADERS = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")
         private val ERROR_CODES = listOf(403, 503)
         private const val WARM_COOLDOWN_MS = 2 * 60_000L // min gap between session-warm attempts per host
         private val SERVER_CHECK = listOf("cloudflare-nginx", "cloudflare")
@@ -408,6 +451,13 @@ class FlareSolverrInterceptor(
         private val IMAGE_EXTS = listOf(".webp", ".jpg", ".jpeg", ".png", ".gif", ".avif", ".bmp")
     }
 }
+
+// ---- solver sidecar /fetch protocol (Plan #3) --------------------------------------------------
+@Serializable
+private data class SolverReq(val url: String, val headers: Map<String, String>)
+
+@Serializable
+private data class SolverResp(val status: Int = 0, val body: String? = null, val error: String? = null)
 
 // ---- FlareSolverr /v1 protocol ----------------------------------------------------------------
 
