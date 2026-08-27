@@ -111,7 +111,11 @@ export function DownloadWatcher() {
         const r = await api.solverEvents(solverCursor ?? undefined)
         if (solverCursor == null) { solverCursor = r.lastId; return } // first poll: sync only, no backlog
         for (const e of r.events) {
-          if (e.phase === 'solved') toast(`MF solver · ${e.host} captcha solved`, 'success', 2800, 'solver:' + e.host, { bg: true })
+          const key = 'solver:' + e.host // one toast per host, updated in place (a burst stays a single toast)
+          if (e.phase === 'solving') toast(`MF solver · ${e.host} working…`, 'info', 5000, key, { bg: true })
+          else if (e.phase === 'solved') toast(`MF solver · ${e.host} captcha solved`, 'success', 2800, key, { bg: true })
+          else if (e.phase === 'failed') toast(`MF solver · ${e.host} failed`, 'error', 4000, key, { bg: true })
+          // 'done' (warm hit) is intentionally not toasted — the "working…" toast just expires on its own.
         }
         solverCursor = r.lastId
       } catch { /* ignore */ }
