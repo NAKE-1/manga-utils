@@ -170,14 +170,7 @@ object CefManager {
                         cefSettings.apply {
                             windowless_rendering_enabled = true
                             cache_path = cacheDir.absolutePathString()
-                            // Route Chromium's internal chatter to a file and keep only FATAL on the console.
-                            // Otherwise WebRTC STUN failures (stun.cloudflare.com "errorcode: -105" — the
-                            // container's IPv6 is broken but preferred), D-Bus "no bus" errors, GCM push
-                            // spam and Skia mailbox warnings flood `docker logs` and bury our own app logs.
-                            // None of it is actionable (WebRTC/STUN isn't used for anything here); the full
-                            // detail is still in chrome_debug.log under the cache dir if ever needed.
-                            log_file = (cacheDir / "chrome_debug.log").absolutePathString()
-                            log_severity = LogSeverity.LOGSEVERITY_FATAL
+                            log_severity = LogSeverity.LOGSEVERITY_DEFAULT
                         }
                     }
 
