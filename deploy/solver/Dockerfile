@@ -1,18 +1,21 @@
-# Anti-detect solver sidecar (Plan #3): nodriver-driven headed Chromium on Xvfb, with an in-page /fetch
-# that pulls XHR-only API data (MangaFire) the way JCEF's same-origin fetch did on Windows.
+# Anti-detect solver sidecar (Plan #3): SeleniumBase UC-mode + real Google Chrome, headed on Xvfb, with
+# an in-page /fetch that pulls XHR-only API data (MangaFire) the way JCEF's same-origin fetch did.
 FROM python:3.12-slim
 
-# chromium + the X/GL libs a headed browser needs, + tini for clean signal handling.
+# Real Google Chrome (UC mode is tuned for Chrome, not chromium) + Xvfb + PyAutoGUI's click deps
+# (scrot for screenshots, python3-tk/xauth for the X interaction) + tini for clean signals.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        chromium xvfb tini ca-certificates fonts-liberation \
+        wget gnupg ca-certificates fonts-liberation tini \
+        xvfb xauth scrot python3-tk python3-dev \
         libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
         libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
         libpangocairo-1.0-0 libgtk-3-0 libxshmfence1 \
+    && wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y --no-install-recommends /tmp/chrome.deb \
+    && rm -f /tmp/chrome.deb \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CHROME_BIN=/usr/bin/chromium \
-    DISPLAY=:99 \
-    PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 COPY requirements.txt .

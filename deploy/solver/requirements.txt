@@ -1,3 +1,4 @@
-nodriver>=0.38
-fastapi>=0.110
-uvicorn[standard]>=0.29
+seleniumbase>=4.32
+flask>=3.0
+pyautogui>=0.9.54
+pillow>=10.0

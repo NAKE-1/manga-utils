@@ -1,162 +1,108 @@
 """
-Anti-detect solver sidecar for manga-utils (Plan #3).
+Anti-detect solver sidecar for manga-utils (Plan #3) — SeleniumBase UC engine.
 
-Why this exists: MangaFire (and sites like it) put TWO obstacles in the way —
-  1. Cloudflare Turnstile (a bot wall), and
-  2. an /api that only returns data to a same-origin XHR from within the page.
-JCEF-in-a-container fails #1 (its offscreen fingerprint is flagged); FlareSolverr
-clears #1 but does a top-level *navigation*, which fails #2 (the API hands a bare
-navigation an empty stub). This sidecar does BOTH in one real browser:
-  - nodriver (undetected-chromedriver's async successor) drives a headed Chromium
-    on Xvfb, whose fingerprint Cloudflare accepts, and
-  - /fetch runs `fetch(url, {credentials:'include'})` INSIDE the cleared page via
-    CDP — a genuine same-origin XHR, exactly what JCEF did on Windows — returning
-    clean JSON.
+Two obstacles, both handled in ONE real browser:
+  1. Cloudflare Turnstile — SeleniumBase UC mode (real Google Chrome, headed on Xvfb) passes it,
+     actively clicking the checkbox via uc_gui_click_captcha when the managed challenge lingers. (Plain
+     nodriver + Debian chromium got stuck on "Just a moment..." forever — this is the fix.)
+  2. MangaFire's /api is XHR-only — /fetch runs fetch(url,{credentials:'include'}) INSIDE the cleared
+     page via execute_async_script, a genuine same-origin XHR (what JCEF did on Windows), returning clean
+     JSON that a bare navigation can't get.
 
 Endpoints:
-  GET  /health          -> {ok, origin}
-  POST /fetch {url,headers} -> {status, body, error?}  (in-page same-origin fetch)
+  GET  /health              -> {ok, origin}
+  POST /fetch {url,headers} -> {status, body, error?}
 
-One browser, one tab, kept warm. Serialized with a lock (one Chromium, and a
-navigation changes shared page state). Good enough for a personal server; scale
-later with a tab pool if needed.
+One Chrome, one tab, kept warm. Serialized with a lock (Selenium isn't thread-safe; a nav mutates shared
+page state). Good enough for a personal server.
 """
-import asyncio
 import json
-import os
+import threading
+import time
 from urllib.parse import urlparse
 
-import nodriver as uc
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from flask import Flask, jsonify, request
+from seleniumbase import Driver
 
-CHROME = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
-CLEAR_TIMEOUT_S = int(os.environ.get("SOLVER_CLEAR_TIMEOUT", "35"))
+app = Flask(__name__)
+_lock = threading.Lock()
+_driver = None
+_origin = None  # origin the single tab is parked on (None = fresh)
 
-app = FastAPI()
-_browser = None
-_lock = asyncio.Lock()
-_origin = None  # the origin the single tab is currently parked on (None = fresh)
-
-
-async def _get_browser():
-    global _browser
-    if _browser is None:
-        _browser = await uc.start(
-            headless=False,  # headed on Xvfb — Cloudflare reads a real window + GL
-            browser_executable_path=CHROME,
-            browser_args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--window-size=1920,1080",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-    return _browser
+# JS run IN the page: same-origin fetch, resolved via Selenium's async callback (arguments[-1]).
+_FETCH_JS = (
+    "var cb = arguments[arguments.length - 1];"
+    "fetch(arguments[0], {credentials: 'include', headers: arguments[1]})"
+    "  .then(function (r) { return r.text().then(function (t) {"
+    "     cb(JSON.stringify({status: r.status, body: t})); }); })"
+    "  .catch(function (e) { cb(JSON.stringify({status: 0, error: String(e)})); });"
+)
 
 
-async def _has_clearance(b) -> bool:
+def _get_driver():
+    global _driver
+    if _driver is None:
+        print("solver: launching Chrome (SeleniumBase UC, xvfb)…", flush=True)
+        # xvfb=True → SeleniumBase runs its own correctly-sized virtual display (so uc_gui_click_captcha's
+        # PyAutoGUI clicks land on-screen). No cdp_mode — it would break execute_async_script + the click.
+        _driver = Driver(uc=True, headless=False, xvfb=True)
+        print("solver: Chrome ready", flush=True)
+    return _driver
+
+
+def _cleared(d) -> bool:
     try:
-        cookies = await b.cookies.get_all()
+        return "just a moment" not in (d.title or "").lower()
     except Exception:
         return False
-    return any(getattr(c, "name", "") == "cf_clearance" for c in cookies)
-
-
-async def _page_state(tab):
-    """(title, url) of the current page — for logging what wall we're on."""
-    try:
-        raw = await tab.evaluate(
-            "JSON.stringify({t: document.title || '', u: location.href || ''})", await_promise=False
-        )
-        d = json.loads(raw) if isinstance(raw, str) else {}
-        return d.get("t", ""), d.get("u", "")
-    except Exception:
-        return "", ""
-
-
-async def _try_click_turnstile(tab):
-    """Best-effort: click the Cloudflare Turnstile widget if it's on the page. Turnstile lives in a
-    cross-origin iframe, so we click the iframe element's center (where the checkbox sits)."""
-    try:
-        el = await tab.select("iframe[src*='challenges.cloudflare.com']", timeout=4)
-        if el:
-            await el.click()
-            print("solver: clicked Turnstile iframe", flush=True)
-            await asyncio.sleep(3)
-    except Exception as ex:  # noqa: BLE001
-        print(f"solver: no Turnstile click ({ex})", flush=True)
-
-
-async def _ensure_on_origin(b, origin: str):
-    """Park the tab on `origin` (navigating clears Cloudflare + sets the site session cookie), so a
-    subsequent in-page fetch is same-origin. Reuses the tab if already parked there."""
-    global _origin
-    if _origin == origin:
-        return b.main_tab
-    print(f"solver: navigating to {origin}/", flush=True)
-    tab = await b.get(origin + "/")
-    clicked = False
-    for i in range(CLEAR_TIMEOUT_S):
-        if await _has_clearance(b):
-            print(f"solver: cf_clearance obtained after {i}s", flush=True)
-            break
-        title, url = await _page_state(tab)
-        if i in (2, 8, 16, 28):  # periodic state so we can see what wall we're stuck on
-            print(f"solver: waiting… t={i}s title={title!r} url={url!r}", flush=True)
-        if "/@waf/" in url:
-            print("solver: hit MangaFire /@waf shapes captcha — nodriver can't solve this", flush=True)
-        # Turnstile is usually a passive managed challenge, but try a click once if it lingers.
-        if not clicked and i == 4:
-            await _try_click_turnstile(tab)
-            clicked = True
-    else:
-        title, url = await _page_state(tab)
-        print(f"solver: NEVER cleared in {CLEAR_TIMEOUT_S}s — title={title!r} url={url!r}", flush=True)
-    await asyncio.sleep(1)
-    _origin = origin
-    return tab
 
 
 @app.get("/health")
-async def health():
-    return {"ok": _browser is not None, "origin": _origin}
+def health():
+    return jsonify(ok=_driver is not None, origin=_origin)
 
 
 @app.post("/fetch")
-async def fetch(req: Request):
+def fetch():
     global _origin
-    data = await req.json()
+    data = request.get_json(force=True, silent=True) or {}
     url = data.get("url")
     headers = data.get("headers") or {}
     if not url:
-        return JSONResponse({"status": 0, "error": "no url"}, status_code=400)
-    parsed = urlparse(url)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
+        return jsonify(status=0, error="no url"), 400
+    p = urlparse(url)
+    origin = f"{p.scheme}://{p.netloc}"
 
-    async with _lock:  # one Chromium; a navigation mutates shared page state
+    with _lock:  # one Chrome; a navigation mutates shared page state
         try:
-            b = await _get_browser()
-            tab = await _ensure_on_origin(b, origin)
-            # Same-origin fetch from inside the cleared page. credentials:'include' sends cf_clearance +
-            # the site session cookie; being ON the page supplies the Referer + origin the API checks.
-            js = (
-                "(async () => { try {"
-                f"  const r = await fetch({json.dumps(url)}, {{credentials:'include', headers:{json.dumps(headers)}}});"
-                "   const t = await r.text();"
-                "   return JSON.stringify({status: r.status, body: t});"
-                " } catch (e) { return JSON.stringify({status: 0, error: String(e)}); }"
-                " })()"
-            )
-            raw = await tab.evaluate(js, await_promise=True)
+            d = _get_driver()
+            if _origin != origin or not _cleared(d):
+                print(f"solver: opening {origin}/ …", flush=True)
+                d.uc_open_with_reconnect(origin + "/", reconnect_time=6)
+                for attempt in range(4):
+                    if _cleared(d):
+                        break
+                    print(f"solver: challenge up (title={d.title!r}) — click captcha (try {attempt + 1})", flush=True)
+                    try:
+                        d.uc_gui_click_captcha()
+                    except Exception as e:  # noqa: BLE001
+                        print(f"solver: uc_gui_click_captcha error: {e}", flush=True)
+                    time.sleep(4)
+                print(f"solver: cleared={_cleared(d)} title={d.title!r}", flush=True)
+                _origin = origin
+
+            raw = d.execute_async_script(_FETCH_JS, url, headers)
             out = json.loads(raw) if isinstance(raw, str) else (raw or {"status": 0, "error": "no result"})
-            st = out.get("status")
-            body = out.get("body") or ""
-            if st != 200:  # show what came back so we can tell a CF wall from a shapes captcha from empty
-                print(f"solver: /fetch {url} -> status={st} {len(body)}B snippet={body[:300]!r}", flush=True)
-            else:
-                print(f"solver: /fetch {url} -> 200 {len(body)}B", flush=True)
-            return JSONResponse(out)
+            st, body = out.get("status"), (out.get("body") or "")
+            tail = "" if st == 200 else f" snippet={body[:200]!r}"
+            print(f"solver: /fetch {url} -> {st} {len(body)}B{tail}", flush=True)
+            return jsonify(out)
         except Exception as e:  # noqa: BLE001 — report anything so the caller can fall back
-            _origin = None  # force a fresh navigation next time (tab may be wedged)
-            return JSONResponse({"status": 0, "error": str(e)}, status_code=500)
+            _origin = None  # tab may be wedged → force a fresh nav next time
+            print(f"solver: error: {e}", flush=True)
+            return jsonify(status=0, error=str(e)), 500
+
+
+if __name__ == "__main__":
+    # Single worker; the lock serializes anyway. No reloader (it would double-launch Chrome).
+    app.run(host="0.0.0.0", port=8000, threaded=False, use_reloader=False)
