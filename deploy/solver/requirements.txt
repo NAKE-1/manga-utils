@@ -1,4 +1,2 @@
-seleniumbase>=4.32
+curl_cffi>=0.7
 flask>=3.0
-pyautogui>=0.9.54
-pillow>=10.0

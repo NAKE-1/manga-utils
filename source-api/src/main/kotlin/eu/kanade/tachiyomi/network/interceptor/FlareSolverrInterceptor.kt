@@ -340,8 +340,13 @@ class FlareSolverrInterceptor(
         // that gets MangaFire's XHR-only /api data (a bare FS navigation returns an empty stub). Falls
         // through to the FlareSolverr navigation below when the solver is off or unreachable.
         if (SolverConfig.enabled) {
-            val viaSolver = runCatching { solverFetch(request) }.getOrNull()
-            if (viaSolver != null) return viaSolver
+            // Browsers can't pass Cloudflare on this Linux box, so FlareSolverr earns the cf_clearance and the
+            // solver (curl_cffi, real Chrome TLS fingerprint) replays the request with it + XHR headers.
+            val cf = clearanceViaFs(host, request.url.scheme)
+            if (cf != null) {
+                val viaSolver = runCatching { solverFetch(request, cf, solvedUa[host]) }.getOrNull()
+                if (viaSolver != null) return viaSolver
+            }
             log.info { "solver fetch unavailable for $host — falling back to FlareSolverr navigation" }
         }
         if (shouldWarm(host)) warmFsSession(host, request.url.scheme) // reuse the same FS session for the fetch
@@ -362,12 +367,25 @@ class FlareSolverrInterceptor(
      * falls back to FlareSolverr. The solver's real browser handles Cloudflare AND supplies the same-origin
      * context MangaFire's API requires; we just hand it the URL (vrf already in it) + the safe headers.
      */
-    private fun solverFetch(request: Request): Response? {
+    /** FlareSolverr earns a cf_clearance for [host] (browsers can't on this Linux box) — cached briefly so
+     *  we don't re-solve per request. Returns the cookie value, or null if FS couldn't clear. */
+    private fun clearanceViaFs(host: String, scheme: String): String? {
+        cfCache[host]?.let { (v, t) -> if (System.currentTimeMillis() - t < CF_TTL_MS) return v }
+        val sol = runCatching { solve(Request.Builder().url("$scheme://$host/").build()) }.getOrNull() ?: return null
+        sol.userAgent?.takeIf { it.isNotBlank() }?.let { solvedUa[host] = it }
+        val cf = sol.cookies.firstOrNull { it.name == "cf_clearance" }?.value ?: return null
+        cfCache[host] = cf to System.currentTimeMillis()
+        FlareSolverrConfig.recordSolveDone(host, 1)
+        log.info { "clearance for $host via FlareSolverr (cf_clearance cached ${CF_TTL_MS / 60000}m)" }
+        return cf
+    }
+
+    private fun solverFetch(request: Request, cfClearance: String?, userAgent: String?): Response? {
         val base = SolverConfig.url?.trimEnd('/') ?: return null
         val hdrs = request.headers.names()
-            .filter { it.lowercase() !in SOLVER_SKIP_HEADERS } // the browser sets UA/Referer/Cookie/encoding itself
+            .filter { it.lowercase() !in SOLVER_SKIP_HEADERS } // the solver sets UA/Referer/Cookie/XHR headers itself
             .associateWith { request.headers[it] ?: "" }
-        val payload = json.encodeToString(SolverReq.serializer(), SolverReq(request.url.toString(), hdrs))
+        val payload = json.encodeToString(SolverReq.serializer(), SolverReq(request.url.toString(), hdrs, cfClearance, userAgent))
         val client = OkHttpClient.Builder()
             .callTimeout(90, TimeUnit.SECONDS).readTimeout(90, TimeUnit.SECONDS).connectTimeout(10, TimeUnit.SECONDS).build()
         val req = Request.Builder().url("$base/fetch").post(payload.toRequestBody(JSON_MEDIA)).build()
@@ -437,12 +455,15 @@ class FlareSolverrInterceptor(
         // (a warm session is bound to the old exit IP).
         private val warmedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-        /** Clear FlareSolverr warm-session bookkeeping — part of the egress reset. */
-        fun resetWarmSessions() = warmedAt.clear()
+        /** Clear FlareSolverr warm-session bookkeeping + cached clearances — part of the egress reset. */
+        fun resetWarmSessions() { warmedAt.clear(); cfCache.clear() }
 
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
-        // Headers the sidecar's browser sets itself — don't forward ours (they'd invalidate the fetch/clearance).
+        // Headers the solver sets itself — don't forward ours (they'd invalidate the fetch/clearance).
         private val SOLVER_SKIP_HEADERS = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")
+        // Cache FlareSolverr's cf_clearance per host so we don't re-solve (~11s) on every request.
+        private val cfCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+        private const val CF_TTL_MS = 10 * 60_000L
         private val ERROR_CODES = listOf(403, 503)
         private const val WARM_COOLDOWN_MS = 2 * 60_000L // min gap between session-warm attempts per host
         private val SERVER_CHECK = listOf("cloudflare-nginx", "cloudflare")
@@ -454,7 +475,12 @@ class FlareSolverrInterceptor(
 
 // ---- solver sidecar /fetch protocol (Plan #3) --------------------------------------------------
 @Serializable
-private data class SolverReq(val url: String, val headers: Map<String, String>)
+private data class SolverReq(
+    val url: String,
+    val headers: Map<String, String>,
+    @SerialName("cf_clearance") val cfClearance: String? = null,
+    @SerialName("user_agent") val userAgent: String? = null,
+)
 
 @Serializable
 private data class SolverResp(val status: Int = 0, val body: String? = null, val error: String? = null)
