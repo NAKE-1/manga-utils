@@ -33,6 +33,13 @@ services:
       # - /mnt/manga-downloads:/data/downloads   # <- uncomment on Proxmox; point at the extra drive's mount
       # - /mnt/usb:/dyno                          # <- uncomment to enable USB backup; host mount of the drive
     shm_size: "2gb"                            # Chromium (JCEF) needs a roomy /dev/shm; 5-browser pool = more tabs sharing it
+    sysctls:
+      # The container gets a broken/link-local IPv6 (no real route) but still PREFERS it, so JCEF's WebRTC
+      # resolves STUN hosts (stun.cloudflare.com) to IPv6 and can't reach them → spammed "errorcode: -105"
+      # and a dead WebRTC fingerprint. HTTP survives (TCP falls back to IPv4); WebRTC doesn't. Disabling the
+      # container's IPv6 makes it resolve STUN to IPv4 like a normal host, so WebRTC actually works.
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
     environment:
       - MANGA_WEB_PORT=8080
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
