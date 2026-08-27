@@ -340,7 +340,11 @@ class FlareSolverrInterceptor(
         val sol = solve(request, returnOnlyCookies = false) ?: return null
         if (sol.response.isNullOrBlank()) return null
         sol.userAgent?.takeIf { it.isNotBlank() }?.let { solvedUa[host] = it }
-        log.info { "FlareSolverr fetch-through $host${request.url.encodedPath}: ${sol.response!!.length}B (status ${sol.status})" }
+        val len = sol.response!!.length
+        log.info { "FlareSolverr fetch-through $host${request.url.encodedPath}: ${len}B (status ${sol.status})" }
+        // A suspiciously tiny body means MangaFire returned an empty/stub (its /api is an XHR endpoint that
+        // won't serve a bare navigation). Log the raw so we can see exactly what came back.
+        if (len < 2000) log.info { "FS fetch-through SMALL body for $host — raw: ${sol.response!!.take(500).replace("\n", " ")}" }
         return flareResponse(request, sol)
     }
 
