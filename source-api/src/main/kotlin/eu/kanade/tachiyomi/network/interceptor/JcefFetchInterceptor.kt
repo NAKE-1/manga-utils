@@ -32,12 +32,17 @@ class JcefFetchInterceptor : Interceptor {
         val req = chain.request()
         val resp = chain.proceed(req)
         if (!isCloudflareChallenge(resp)) return resp
-        // Hard hosts (MangaFire): OUR offscreen-JCEF fingerprint is Cloudflare-flagged in the container, so
-        // JCEF only burns its timeout then fails. Skip it and let the outer FlareSolverrInterceptor fetch
-        // through FS's (accepted) browser instead.
-        if (FlareSolverrConfig.fetchesThrough(req.url.host)) return resp
         // Text/JSON GETs only — images are binary (and usually on an un-gated CDN); let those fall through.
         if (!req.method.equals("GET", ignoreCase = true) || isImageUrl(req.url.encodedPath)) return resp
+        // Hard hosts (MangaFire): OUR JCEF fingerprint is Cloudflare-flagged in the container. Hand the
+        // request — which HAS the vrf here, because we're a NETWORK interceptor — to the solver sidecar
+        // (FlareSolverr clears Cloudflare, curl_cffi replays with a real Chrome fingerprint + solves /@waf).
+        if (FlareSolverrConfig.fetchesThrough(req.url.host)) {
+            val out = runCatching { SolverClient.fetch(req) }.getOrNull()
+            if (out != null) { resp.close(); return out }
+            log.info { "solver failed for ${req.url.host}${req.url.encodedPath} → falling back" }
+            return resp
+        }
 
         val headers = req.headers.names().associateWith { req.headers[it] ?: "" }
         val r = runCatching { JcefFetch.fetch(req.url.toString(), req.method, headers, null) }.getOrNull()

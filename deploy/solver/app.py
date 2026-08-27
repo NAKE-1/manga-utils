@@ -14,6 +14,7 @@ A persistent Session per host keeps cf_clearance + the WAF cookie warm, so only 
 """
 import os
 import threading
+import time
 from urllib.parse import urlparse
 
 from curl_cffi import requests as creq
@@ -24,9 +25,38 @@ import captcha
 app = Flask(__name__)
 IMPERSONATE = os.environ.get("SOLVER_IMPERSONATE", "chrome")
 WAF_TRIES = int(os.environ.get("SOLVER_WAF_TRIES", "6"))
+FS_URL = os.environ.get("SOLVER_FLARESOLVERR_URL", "http://flaresolverr:8191").rstrip("/")
+CF_TTL = 600  # seconds to reuse a FlareSolverr clearance before re-solving
 
 _lock = threading.Lock()
 _sessions = {}  # host -> curl_cffi Session (persists cf_clearance + WAF cookie)
+_clearance = {}  # host -> (cf_clearance, user_agent, ts)
+
+
+def _get_clearance(host, origin):
+    """Ask FlareSolverr to clear Cloudflare (browsers can't on this box) → (cf_clearance, UA). Cached."""
+    c = _clearance.get(host)
+    if c and time.time() - c[2] < CF_TTL:
+        return c[0], c[1]
+    try:
+        r = creq.post(
+            FS_URL + "/v1",
+            json={"cmd": "request.get", "url": origin + "/", "maxTimeout": 60000,
+                  "session": "mangautils", "returnOnlyCookies": True},
+            timeout=90,
+        ).json()
+        sol = r.get("solution") or {}
+        cf = next((ck["value"] for ck in sol.get("cookies", []) if ck.get("name") == "cf_clearance"), None)
+        ua = sol.get("userAgent")
+        if cf:
+            _clearance[host] = (cf, ua, time.time())
+            print(f"solver: got cf_clearance for {host} via FlareSolverr", flush=True)
+        else:
+            print(f"solver: FlareSolverr returned no cf_clearance for {host}", flush=True)
+        return cf, ua
+    except Exception as e:  # noqa: BLE001
+        print(f"solver: FlareSolverr clearance error: {e}", flush=True)
+        return None, None
 
 
 def _session(host):
@@ -106,17 +136,17 @@ def fetch():
     if not url:
         return jsonify(status=0, error="no url"), 400
     extra_headers = dict(data.get("headers") or {})
-    cf = data.get("cf_clearance")
-    ua = data.get("user_agent")
     p = urlparse(url)
     origin = f"{p.scheme}://{p.netloc}"
     host = p.netloc
 
     with _lock:  # one session per host, mutated per call
         try:
+            cf, ua = _get_clearance(host, origin)
+            if not cf:
+                return jsonify(status=0, error="no cf_clearance (FlareSolverr)"), 502
             sess = _session(host)
-            if cf:
-                sess.cookies.set("cf_clearance", cf, domain="." + host)  # refresh FS's clearance each call
+            sess.cookies.set("cf_clearance", cf, domain="." + host)  # keep the clearance fresh
             headers = _xhr_headers(origin, ua, origin + "/", extra_headers)
 
             r = sess.get(url, headers=headers, timeout=30)
