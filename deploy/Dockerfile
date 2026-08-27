@@ -54,7 +54,9 @@ COPY <<'SH' /entrypoint.sh
 set -e
 export DISPLAY=:99
 rm -f /tmp/.X99-lock 2>/dev/null || true
-Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+# 1920x1080 + GLX/render extensions so MU_JCEF_HEADED's windowed browsers have a real screen to render
+# into (Cloudflare reads window size + GL compositing). Harmless for the offscreen path.
+Xvfb :99 -screen 0 1920x1080x24 +extension GLX +extension RANDR +render -nolisten tcp >/tmp/xvfb.log 2>&1 &
 i=0
 while [ ! -e /tmp/.X11-unix/X99 ] && [ $i -lt 25 ]; do i=$((i + 1)); sleep 0.2; done
 # Clear the JCEF runtime profile's locks + GPU/shader/crash caches on every boot. A hard-killed
