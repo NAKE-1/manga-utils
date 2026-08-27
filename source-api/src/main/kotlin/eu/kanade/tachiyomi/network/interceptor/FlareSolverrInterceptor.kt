@@ -21,6 +21,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import xyz.nulldev.androidcompat.webkit.JcefFetch
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -103,7 +104,7 @@ class FlareSolverrInterceptor(
             }
 
             val cookies = solution.cookies.mapNotNull { it.toOkHttp() }
-            if (cookies.isNotEmpty()) cookieStore.addAll(request.url, cookies)
+            if (cookies.isNotEmpty()) { cookieStore.addAll(request.url, cookies); seedJcef(host, cookies) }
             val ua = solution.userAgent?.takeIf { it.isNotBlank() } // clearance is UA-bound
             if (ua != null) {
                 setUserAgent(ua)
@@ -173,7 +174,7 @@ class FlareSolverrInterceptor(
         val sol = runCatching { solve(root) }.getOrNull()
         if (sol != null) {
             val cookies = sol.cookies.mapNotNull { it.toOkHttp() }
-            if (cookies.isNotEmpty()) cookieStore.addAll(root.url, cookies)
+            if (cookies.isNotEmpty()) { cookieStore.addAll(root.url, cookies); seedJcef(host, cookies) }
             sol.userAgent?.takeIf { it.isNotBlank() }?.let { setUserAgent(it); solvedUa[host] = it }
             log.info { "Warmed $host session via root: ${cookies.size} cookie(s) [${cookies.joinToString(", ") { it.name }}]" }
         } else {
@@ -182,6 +183,30 @@ class FlareSolverrInterceptor(
         val retry = request.newBuilder()
         solvedUa[host]?.let { retry.header("User-Agent", it) }
         return chain.proceed(retry.build())
+    }
+
+    /**
+     * Push FlareSolverr's cookies (esp. cf_clearance) into JCEF's cookie jar. JCEF's offscreen browser can't
+     * pass Cloudflare's Turnstile headless in a container, but FlareSolverr (a *headed* browser on Xvfb) can
+     * — so hand JCEF the clearance FS just earned on the same IP, letting JCEF skip the wall it can't clear
+     * and go straight to the vrf fetch / the site's own shapes captcha (which JCEF's autosolver handles).
+     * No-op on desktop (JCEF clears Cloudflare itself) and harmless if CEF isn't up.
+     */
+    private fun seedJcef(host: String, cookies: List<Cookie>) {
+        cookies.forEach { c ->
+            runCatching {
+                JcefFetch.setCookie(
+                    host = host,
+                    name = c.name,
+                    value = c.value,
+                    domain = if (c.domain.startsWith(".")) c.domain else ".${c.domain}",
+                    path = c.path,
+                    secure = c.secure,
+                    httpOnly = c.httpOnly,
+                    expiresEpochSec = if (c.persistent) c.expiresAt / 1000 else null,
+                )
+            }
+        }
     }
 
     private fun solve(request: Request, returnOnlyCookies: Boolean = true): FsSolution? {

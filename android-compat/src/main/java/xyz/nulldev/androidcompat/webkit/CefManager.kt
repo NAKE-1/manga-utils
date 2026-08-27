@@ -155,6 +155,19 @@ object CefManager {
                                 // non-proxied UDP entirely → it never tries STUN → no -105 spam. WebRTC/STUN
                                 // isn't used for anything here, and Turnstile passes fine without it.
                                 add("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+                                // Belt-and-suspenders on the "-105" spam: map the STUN hostnames Turnstile
+                                // probes straight to localhost so Chromium's resolver returns instantly
+                                // (no "Failed to resolve address ... errorcode: -105" flood). Only these
+                                // exact hosts are remapped; all other DNS resolves normally.
+                                add(
+                                    "--host-resolver-rules=" +
+                                        "MAP stun.cloudflare.com 127.0.0.1," +
+                                        "MAP stun.l.google.com 127.0.0.1," +
+                                        "MAP stun1.l.google.com 127.0.0.1," +
+                                        "MAP stun2.l.google.com 127.0.0.1," +
+                                        "MAP stun3.l.google.com 127.0.0.1," +
+                                        "MAP stun4.l.google.com 127.0.0.1",
+                                )
                                 add("--disable-features=MediaRouter,OptimizationHints,Translate")
                                 // In a container (non-root, no user namespaces) Chromium's sandbox can't
                                 // start, so CEF fails init entirely ("CEF client unavailable"). Opt in via

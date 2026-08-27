@@ -81,6 +81,36 @@ object JcefFetch {
         return n
     }
 
+    /**
+     * Inject a cookie into the shared CEF jar for [host]. Used to seed FlareSolverr's `cf_clearance` (which
+     * FS earns with its *headed* browser) into JCEF — because JCEF's offscreen/headless browser can't pass
+     * Cloudflare's Turnstile in a container, but it CAN present a clearance cookie FS already obtained on the
+     * same IP. cf_clearance is a cookie, not a one-time token, so this transplant is valid as long as
+     * Cloudflare doesn't re-bind it to the exact browser fingerprint. Returns true if CEF accepted it.
+     */
+    fun setCookie(
+        host: String,
+        name: String,
+        value: String,
+        domain: String? = null,
+        path: String = "/",
+        secure: Boolean = true,
+        httpOnly: Boolean = false,
+        expiresEpochSec: Long? = null,
+    ): Boolean {
+        val mgr = runCatching { CefCookieManager.getGlobalManager() }.getOrNull() ?: return false
+        val now = java.util.Date()
+        val cookie = CefCookie(
+            name, value,
+            domain ?: ".$host", path, secure, httpOnly,
+            now, now, expiresEpochSec != null,
+            expiresEpochSec?.let { java.util.Date(it * 1000) } ?: now,
+        )
+        val ok = runCatching { mgr.setCookie("https://$host/", cookie) }.getOrDefault(false)
+        if (ok) log.info { "JCEF[$host]: seeded cookie $name (from FlareSolverr)" }
+        return ok
+    }
+
     private val renderHandler = object : CefRenderHandlerAdapter() {
         override fun getViewRect(browser: CefBrowser) = Rectangle(0, 0, 1280, 900)
     }
