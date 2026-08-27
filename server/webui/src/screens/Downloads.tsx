@@ -102,7 +102,7 @@ export function Downloads() {
       <div className="list-head">
         <span className="list-title">Downloads{data.active > 0 ? ` · ${data.active} active` : ''}</span>
         <div className="dl-head-actions">
-          {active.some((t) => t.state === 'interrupted') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
+          {active.some((t) => t.state === 'interrupted' || t.state === 'offlinewait') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
           {data.active > 0 && <button className="dl-link" onClick={stopAll}>Stop all</button>}
         </div>
       </div>
@@ -195,7 +195,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
               : parked
                 ? <button className="dl-link dl-resume" onClick={onForce}>Retry now</button>
                 : offline
-                  ? <span className="dl-state">Paused</span>
+                  ? <button className="dl-link dl-resume" onClick={onResume}>Resume</button>
                   : failed && t.failedChapters.length
                   ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
                   : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}

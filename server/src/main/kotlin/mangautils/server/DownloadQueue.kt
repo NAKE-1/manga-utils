@@ -627,20 +627,28 @@ object DownloadQueue {
         runCatching { DownloadStore.listChapters(t.mangaTitle).filterNot { it.complete }.forEach { DownloadStore.deleteChapter(t.mangaTitle, it.name) } }
     }
 
-    /** Resume one interrupted task (re-queue after discarding any half-written chapters). */
+    /** Resume one paused task — either "interrupted" (post-restart) or "offlinewait" (paused on an offline
+     *  blip that can strand it if the server is already back online). Re-queue after discarding half-written
+     *  chapters + dropping any bogus source cooldown so it doesn't sit "resting". */
     @Synchronized
     fun resume(id: String) {
         val t = tasks[id] ?: return
-        if (t.state != "interrupted") return
-        repairFor(t); t.state = "queued"; pump(); persist()
+        if (t.state != "interrupted" && t.state != "offlinewait") return
+        sourceCooldownUntil.remove(t.sourceId)
+        repairFor(t); t.state = "queued"; t.error = ""; t.failClass = ""; pump(); persist()
     }
 
-    /** Resume every interrupted task. */
+    /** Resume every paused task (interrupted OR offlinewait). offlinewait tasks are included because a manual
+     *  "Resume all" must un-strand them — they otherwise only auto-resume on an offline→online transition,
+     *  which never comes if the server is already back online. */
     @Synchronized
     fun resumeAll() {
-        tasks.values.filter { it.state == "interrupted" }.forEach { repairFor(it); it.state = "queued" }
+        sourceCooldownUntil.clear() // a manual resume-all also drops resting cooldowns (mirrors resumeFromOffline)
+        tasks.values.filter { it.state == "interrupted" || it.state == "offlinewait" }.forEach {
+            repairFor(it); it.state = "queued"; it.error = ""; it.failClass = ""
+        }
         pump(); persist()
     }
 
-    fun interruptedCount(): Int = tasks.values.count { it.state == "interrupted" }
+    fun interruptedCount(): Int = tasks.values.count { it.state == "interrupted" || it.state == "offlinewait" }
 }
