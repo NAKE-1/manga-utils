@@ -105,6 +105,16 @@ object CefManager {
     private fun initBlocking() {
         System.loadLibrary("jawt")
 
+        // MU_JCEF_HEADED=1: the fetch pool renders into REAL windows on the Xvfb display (:99) instead of
+        // offscreen, so Cloudflare's Turnstile sees a genuine browser (window + GL compositing) and lets it
+        // through — the wall the offscreen browser can't pass in a container. Real AWT windows require a
+        // non-headless JVM, so opt out of AWT headless mode before any CEF/AWT call. The interactive WebView
+        // stays offscreen (see JcefFetch). Off by default; a bad headed init is reverted by unsetting the env.
+        if (System.getenv("MU_JCEF_HEADED") == "1") {
+            System.setProperty("java.awt.headless", "false")
+            logger.info { "MU_JCEF_HEADED=1 → fetch pool will render headed (windowed) on \$DISPLAY" }
+        }
+
         // One-time migration: the install dir used to be bin/kcef (KCEF era). If a valid JB install is
         // already there, move it rather than re-download the native.
         val legacyDir = dataRoot / "bin" / "kcef"
@@ -131,14 +141,25 @@ object CefManager {
                     JCefAppConfig.getInstance(cefDir.toString(), false).apply {
                         appArgsAsList.addAll(
                             buildList {
-                                // --disable-gpu is REQUIRED for JCEF offscreen rendering: GPU-accelerated
-                                // OSR in a headless container fails to init the browser entirely ("CEF
-                                // client unavailable", 0 browsers). We tried software SwiftShader WebGL and
-                                // real Intel-iGPU-via-ANGLE to look less headless to Cloudflare Turnstile —
-                                // SwiftShader didn't reduce the shapes-captcha escalation, and hardware GL
-                                // broke CEF outright. Both dead ends; keep the GPU off. The MangaFire
-                                // slowness is the solve-cascade, not the WebGL fingerprint — fix that instead.
-                                add("--disable-gpu")
+                                // GPU/GL. Offscreen mode: --disable-gpu (hardware-accel OSR breaks CEF init
+                                // in a container). Headed mode (MU_JCEF_HEADED=1): the windowed fetch browsers
+                                // need software GL *compositing* so Cloudflare's Turnstile sees a real render,
+                                // so use SwiftShader (CPU software GL — the safe path; only *hardware* GL
+                                // broke CEF before) plus the standard anti-automation flags. --off-screen-
+                                // rendering-enabled stays either way so the interactive WebView keeps OSR.
+                                if (System.getenv("MU_JCEF_HEADED") == "1") {
+                                    add("--enable-unsafe-swiftshader")
+                                    add("--use-gl=angle")
+                                    add("--use-angle=swiftshader")
+                                    add("--disable-blink-features=AutomationControlled")
+                                    add("--window-size=1920,1080")
+                                    // Windowed browsers on Xvfb overlap/occlude each other; stop Chromium
+                                    // throttling the "hidden" ones (Turnstile needs an actively-rendering tab).
+                                    add("--disable-backgrounding-occluded-windows")
+                                    add("--disable-features=CalculateNativeWinOcclusion")
+                                } else {
+                                    add("--disable-gpu")
+                                }
                                 add("--off-screen-rendering-enabled")
                                 add("--disable-dev-shm-usage")
                                 add("--change-stack-guard-on-fork=disable")

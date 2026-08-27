@@ -45,6 +45,10 @@ services:
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
       - MU_DYNO_DIR=/dyno                              # where "Back up to USB" writes (matches the bind mount above)
       - MU_JCEF_POOL=5                                 # real-Chromium browsers per Cloudflare host (1–12); 5 = more parallel MangaFire fetches
+      # - MU_JCEF_HEADED=1                              # <- EXPERIMENTAL: render the fetch pool as real windows on Xvfb so JCEF passes
+                                                        #    Cloudflare Turnstile itself (like on Windows) instead of getting stuck on the bot screen.
+                                                        #    Uses software GL (SwiftShader). If CEF fails to init windowed (0/5 browsers), just remove this
+                                                        #    line + recreate to revert. Consider MU_JCEF_POOL=2-3 here (windowed browsers are heavier).
       # - MU_JCEF_HW_GL=1                               # <- uncomment ONLY after passing the Intel iGPU through + the /dev/dri device below.
                                                         #    Uses real hardware WebGL (Intel renderer) instead of software SwiftShader. Software works with no GPU.
     # devices:

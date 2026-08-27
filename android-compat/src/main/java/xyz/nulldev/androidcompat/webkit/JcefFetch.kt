@@ -58,6 +58,12 @@ object JcefFetch {
     private val pools = ConcurrentHashMap<String, HostPool>()
     private val wedge = ConcurrentHashMap<String, AtomicInteger>() // consecutive "no free browser" per host
 
+    // MU_JCEF_HEADED=1 → fetch-pool browsers render into real (invisible) AWT windows on the Xvfb display so
+    // Cloudflare's Turnstile sees a genuine browser and lets JCEF through itself (the offscreen browser can't
+    // pass it in a container). The interactive WebView stays offscreen. Off by default — unset the env to revert.
+    private val HEADED = System.getenv("MU_JCEF_HEADED") == "1"
+    private val headedFrames = ConcurrentHashMap<CefBrowser, java.awt.Frame>() // one host window per headed browser
+
     /** Live per-host pool state for the dev UI. */
     data class PoolStat(val host: String, val size: Int, val busy: Int, val free: Int, val max: Int)
 
@@ -204,14 +210,32 @@ object JcefFetch {
         waitCleared(host, browser)
     }
 
-    /** Create one cleared offscreen browser for a host. Called under the pool's growth lock. */
+    /** Create one cleared browser for a host. Called under the pool's growth lock. Windowed (headed on Xvfb)
+     *  when MU_JCEF_HEADED=1 so it passes Cloudflare itself; offscreen otherwise. */
     private fun newBrowser(scheme: String, host: String): CefBrowser? {
         val client = runCatching { runBlocking { CefHelper.createClient() } }.getOrNull() ?: return null
         val root = "$scheme://$host/"
-        val browser = client.createBrowser(root, CefRendering.CefRenderingWithHandler(renderHandler, JPanel()), false)
-            .apply { createImmediately() }
+        val browser = if (HEADED) {
+            // Real windowed browser hosted in an AWT Frame on the Xvfb display (:99). We never look at the
+            // window; Cloudflare does — it sees a genuine window + GL compositing and clears Turnstile the
+            // way it did on Windows. Needs java.awt.headless=false (set in CefManager) and DISPLAY=:99.
+            val b = client.createBrowser(root, CefRendering.DEFAULT, false)
+            runCatching {
+                java.awt.Frame().apply {
+                    isUndecorated = true
+                    setSize(1280, 900)
+                    setLocation(0, 0)
+                    add(b.uiComponent)
+                    isVisible = true
+                }.also { headedFrames[b] = it }
+            }.onFailure { log.warn { "JCEF[$host]: headed frame failed (${it.message}); browser may not render" } }
+            b
+        } else {
+            client.createBrowser(root, CefRendering.CefRenderingWithHandler(renderHandler, JPanel()), false)
+                .apply { createImmediately() }
+        }
         waitCleared(host, browser)
-        log.info { "JCEF[$host]: opened offscreen browser (cf_clearance=${hasCfClearance(host)})" }
+        log.info { "JCEF[$host]: opened ${if (HEADED) "windowed" else "offscreen"} browser (cf_clearance=${hasCfClearance(host)})" }
         return browser
     }
 
@@ -253,7 +277,10 @@ object JcefFetch {
          *  its late giveBack lands on this now-orphaned instance, not the fresh pool the next fetch creates. */
         fun disposeAll(): Int {
             val n = allBrowsers.size
-            allBrowsers.forEach { runCatching { it.close(true) } }
+            allBrowsers.forEach { b ->
+                runCatching { b.close(true) }
+                runCatching { headedFrames.remove(b)?.dispose() } // headed mode: also drop its AWT window
+            }
             allBrowsers.clear(); available.clear(); count.set(0)
             return n
         }
