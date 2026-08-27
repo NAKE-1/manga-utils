@@ -131,31 +131,14 @@ object CefManager {
                     JCefAppConfig.getInstance(cefDir.toString(), false).apply {
                         appArgsAsList.addAll(
                             buildList {
-                                // GPU / WebGL. In a container there is no real display/GPU, and the old
-                                // "--disable-gpu" made the browser report NO WebGL renderer — a headless
-                                // tell that makes Cloudflare Turnstile escalate to the slow custom shapes
-                                // captcha (60-90s per cold solve) instead of the quick checkbox path a
-                                // real desktop browser gets. Give the offscreen browser a real WebGL
-                                // renderer via SwiftShader (CPU software GL; needs no physical GPU). When
-                                // an Intel iGPU is passed through to the VM and /dev/dri is mounted into
-                                // the container, set MU_JCEF_HW_GL=1 to use ANGLE-on-hardware instead (a
-                                // real "Intel" renderer string = strongest anti-bot fingerprint).
-                                // Desktop (Windows/macOS/Linux with a real GPU) keeps --disable-gpu: it's
-                                // already fast there (real display + working WebRTC), and enabling GPU
-                                // under JCEF offscreen rendering on the desktop risks init flakiness.
-                                if (System.getenv("MU_JCEF_NO_SANDBOX") == "1") {
-                                    if (System.getenv("MU_JCEF_HW_GL") == "1") {
-                                        add("--ignore-gpu-blocklist")
-                                        add("--use-gl=angle")
-                                        add("--use-angle=gl-egl")
-                                    } else {
-                                        add("--enable-unsafe-swiftshader") // Chrome 137+ gates software WebGL behind this
-                                        add("--use-gl=angle")
-                                        add("--use-angle=swiftshader")
-                                    }
-                                } else {
-                                    add("--disable-gpu")
-                                }
+                                // --disable-gpu is REQUIRED for JCEF offscreen rendering: GPU-accelerated
+                                // OSR in a headless container fails to init the browser entirely ("CEF
+                                // client unavailable", 0 browsers). We tried software SwiftShader WebGL and
+                                // real Intel-iGPU-via-ANGLE to look less headless to Cloudflare Turnstile —
+                                // SwiftShader didn't reduce the shapes-captcha escalation, and hardware GL
+                                // broke CEF outright. Both dead ends; keep the GPU off. The MangaFire
+                                // slowness is the solve-cascade, not the WebGL fingerprint — fix that instead.
+                                add("--disable-gpu")
                                 add("--off-screen-rendering-enabled")
                                 add("--disable-dev-shm-usage")
                                 add("--change-stack-guard-on-fork=disable")
