@@ -34,10 +34,11 @@ _clearance = {}  # host -> (cf_clearance, user_agent, ts)
 
 
 def _get_clearance(host, origin):
-    """Ask FlareSolverr to clear Cloudflare (browsers can't on this box) → (cf_clearance, UA). Cached."""
+    """Ask FlareSolverr to clear Cloudflare (browsers can't on this box) → (cf_clearance, UA, fresh).
+    fresh=True means we actually re-cleared via FlareSolverr this call (vs reusing the cached clearance)."""
     c = _clearance.get(host)
     if c and time.time() - c[2] < CF_TTL:
-        return c[0], c[1]
+        return c[0], c[1], False
     try:
         r = creq.post(
             FS_URL + "/v1",
@@ -53,10 +54,10 @@ def _get_clearance(host, origin):
             print(f"solver: got cf_clearance for {host} via FlareSolverr", flush=True)
         else:
             print(f"solver: FlareSolverr returned no cf_clearance for {host}", flush=True)
-        return cf, ua
+        return cf, ua, True
     except Exception as e:  # noqa: BLE001
         print(f"solver: FlareSolverr clearance error: {e}", flush=True)
-        return None, None
+        return None, None, True
 
 
 def _session(host):
@@ -154,7 +155,7 @@ def fetch():
 
     with _lock:  # one session per host, mutated per call
         try:
-            cf, ua = _get_clearance(host, origin)
+            cf, ua, cf_fresh = _get_clearance(host, origin)
             if not cf:
                 return jsonify(status=0, error="no cf_clearance (FlareSolverr)"), 502
             sess = _session(host)
@@ -173,7 +174,7 @@ def fetch():
 
             tail = "" if r.status_code == 200 else f" snippet={body[:160]!r}"
             print(f"solver: {url} -> {r.status_code} {len(body)}B{tail}", flush=True)
-            return jsonify(status=r.status_code, body=body, waf_solved=waf_solved, host=host)
+            return jsonify(status=r.status_code, body=body, waf_solved=waf_solved, cf_fresh=cf_fresh, host=host)
         except Exception as e:  # noqa: BLE001 — report anything so the caller can fall back
             _sessions.pop(host, None)  # drop a possibly-wedged session
             print(f"solver: error: {e}", flush=True)

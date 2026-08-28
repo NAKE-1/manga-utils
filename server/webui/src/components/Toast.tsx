@@ -111,13 +111,11 @@ export function DownloadWatcher() {
         const r = await api.solverEvents(solverCursor ?? undefined)
         if (solverCursor == null) { solverCursor = r.lastId; return } // first poll: sync only, no backlog
         for (const e of r.events) {
-          // "working…" is keyed per host so a library-check burst stays a single, in-place toast. But the
-          // rare, important "solved"/"failed" events are UNKEYED so the churn of working-toast updates can't
-          // overwrite them in place — they stand as their own toast and show for their full duration.
-          if (e.phase === 'solving') toast(`MF solver · ${e.host} working…`, 'info', 5000, 'solver:' + e.host, { bg: true })
-          else if (e.phase === 'solved') toast(`MF solver · ${e.host} captcha solved ✓`, 'success', 3500, undefined, { bg: true })
+          // Only real work is toasted (the solver stays silent on warm/routine traffic), so these are rare —
+          // keep them unkeyed so each stands as its own toast for its full duration.
+          if (e.phase === 'solved') toast(`MF solver · ${e.host} captcha solved ✓`, 'success', 3500, undefined, { bg: true })
+          else if (e.phase === 'cleared') toast(`MF solver · ${e.host} cleared Cloudflare ✓`, 'success', 3500, undefined, { bg: true })
           else if (e.phase === 'failed') toast(`MF solver · ${e.host} failed`, 'error', 4000, undefined, { bg: true })
-          // 'done' (warm hit) is intentionally not toasted — the "working…" toast just expires on its own.
         }
         solverCursor = r.lastId
       } catch { /* ignore */ }

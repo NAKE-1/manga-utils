@@ -44,17 +44,22 @@ object SolverClient {
         val hdrs = request.headers.names().filter { it.lowercase() !in SKIP }.associateWith { request.headers[it] ?: "" }
         val payload = json.encodeToString(SolverReq.serializer(), SolverReq(request.url.toString(), hdrs))
         val req = Request.Builder().url("$base/fetch").post(payload.toRequestBody(JSON_MEDIA)).build()
-        SolverConfig.record(request.url.host, "solving") // a job was sent to the solver → UI toast ("working…")
         val text = runCatching { client.newCall(req).execute().use { it.body?.string().orEmpty() } }
-            .getOrElse { log.info { "solver unreachable at $base: ${it.message}" }; SolverConfig.record(request.url.host, "failed"); return null }
-        if (text.isBlank()) { SolverConfig.record(request.url.host, "failed"); return null }
+            .getOrElse { log.info { "solver unreachable at $base: ${it.message}" }; return null }
+        if (text.isBlank()) return null
         val out = runCatching { json.decodeFromString(SolverResp.serializer(), text) }.getOrNull() ?: return null
         if (out.status !in 200..399 || out.body.isNullOrEmpty()) {
             log.info { "solver ${request.url.host}${request.url.encodedPath}: status ${out.status}, ${out.body?.length ?: 0}B${out.error?.let { " err=$it" } ?: ""}" }
-            SolverConfig.record(request.url.host, "failed")
             return null
         }
-        if (out.wafSolved) SolverConfig.record(out.host ?: request.url.host, "solved") // fresh /@waf solve (warm hits stay silent)
+        // Toast ONLY when the solver actually did work — a fresh /@waf captcha solve or a fresh Cloudflare
+        // clear. Warm hits (routine traffic reusing the session) stay silent, so "MF solver" isn't pinned
+        // "working…" during a whole library check.
+        val evHost = out.host ?: request.url.host
+        when {
+            out.wafSolved -> SolverConfig.record(evHost, "solved")
+            out.cfFresh -> SolverConfig.record(evHost, "cleared")
+        }
         val ct = if (request.url.encodedPath.contains("/api", true)) "application/json; charset=utf-8" else "text/html; charset=utf-8"
         log.info { "solver ${request.url.host}${request.url.encodedPath}: ${out.body.length}B (status ${out.status})" }
         return Response.Builder()
@@ -74,6 +79,7 @@ object SolverClient {
         val body: String? = null,
         val error: String? = null,
         @kotlinx.serialization.SerialName("waf_solved") val wafSolved: Boolean = false,
+        @kotlinx.serialization.SerialName("cf_fresh") val cfFresh: Boolean = false,
         val host: String? = null,
     )
 }

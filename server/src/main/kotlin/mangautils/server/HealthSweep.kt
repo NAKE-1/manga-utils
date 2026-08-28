@@ -1,5 +1,6 @@
 package mangautils.server
 
+import eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig
 import eu.kanade.tachiyomi.network.interceptor.HumanCheckState
 import mangautils.core.config.SettingsStore
 import mangautils.core.extension.InstalledStore
@@ -39,6 +40,7 @@ object HealthSweep {
     private fun srcName(id: Long) = runCatching { SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
 
     private const val UP = "up"; private const val DOWN = "down"; private const val GATED = "gated"
+    private const val SOLVER_REPROBE_DELAY_MS = 5000L // wait before re-probing a solver-backed host that just failed
 
     /** Apply a probe result to SourceHealth + fire the transition ping. Returns UP | DOWN | GATED (a
      *  Cloudflare/captcha gate, which leaves the status untouched — not an outage). */
@@ -75,7 +77,17 @@ object HealthSweep {
                     pool.submit {
                         runCatching {
                             val wasDown = SourceHealth.isDown(id)
-                            val r = Diagnostics.run(id, samples = 1)
+                            var r = Diagnostics.run(id, samples = 1)
+                            // Solver-backed hosts (MangaFire): a probe can transiently fail while the solver
+                            // is re-clearing Cloudflare (e.g. right after an egress reset flushed the session).
+                            // That's not an outage — give it a few seconds and re-probe once (the re-probe
+                            // itself blocks on the solver, so it waits for the clear) before we'd call it down.
+                            val host0 = runCatching { java.net.URI(r.baseUrl).host }.getOrNull()
+                            if (!r.ok && host0 != null && !isGatedNotDown(host0, r.error) && FlareSolverrConfig.fetchesThrough(host0)) {
+                                log.info("health: {} probe failed — solver may be re-clearing, re-probing in {}s", srcName(id), SOLVER_REPROBE_DELAY_MS / 1000)
+                                runCatching { Thread.sleep(SOLVER_REPROBE_DELAY_MS) }
+                                r = Diagnostics.run(id, samples = 1)
+                            }
                             // Part B: a captcha gate with auto-solve ON — wait for the background solver to
                             // clear it, then re-probe once so the sweep reports the true state (usually up)
                             // instead of leaving it stale. Only for hosts actually pending a human-check.
