@@ -22,7 +22,8 @@ object SolverConfig {
 
     fun record(host: String, phase: String) {
         events.addLast(Event(seq.incrementAndGet(), host, phase, System.currentTimeMillis()))
-        while (events.size > 30) events.pollFirst()
+        // Bigger ring (100) so a rare "solved" isn't evicted by "working…" churn before the ~3.5s UI poll.
+        while (events.size > 100) events.pollFirst()
     }
 
     fun lastEventId(): Long = seq.get()

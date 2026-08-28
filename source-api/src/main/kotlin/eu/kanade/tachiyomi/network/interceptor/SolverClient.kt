@@ -54,7 +54,7 @@ object SolverClient {
             SolverConfig.record(request.url.host, "failed")
             return null
         }
-        SolverConfig.record(out.host ?: request.url.host, if (out.wafSolved) "solved" else "done") // solved = fresh /@waf; done = warm hit
+        if (out.wafSolved) SolverConfig.record(out.host ?: request.url.host, "solved") // fresh /@waf solve (warm hits stay silent)
         val ct = if (request.url.encodedPath.contains("/api", true)) "application/json; charset=utf-8" else "text/html; charset=utf-8"
         log.info { "solver ${request.url.host}${request.url.encodedPath}: ${out.body.length}B (status ${out.status})" }
         return Response.Builder()

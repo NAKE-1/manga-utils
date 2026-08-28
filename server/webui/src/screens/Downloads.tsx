@@ -69,8 +69,17 @@ export function Downloads() {
 
   async function forceRetry(t: DlTask) { setData(await api.forceRetryDownload(t.id).then((r) => r.json()).catch(() => data)) }
   async function move(t: DlTask, dir: 'up' | 'down') { setData(await api.moveDownload(t.id, dir).then((r) => r.json()).catch(() => data)) }
-  async function resume(t: DlTask) { setData(await api.resumeDownload(t.id).then((r) => r.json()).catch(() => data)) }
-  async function resumeAll() { setData(await api.resumeAllDownloads().then((r) => r.json()).catch(() => data)) }
+  // Optimistic: flip the affected task(s) to "queued" locally right away so the click feels instant, even
+  // though the server's resume does synchronous disk work (repairFor deletes half-written chapters) before
+  // it responds. The server response + the 1s poll reconcile the real state (which one actually runs).
+  async function resume(t: DlTask) {
+    setData((d) => d && { ...d, tasks: d.tasks.map((x) => (x.id === t.id ? { ...x, state: 'queued' } : x)) })
+    try { setData(await api.resumeDownload(t.id).then((r) => r.json())) } catch { /* keep optimistic; poll reconciles */ }
+  }
+  async function resumeAll() {
+    setData((d) => d && { ...d, tasks: d.tasks.map((x) => (x.state === 'interrupted' || x.state === 'offlinewait' ? { ...x, state: 'queued' } : x)) })
+    try { setData(await api.resumeAllDownloads().then((r) => r.json())) } catch { /* keep optimistic; poll reconciles */ }
+  }
 
   if (!data) return <div className="spinner" />
   const tasks = data.tasks
