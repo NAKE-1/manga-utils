@@ -42,6 +42,9 @@ services:
       - net.ipv6.conf.default.disable_ipv6=1
     environment:
       - MANGA_WEB_PORT=8080
+      - TZ=America/New_York                            # container clock is UTC by default → "daily at 00:00" fires at 8pm local.
+                                                        #   Set your zone so scheduled updates/health/backup run at local midnight etc.
+                                                        #   The JVM ships its own tzdb, so a named zone works without OS tzdata.
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
       - MU_SOLVER_URL=http://solver:8000               # anti-detect solver sidecar: runs hard-host (MangaFire) requests as an in-page XHR
       - MU_DYNO_DIR=/dyno                              # where "Back up to USB" writes (matches the bind mount above)
