@@ -1342,11 +1342,16 @@ main > * { animation: fade-up .22s ease backwards; }
 
 /* "Open in WebView" overlay: live JPEG feed of the server-side offscreen browser, tap-to-solve. */
 .wv-overlay { position: fixed; inset: 0; z-index: 200; background: #0b0f13; display: flex; flex-direction: column; }
-.wv-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px calc(10px) 14px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); border-bottom: 1px solid #232a31; }
+.wv-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top, 0px)); border-bottom: 1px solid #232a31; }
+/* The generic .btn is sized for full-width UI — far too chunky for this compact bar (it wrapped "Close &
+   retry" onto 3 lines and pushed the cookie count off-screen). Slim it down + never wrap. */
+.wv-bar .btn { flex: none; font-size: 12px; font-weight: 600; padding: 6px 11px; white-space: nowrap; }
 .wv-hint { font-size: 12px; color: #8aa0ad; }
 .wv-cookies { flex: none; font-size: 12px; font-weight: 600; color: #f5c451; background: #2a1f0a; border: 1px solid #5a4a1a; border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
 .wv-solve { flex: none; }
-.wv-solvemsg { flex: none; font-size: 12px; font-weight: 600; color: #b9c6cf; white-space: nowrap; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
+/* Let the status be the thing that shrinks/ellipsizes when the row is tight — NOT the cookie count (which
+   was falling off the right edge). flex: 0 1 auto + min-width:0 lets it truncate below its content width. */
+.wv-solvemsg { flex: 0 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: #b9c6cf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wv-stage { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 12px; overflow: auto; }
 .wv-frame { width: min(96vw, 460px); height: auto; border-radius: 10px; box-shadow: 0 6px 28px rgba(0,0,0,.5); background: #111; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
 .wv-status { position: absolute; margin-top: 44px; font-size: 13px; color: #8aa0ad; }
