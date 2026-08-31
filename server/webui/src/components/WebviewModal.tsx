@@ -135,10 +135,11 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
   return (
     <div className="wv-overlay" role="dialog" aria-modal="true">
       <div className="wv-bar">
-        <button className="btn" onClick={onClose}>← Close &amp; retry</button>
+        <button className="btn" title="Close &amp; retry" onClick={onClose}>← C+R</button>
         <span className="wv-url" title={shownUrl}>{shownUrl || 'Tap the shapes to solve, then Close'}</span>
-        <button className="btn wv-solve" disabled={solving} onClick={autoSolve}>{solving ? '🧩 solving…' : '🧩 Auto-solve'}</button>
-        {solveMsg && <span className="wv-solvemsg" title={solveMsg}>{solveMsg}</span>}
+        {/* Status lives INSIDE the button (solveMsg already holds "🧩 solving…" / "✓ solved in 2 clicks" /
+            "✗ …") so it can't overflow the row as a separate label. */}
+        <button className="btn wv-solve" disabled={solving} title="Auto-solve the shape captcha" onClick={autoSolve}>{solveMsg || '🧩 Auto-solve'}</button>
         {cookies != null && <span className="wv-cookies" title="Cookies stored for this site in the session">🍪 {cookies}</span>}
       </div>
       <div className="wv-stage">
