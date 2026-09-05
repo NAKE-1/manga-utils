@@ -588,6 +588,20 @@ private fun mangautils.core.source.SourcePref.toDto() =
 @Serializable
 private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null, val url: String? = null)
 
+// One bypass service's live state for the Health dashboard. `configured` false → neutral chip (never set
+// up), not a red alarm; `reachable` only meaningful when configured.
+@Serializable
+private data class ServiceStatusDto(
+    val configured: Boolean,
+    val reachable: Boolean,
+    val url: String? = null,
+    val detail: String? = null, // "v3.3.21" / "parked on https://mangafire.to"
+    val error: String? = null,
+)
+
+@Serializable
+private data class ServicesHealthDto(val flareSolverr: ServiceStatusDto, val solver: ServiceStatusDto)
+
 @Serializable
 private data class FlareEventDto(val id: Long, val host: String, val phase: String, val cookies: Int)
 
@@ -1304,6 +1318,33 @@ fun Application.module() {
         }
         post("/api/health/sweep") { HealthSweep.start(); call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
         get("/api/health/sweep/progress") { call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
+
+        // Live reachability of the two Cloudflare-bypass services (FlareSolverr for weeb-central-style
+        // hosts, the solver sidecar for MangaFire). Separate from /sources so the source list still
+        // renders instantly — these do real network pings (~5s worst case).
+        get("/api/health/services") {
+            val dto = withContext(Dispatchers.IO) {
+                val fsConfigured = SettingsStore.get().flareSolverrEnabled
+                val fs = if (fsConfigured) runCatching { discoverFlare(null) }.getOrNull() else null
+                val flare = ServiceStatusDto(
+                    configured = fsConfigured,
+                    reachable = fs?.ok ?: false,
+                    url = fs?.url ?: eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.url.ifBlank { null },
+                    detail = fs?.version?.let { "v$it" },
+                    error = if (fsConfigured && fs?.ok == false) fs.error else null,
+                )
+                val solverCfg = eu.kanade.tachiyomi.network.interceptor.SolverConfig
+                val (sHealthy, sOrigin) = runCatching { SolverTest.ping() }.getOrDefault(false to null)
+                val solver = ServiceStatusDto(
+                    configured = solverCfg.enabled,
+                    reachable = sHealthy,
+                    url = solverCfg.url,
+                    detail = sOrigin?.let { "parked on $it" },
+                )
+                ServicesHealthDto(flare, solver)
+            }
+            call.respond(dto)
+        }
 
         // ---- Discord webhook tester (no event wiring yet — just iterate on the embed format) ----
         post("/api/webhooks/test/ping") {

@@ -1105,7 +1105,8 @@ main > * { animation: fade-up .22s ease backwards; }
 .hl-card { display: flex; align-items: center; gap: 11px; padding: 11px 13px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
 .hl-card.down { border-color: color-mix(in srgb, #e86e8f 45%, var(--border)); }
 .hl-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
-.hl-dot.ok { background: #5fce8f; } .hl-dot.degraded { background: #e3ba55; } .hl-dot.down { background: #e86e8f; }
+.hl-dot.ok { background: #5fce8f; } .hl-dot.degraded { background: #e3ba55; } .hl-dot.down { background: #e86e8f; } .hl-dot.off { background: var(--muted); opacity: .5; }
+.hl-svc { padding: 8px 12px 0; }
 .hl-main { flex: 1 1 auto; min-width: 0; }
 .hl-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .hl-wv { font-size: 9px; font-weight: 700; background: var(--card-2); border: 1px solid var(--border); color: var(--muted); padding: 1px 4px; border-radius: 4px; }

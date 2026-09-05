@@ -432,6 +432,7 @@ export const api = {
   healthSources: () => getJson<HealthReport>('/api/health/sources'),
   runHealthSweep: () => fetch('/api/health/sweep', { method: 'POST' }).then((r) => r.json() as Promise<SweepProgress>),
   sweepProgress: () => getJson<SweepProgress>('/api/health/sweep/progress'),
+  healthServices: () => getJson<ServicesHealth>('/api/health/services'),
   webhookPing: () => fetch('/api/webhooks/test/ping', { method: 'POST' }).then((r) => r.json() as Promise<WebhookResult>),
   webhookSample: (source: string, mangaUrl: string, kind: string) =>
     fetch('/api/webhooks/test/sample', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, mangaUrl, kind }) }).then((r) => r.json() as Promise<WebhookResult>),
@@ -458,6 +459,8 @@ export interface HealthSource {
 }
 export interface HealthReport { sources: HealthSource[]; healthy: number; degraded: number; down: number }
 export interface SweepProgress { done: number; total: number; running: boolean }
+export interface ServiceStatus { configured: boolean; reachable: boolean; url?: string | null; detail?: string | null; error?: string | null }
+export interface ServicesHealth { flareSolverr: ServiceStatus; solver: ServiceStatus }
 
 export interface BrokenSeries { title: string; broken: string[]; total: number }
 export interface BrokenReport { series: BrokenSeries[]; totalBroken: number }

@@ -42,7 +42,7 @@ object SolverTest {
         .connectTimeout(5, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
 
     /** Ping the solver's /health → (reachable, the origin its tab is parked on). */
-    private fun health(): Pair<Boolean, String?> {
+    fun ping(): Pair<Boolean, String?> {
         val base = SolverConfig.url?.trimEnd('/') ?: return false to null
         return runCatching {
             http.newCall(Request.Builder().url("$base/health").build()).execute().use { r ->
@@ -63,7 +63,7 @@ object SolverTest {
             }
 
     suspend fun run(explicitId: Long?): SolverTestDto {
-        val (healthy, origin) = health()
+        val (healthy, origin) = ping()
         val base = SolverConfig.url
         val src = explicitId?.let { SourceManager.loadSource(it) as? HttpSource } ?: hardHostSource()
         if (src == null) {
