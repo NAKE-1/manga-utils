@@ -635,7 +635,10 @@ object DownloadQueue {
         val t = tasks[id] ?: return
         if (t.state != "interrupted" && t.state != "offlinewait") return
         sourceCooldownUntil.remove(t.sourceId)
-        repairFor(t); t.state = "queued"; t.error = ""; t.failClass = ""; pump(); persist()
+        // Flip the label FIRST: repairFor does blocking disk work, and the snapshot read (tasks()) isn't on
+        // this lock, so a poll landing mid-repair would otherwise still read "interrupted" and bounce the UI.
+        t.state = "queued"; t.error = ""; t.failClass = ""
+        repairFor(t); pump(); persist()
     }
 
     /** Resume every paused task (interrupted OR offlinewait). offlinewait tasks are included because a manual
@@ -645,7 +648,8 @@ object DownloadQueue {
     fun resumeAll() {
         sourceCooldownUntil.clear() // a manual resume-all also drops resting cooldowns (mirrors resumeFromOffline)
         tasks.values.filter { it.state == "interrupted" || it.state == "offlinewait" }.forEach {
-            repairFor(it); it.state = "queued"; it.error = ""; it.failClass = ""
+            it.state = "queued"; it.error = ""; it.failClass = "" // label first (see resume()), then the disk work
+            repairFor(it)
         }
         pump(); persist()
     }
