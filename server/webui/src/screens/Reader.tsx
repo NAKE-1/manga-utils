@@ -166,6 +166,12 @@ export function Reader() {
   // saw settled=true and the PREVIOUS chapter's progress, and fired 366ms into a fresh chapter. Holding
   // the URL means a stale value can never read as settled for the chapter now on screen.
   const [settledFor, setSettledFor] = useState('')
+  // Option A "read on finish" (dev toggle app.readOnFinish): don't mark read on open. `readArmedFor`
+  // is the chapter that has been open long enough (~3s) that a pre-load height blip can't false-trip
+  // the ≥97% mark — same stale-proof URL-keyed pattern as settledFor. markedReadRef fires the mark once.
+  const [readOnFinish] = useState(() => localStorage.getItem('app.readOnFinish') === '1')
+  const [readArmedFor, setReadArmedFor] = useState('')
+  const markedReadRef = useRef('')
   const prefetchedNext = useRef('') // the chapter we have already warmed; cleared on every chapter change
   // Windowing: only mount an <img> for pages up to here (0-based). Grows as you scroll, so opening a
   // chapter fires ~preload requests — not all 68 at once (which would pin every browser connection
@@ -286,7 +292,9 @@ export function Reader() {
     setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false); setForce(false); setSettledFor('')
     window.scrollTo(0, 0)
     prefetchedNext.current = '' // stale from the chapter we just left; leaving it set blocks a real preload
+    setReadArmedFor('')
     const settle = setTimeout(() => setSettledFor(chapter), 500)
+    const arm = setTimeout(() => setReadArmedFor(chapter), 3000) // read-on-finish: only trust ≥97% after 3s
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => {
       setReadUrls(new Set(s.read)) // read markers for the chapter list
@@ -300,12 +308,14 @@ export function Reader() {
       }
     }).catch(() => {})
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
-    api.setRead(sourceId, manga, chapter, true)
+    // read-on-finish ON: skip the open-time mark — the finish effect / Forward button does it instead.
+    if (!readOnFinish) api.setRead(sourceId, manga, chapter, true)
     api.detail(sourceId, manga)
       .then((d) => { setChapters(d.chapters); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
       .catch(() => api.recordHistory(sourceId, manga, chapter, title, name))
     return () => {
       clearTimeout(settle)
+      clearTimeout(arm)
       // Local save keeps this device instant; the server copy is what lets another device pick it up.
       savePosition(key, progressRef.current)
       api.setPosition(sourceId, manga, chapter, Math.round(progressRef.current * 1000) / 1000).catch(() => {})
@@ -372,6 +382,24 @@ export function Reader() {
       for (let i = 0; i < n; i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) + '&pre=1' }
     }).catch(() => { prefetchedNext.current = '' })
   }, [progress, nextCh, sourceId, title, settledFor, chapter])
+
+  // read-on-finish: mark read once you've genuinely finished — armed (open ≥3s, so a pre-load height
+  // blip can't false-trip), reached the last page, and at the bottom. Ref-guarded to fire exactly once.
+  useEffect(() => {
+    if (!readOnFinish || readArmedFor !== chapter) return
+    if (!count || page < count || progress < 0.97) return
+    if (markedReadRef.current === chapter) return
+    markedReadRef.current = chapter
+    api.setRead(sourceId, manga, chapter, true)
+    setReadUrls((s) => new Set(s).add(chapter))
+  }, [readOnFinish, readArmedFor, chapter, count, page, progress, sourceId, manga])
+
+  // read-on-finish: pressing Forward is an explicit "done", so mark the chapter you're leaving read.
+  function markCurrentRead() {
+    if (markedReadRef.current === chapter) return
+    markedReadRef.current = chapter
+    api.setRead(sourceId, manga, chapter, true)
+  }
 
   function openChapter(c?: Chapter) {
     if (!c) return
@@ -611,7 +639,7 @@ export function Reader() {
           <div className="reader-navrow">
             <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
             <button className="reader-chip" onClick={() => setShowChapters(true)} title="Chapter list">{name || `Chapter ${curNum}`}</button>
-            <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
+            <button className="r-icon" disabled={!nextCh} onClick={() => { if (readOnFinish) markCurrentRead(); openChapter(nextCh) }} aria-label="Next chapter"><IconChevronRight /></button>
           </div>
         </div>
 
