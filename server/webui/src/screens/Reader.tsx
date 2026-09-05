@@ -644,7 +644,7 @@ export function Reader() {
             <div className="sheet-drag" onPointerDown={sheetDown} onPointerMove={sheetMove} onPointerUp={sheetUp} onPointerCancel={sheetUp}>
               <div className="sheet-handle" />
               <div className="sheet-headrow">
-                <span className="sheet-title">Chapters · {chapters.length}</span>
+                <span className="sheet-title">Chapters · {chapterGroups.length}</span>
                 <button className="sheet-close" onClick={closeSheet} aria-label="Close">✕</button>
               </div>
             </div>
