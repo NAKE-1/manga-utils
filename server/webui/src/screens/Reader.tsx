@@ -169,7 +169,7 @@ export function Reader() {
   // Option A "read on finish" (dev toggle app.readOnFinish): don't mark read on open. `readArmedFor`
   // is the chapter that has been open long enough (~3s) that a pre-load height blip can't false-trip
   // the ≥97% mark — same stale-proof URL-keyed pattern as settledFor. markedReadRef fires the mark once.
-  const [readOnFinish] = useState(() => localStorage.getItem('app.readOnFinish') === '1')
+  const [readOnFinish, setReadOnFinish] = useState(() => localStorage.getItem('app.readOnFinish') === '1')
   const [readArmedFor, setReadArmedFor] = useState('')
   const markedReadRef = useRef('')
   const prefetchedNext = useRef('') // the chapter we have already warmed; cleared on every chapter change
@@ -227,6 +227,7 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.preload', String(preload)) }, [preload])
   useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
   useEffect(() => { localStorage.setItem('reader.awake', keepAwake ? '1' : '0') }, [keepAwake])
+  useEffect(() => { localStorage.setItem('app.readOnFinish', readOnFinish ? '1' : '0') }, [readOnFinish])
   // Keep the screen awake while reading (Wake Lock). The lock drops when the tab is backgrounded, so
   // re-acquire when it returns to the foreground.
   useEffect(() => {
@@ -739,6 +740,11 @@ export function Reader() {
             <button className="sheet-toggle" onClick={() => setKeepAwake((v) => !v)}>
               <span>Keep screen on</span>
               <span className={'switch' + (keepAwake ? ' on' : '')}><span className="knob" /></span>
+            </button>
+
+            <button className="sheet-toggle" onClick={() => setReadOnFinish((v) => !v)}>
+              <span>Mark read on finish<span className="sheet-sub">Only when you reach the end or tap next — not on open</span></span>
+              <span className={'switch' + (readOnFinish ? ' on' : '')}><span className="knob" /></span>
             </button>
           </div>
         </div>

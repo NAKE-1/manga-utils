@@ -646,7 +646,8 @@ img { display: block; }
 .sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: var(--muted-2); margin: 6px auto 12px; }
 .sheet-title { font-size: 19px; font-weight: 800; margin-bottom: 14px; }
 .sheet-label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 8px; }
-.sheet-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 18px; font-size: 15px; font-weight: 600; color: var(--text); }
+.sheet-toggle { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; margin-top: 18px; font-size: 15px; font-weight: 600; color: var(--text); text-align: left; }
+.sheet-sub { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--muted); }
 /* Reader loading-mode options: title + description + a radio on the right. */
 .load-opts { display: flex; flex-direction: column; }
 .load-opt { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
