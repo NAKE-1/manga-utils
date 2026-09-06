@@ -8,7 +8,7 @@ import { useNet } from '../components/NetStatus'
 type Sizing = 'clamp' | 'natural'
 type LoadMode = 'hybrid' | 'eager' | 'balanced' | 'lazy'
 const LOAD_MODES: { id: LoadMode; label: string; desc: string }[] = [
-  { id: 'hybrid', label: 'Eager-Hybrid', desc: 'Loads the first pages at high priority and the rest in the background — feels instant even on a slow or relayed link. Recommended.' },
+  { id: 'hybrid', label: 'Eager-Hybrid', desc: 'Loads the first pages first, the rest in the background. Instant even on a slow link; recommended.' },
   { id: 'eager', label: 'Eager', desc: 'Loads every page at once, all equal priority. Great on a strong connection; can choke a slow one.' },
   { id: 'balanced', label: 'Balanced', desc: 'Loads the first few pages, then the rest as you scroll.' },
   { id: 'lazy', label: 'Lazy', desc: 'Loads each page only as it scrolls into view. Lightest on data; pages may pop in.' },
@@ -192,7 +192,6 @@ export function Reader() {
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
   const [showPill, setShowPill] = useState<boolean>(lsGet('reader.pill', '1') === '1')
-  const [keepAwake, setKeepAwake] = useState<boolean>(lsGet('reader.awake', '0') === '1')
   const [loadMode, setLoadMode] = useState<LoadMode>((() => { const m = lsGet('reader.loadmode', 'hybrid'); return (m === 'blob' ? 'hybrid' : m) as LoadMode })())
   const [sheetDrag, setSheetDrag] = useState(0)
   const [dragging, setDragging] = useState(false)
@@ -226,22 +225,7 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.gap', String(gap)) }, [gap])
   useEffect(() => { localStorage.setItem('reader.preload', String(preload)) }, [preload])
   useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
-  useEffect(() => { localStorage.setItem('reader.awake', keepAwake ? '1' : '0') }, [keepAwake])
   useEffect(() => { localStorage.setItem('app.readOnFinish', readOnFinish ? '1' : '0') }, [readOnFinish])
-  // Keep the screen awake while reading (Wake Lock). The lock drops when the tab is backgrounded, so
-  // re-acquire when it returns to the foreground.
-  useEffect(() => {
-    if (!keepAwake) return
-    let lock: WakeLockSentinel | null = null
-    let released = false
-    const acquire = async () => {
-      try { lock = (await navigator.wakeLock?.request('screen')) ?? null } catch { /* denied / unsupported */ }
-    }
-    acquire()
-    const onVis = () => { if (document.visibilityState === 'visible' && !released) acquire() }
-    document.addEventListener('visibilitychange', onVis)
-    return () => { released = true; document.removeEventListener('visibilitychange', onVis); lock?.release().catch(() => {}) }
-  }, [keepAwake])
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
   // Center the current chapter when the chapter list opens.
   useEffect(() => { if (showChapters) requestAnimationFrame(() => currentChapRef.current?.scrollIntoView({ block: 'center' })) }, [showChapters])
@@ -735,11 +719,6 @@ export function Reader() {
             <button className="sheet-toggle" onClick={() => setShowPill((v) => !v)}>
               <span>Progress pill</span>
               <span className={'switch' + (showPill ? ' on' : '')}><span className="knob" /></span>
-            </button>
-
-            <button className="sheet-toggle" onClick={() => setKeepAwake((v) => !v)}>
-              <span>Keep screen on</span>
-              <span className={'switch' + (keepAwake ? ' on' : '')}><span className="knob" /></span>
             </button>
 
             <button className="sheet-toggle" onClick={() => setReadOnFinish((v) => !v)}>
