@@ -1069,6 +1069,40 @@ private fun initiateRestart(restart: Boolean) {
     }.apply { isDaemon = false; name = "restart" }.start()
 }
 
+// A WebView drag fires one /api/webview/scroll per pointer-move (dozens/sec). Instead of an access-log
+// line each (suppressed in CallLogging), collapse a gesture into two lines: "scroll start" on the first
+// move, "scroll end (N moves)" once it's been idle for IDLE_MS. Idle-debounced on a daemon scheduler.
+private object WebviewScrollLog {
+    private val log = org.slf4j.LoggerFactory.getLogger("server")
+    private val sched = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "wv-scroll-log").apply { isDaemon = true }
+    }
+    private const val IDLE_MS = 500L
+    private var moves = 0
+    private var lastAt = 0L
+    private var stopTask: java.util.concurrent.ScheduledFuture<*>? = null
+
+    @Synchronized
+    fun onScroll() {
+        lastAt = System.currentTimeMillis()
+        if (moves == 0) log.info("WEBVIEW  scroll start")
+        moves++
+        stopTask?.cancel(false)
+        stopTask = sched.schedule({ flush() }, IDLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    @Synchronized
+    private fun flush() {
+        if (moves == 0) return
+        if (System.currentTimeMillis() - lastAt < IDLE_MS - 50) { // a move snuck in past the cancel — re-arm
+            stopTask = sched.schedule({ flush() }, IDLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            return
+        }
+        log.info("WEBVIEW  scroll end ({} moves)", moves)
+        moves = 0
+    }
+}
+
 // ---------------- Live MangaFire shape-captcha auto-solver (drives the streamed JcefRemoteView) ----------
 private val RV get() = xyz.nulldev.androidcompat.webkit.JcefRemoteView
 private const val AUTOSOLVE_TRIES = 6
@@ -1250,7 +1284,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p == "/api/version" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/solver/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p == "/api/version" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/solver/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events" || p == "/api/webview/scroll" || p == "/api/webview/input")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -2154,6 +2188,7 @@ fun Application.module() {
             val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
             val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dy required"))
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dy)
+            WebviewScrollLog.onScroll()
             call.respond(HttpStatusCode.OK)
         }
         // Auto-solve the shape-captcha currently shown in the streamed WebView (detect→match→click→refresh
