@@ -506,11 +506,13 @@ object DownloadQueue {
         persist()
     }
 
-    /** "Retry now" button on a parked task — skip the remaining cooldown. */
+    /** "Retry now" button on a parked task — skip the remaining cooldown. An explicit user override, so
+     *  also drop the source-wide rest timer (like resume does); otherwise the task just re-queues and
+     *  immediately shows "Source resting" behind the cooldown pump() still enforces. */
     @Synchronized
     fun forceRetry(id: String) {
         val t = tasks[id] ?: return
-        if (t.state == "retrywait") { reArm(t); persist() }
+        if (t.state == "retrywait") { sourceCooldownUntil.remove(t.sourceId); reArm(t); persist() }
     }
 
     /**
