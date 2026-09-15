@@ -521,7 +521,7 @@ object DownloadQueue {
      * must not be written off.
      */
     private fun isPermanent(message: String): Boolean =
-        message.contains("404") || message.contains("410") || message.contains("No chapters matched")
+        message.contains("404") || message.contains("No chapters matched")
 
     /** URLs of chapters that failed permanently (404/delisted) — the ones auto-retry must skip. Name-keyed
      *  like explainFailure, since attempts carry the chapter name, not its URL. */
@@ -571,7 +571,7 @@ object DownloadQueue {
     /** Map a raw error to a plain explanation. Unrecognised messages pass through unchanged. */
     private fun reasonFor(message: String): String =
         when {
-            message.contains("404") || message.contains("410") ->
+            message.contains("404") ->
                 "the source is missing these images - the chapter is broken on their end, so retrying won't help"
             message.contains("521") || message.contains("522") || message.contains("523") ->
                 "the source's server is unreachable - usually temporary, worth retrying later"
