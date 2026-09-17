@@ -1013,14 +1013,14 @@ fun main() {
         }
         log.info("library badges prewarmed in {} ms ({} series)", System.currentTimeMillis() - t0, entries.size)
     }.apply { isDaemon = true; name = "lib-warm" }.start()
-    // Warm CEF (JCEF) in the background so the WebView is ready the instant it's opened. Previously a
-    // MangaFire search implicitly warmed it via JcefFetch; now MangaFire routes to the solver, so nothing
-    // triggers CEF until the first WebView click — which made "Opening…" hang on the cold init. Warming here
-    // also surfaces any CEF init failure in the boot log instead of on first WebView use.
-    Thread {
-        runCatching { xyz.nulldev.androidcompat.webkit.CefManager.ensureStarted() }
-            .onFailure { log.warn("CEF warmup failed (WebView-based sources may be unavailable): {}", it.message) }
-    }.apply { isDaemon = true; name = "cef-warmup" }.start()
+    // CEF is NOT prewarmed. libcef's background native threads intermittently SIGILL deep inside Chromium
+    // (a CEF memory-lifetime bug — freed/unmapped code, NOT a CPU-instruction gap; the i5-1340P has AVX2
+    // etc.), and because JCEF runs in-process that crash kills the whole server (pid=1). Prewarming kept
+    // those threads alive during normal browsing, so the server would die at random. MangaFire now routes
+    // through the curl_cffi solver, so the JCEF WebView is only a rarely-used manual fallback — start it
+    // lazily on the first WebView open (JcefRemoteView.open → CefHelper.createClient → ensureStarted) so a
+    // libcef crash can only happen during deliberate WebView use, not while browsing. Tradeoff: the first
+    // WebView open pays the cold-init delay again. See memory manga-utils-vm-cpu-host.md.
     // Restore + resume the download queue from disk (survives a crash/restart).
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     NetMonitor.start() // watch server internet reachability so the app can degrade gracefully offline
