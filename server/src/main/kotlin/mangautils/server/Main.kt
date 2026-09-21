@@ -486,6 +486,17 @@ private data class SettingsDto(
 
 @Serializable
 private data class WebViewInfoDto(val width: Int, val height: Int, val url: String)
+
+// WebView open result. status: "ready" (width/height valid, start streaming frames) | "starting" (CEF is
+// coming up — show a spinner and retry) | "failed"/"cold" (detail says why, e.g. "restart the server").
+@Serializable
+private data class WebViewOpenDto(
+    val status: String,
+    val width: Int = 0,
+    val height: Int = 0,
+    val url: String = "",
+    val detail: String? = null,
+)
 @Serializable
 private data class WebViewStatusDto(val cookies: Int)
 // MangaFire /@waf/generate response — snake_case field names match the JSON so no @SerialName needed.
@@ -2166,8 +2177,21 @@ fun Application.module() {
                         ?: (src.baseUrl.trimEnd('/') + "/" + path.trimStart('/'))
                 }
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("a http(s) url or valid source id is required"))
+            // Non-blocking: kick off CEF (lazy — no startup prewarm) and, if it isn't up yet, return "starting"
+            // immediately so the client can show "Starting Chromium…" + auto-retry, instead of the request
+            // hanging on the 30s cold-init and surfacing as "unable to reach server".
+            xyz.nulldev.androidcompat.webkit.CefManager.ensureStarted()
+            if (!xyz.nulldev.androidcompat.webkit.CefManager.isReady()) {
+                val st = xyz.nulldev.androidcompat.webkit.CefManager.state()
+                log.info("webview: CEF {} — deferring open of {}", st, url)
+                return@post call.respond(
+                    HttpStatusCode.Accepted,
+                    WebViewOpenDto(st, url = url, detail = xyz.nulldev.androidcompat.webkit.CefManager.stateDetail()),
+                )
+            }
+            // CEF is ready → the open is fast (no cold-init wait).
             withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.open(url) }
-            call.respond(WebViewInfoDto(xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url))
+            call.respond(WebViewOpenDto("ready", xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url))
         }
         get("/api/webview/frame") {
             val jpg = withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.frameJpeg() }

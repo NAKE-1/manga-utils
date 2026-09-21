@@ -1356,7 +1356,8 @@ main > * { animation: fade-up .22s ease backwards; }
 .wv-solvemsg { flex: 0 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: #b9c6cf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wv-stage { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 12px; overflow: auto; }
 .wv-frame { width: min(96vw, 460px); height: auto; border-radius: 10px; box-shadow: 0 6px 28px rgba(0,0,0,.5); background: #111; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
-.wv-status { position: absolute; margin-top: 44px; font-size: 13px; color: #8aa0ad; }
+.wv-status { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(80%, 320px); text-align: center; font-size: 13px; color: #8aa0ad; }
+.wv-status-msg { line-height: 1.5; }
 
 /* Dev WebView tester (Settings → Developer). */
 .wv-test-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }

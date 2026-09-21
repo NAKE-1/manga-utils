@@ -5,6 +5,8 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react'
 // are already in the shared cookie store, so the caller just retries. Opens by ?url or by source id.
 export function WebviewModal({ url, source, path, onClose }: { url?: string; source?: number | string; path?: string; onClose: () => void }) {
   const [status, setStatus] = useState('Opening…')
+  const [starting, setStarting] = useState(false) // CEF still coming up → show spinner + let the effect auto-retry
+  const [reloadKey, setReloadKey] = useState(0)    // Reload button bumps this to re-run the open effect
   const [shownUrl, setShownUrl] = useState('')
   const [cookies, setCookies] = useState<number | null>(null)
   const [solveMsg, setSolveMsg] = useState('')
@@ -16,20 +18,12 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
 
   useEffect(() => {
     let alive = true
-    let timer: number | undefined
+    let retryTimer: number | undefined
+    let frameTimer: number | undefined
     const q = url ? 'url=' + encodeURIComponent(url) : 'source=' + encodeURIComponent(String(source ?? '')) + (path ? '&path=' + encodeURIComponent(path) : '')
-    ;(async () => {
-      try {
-        const r = await fetch('/api/webview/open?' + q, { method: 'POST' })
-        if (!alive) return
-        if (!r.ok) { setStatus(`Couldn't open (HTTP ${r.status})`); return }
-        const info = await r.json()
-        if (!alive) return
-        setDims({ w: info.width, h: info.height })
-        setShownUrl(info.url || '')
-        setStatus('Loading page…')
-      } catch { if (alive) setStatus("Couldn't reach the server"); return }
 
+    // Stream JPEG frames — only started once CEF reports "ready" (so we never poll frames during cold init).
+    const startFrames = () => {
       const tick = async () => {
         try {
           const fr = await fetch('/api/webview/frame', { cache: 'no-store' })
@@ -41,18 +35,49 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
             setStatus('')
           }
         } catch { /* transient — keep polling */ }
-        if (alive) timer = window.setTimeout(tick, 130)
+        if (alive) frameTimer = window.setTimeout(tick, 130)
       }
       tick()
-    })()
+    }
+
+    // Ask the server to open the page. CEF is lazy (no startup prewarm), so the first open after a restart
+    // returns "starting" while Chromium comes up — show a spinner and retry every 2s until "ready" (or a
+    // clean "failed" that tells you to restart), instead of the request hanging and reading as "unreachable".
+    const attempt = async () => {
+      if (!alive) return
+      try {
+        const r = await fetch('/api/webview/open?' + q, { method: 'POST' })
+        if (!alive) return
+        if (!r.ok) { setStarting(false); setStatus(`Couldn't open (HTTP ${r.status})`); return }
+        const info = await r.json()
+        if (!alive) return
+        if (info.status === 'ready') {
+          setStarting(false)
+          setDims({ w: info.width, h: info.height })
+          setShownUrl(info.url || '')
+          setStatus('Loading page…')
+          startFrames()
+        } else if (info.status === 'failed') {
+          setStarting(false)
+          setStatus(info.detail || 'The in-app browser failed to start — restart the server to recover.')
+        } else { // "starting" / "cold" — Chromium is coming up; keep polling
+          setStarting(true)
+          setStatus('Starting the in-app browser… (first use after a restart can take a few seconds)')
+          retryTimer = window.setTimeout(attempt, 2000)
+        }
+      } catch { if (alive) { setStarting(false); setStatus("Couldn't reach the server — tap Reload to try again.") } }
+    }
+    setStatus('Opening…')
+    attempt()
 
     return () => {
       alive = false
-      if (timer) clearTimeout(timer)
+      if (retryTimer) clearTimeout(retryTimer)
+      if (frameTimer) clearTimeout(frameTimer)
       if (lastObj.current) URL.revokeObjectURL(lastObj.current)
       fetch('/api/webview/close', { method: 'POST' }).catch(() => {})
     }
-  }, [url, source, path])
+  }, [url, source, path, reloadKey])
 
   // Poll the cookie counter for the top bar (visual only) — slow, it just reassures you the session is
   // capturing cookies (e.g. cf_clearance) as you solve.
@@ -143,7 +168,13 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
         {cookies != null && <span className="wv-cookies" title="Cookies stored for this site in the session">🍪 {cookies}</span>}
       </div>
       <div className="wv-stage">
-        {status && <div className="wv-status">{status}</div>}
+        {status && (
+          <div className="wv-status">
+            {starting && <div className="spinner" />}
+            <div className="wv-status-msg">{status}</div>
+            <button className="btn" onClick={() => { setStarting(false); setStatus('Opening…'); setReloadKey((k) => k + 1) }}>⟳ Reload</button>
+          </div>
+        )}
         <img
           ref={imgRef}
           className="wv-frame"
