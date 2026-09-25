@@ -74,6 +74,11 @@ _frame_cache = None               # latest JPEG, pushed by _screencast_loop; /fr
 _frame_wanted_until = 0.0         # capture only while a client is actively polling /frame
 _nav_gen = 0                      # bumped on each navigate so the screencast re-arms after a page change
 _fps = 0.0                        # frames/sec pushed by Chrome, updated ~every 5s (surfaced on /health)
+_ws = None                        # the ONE CDP websocket: screencast events + control commands
+_ws_lock = threading.Lock()       # guards _ws swap + serializes sends (recv runs lock-free in the loop)
+_ws_id = 0                        # one id space for every CDP command sent on _ws
+_pending = {}                     # command id -> {"ev": Event, "result": <cdp result>} for want_reply calls
+_pending_lock = threading.Lock()
 
 
 def _build_driver_once():
@@ -148,10 +153,64 @@ def _start_warm():
         threading.Thread(target=_warm, daemon=True).start()
 
 
-def _pin_viewport(d):
-    # Force the tab's rendered size to the OSR viewport so screenshots + tap coordinates line up 1:1.
-    d.execute_cdp_cmd("Emulation.setDeviceMetricsOverride",
-                      {"width": WIDTH, "height": HEIGHT, "deviceScaleFactor": 1, "mobile": True})
+def _next_id():
+    global _ws_id
+    with _pending_lock:
+        _ws_id += 1
+        return _ws_id
+
+
+def _cdp(method, params=None, want_reply=False, timeout=8):
+    """Send a CDP command over the shared DevTools websocket. FIRE-AND-FORGET by default: navigate/input/
+    scroll/close/reload/ack need no reply and must never block a request thread — a control command that
+    waited on a busy renderer is exactly what re-wedged the sidecar after a link click. want_reply=True waits
+    for the matching response with a hard timeout (autosolve's DOM reads); a hung renderer times out cleanly.
+    The screencast loop is the sole reader and routes responses back here by id."""
+    mid = _next_id()
+    ev = None
+    if want_reply:
+        ev = threading.Event()
+        with _pending_lock:
+            _pending[mid] = {"ev": ev, "result": None}
+    with _ws_lock:
+        ws = _ws
+        if ws is None:
+            if ev is not None:
+                with _pending_lock:
+                    _pending.pop(mid, None)
+            raise RuntimeError("devtools ws not connected")
+        ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+    if not want_reply:
+        return None
+    if not ev.wait(timeout):
+        with _pending_lock:
+            _pending.pop(mid, None)
+        raise TimeoutError(f"{method} timed out after {timeout}s")
+    with _pending_lock:
+        slot = _pending.pop(mid, {}) or {}
+    return slot.get("result")
+
+
+def _drop_ws():
+    """Close the shared ws and wake any command waiters (they fail fast instead of waiting the full timeout).
+    Called by the loop when the driver goes away or the ws errors."""
+    global _ws
+    with _ws_lock:
+        conn = _ws
+        _ws = None
+    if conn is not None:
+        try: conn.close()
+        except Exception: pass
+    with _pending_lock:
+        for slot in _pending.values():
+            slot["ev"].set()
+        _pending.clear()
+
+
+def _pin_viewport():
+    # Force the tab's rendered size to the OSR viewport so frames + tap coordinates line up 1:1.
+    _cdp("Emulation.setDeviceMetricsOverride",
+         {"width": WIDTH, "height": HEIGHT, "deviceScaleFactor": 1, "mobile": True})
 
 
 @app.get("/health")
@@ -163,7 +222,7 @@ def health():
 
 @app.post("/webview/open")
 def webview_open():
-    global _current_url, _driver, _frame_cache, _nav_gen
+    global _current_url, _frame_cache, _nav_gen
     url = (request.get_json(silent=True) or {}).get("url") or request.args.get("url") or ""
     if not url.startswith("http"):
         return jsonify(status="failed", detail="a http(s) url is required"), 400
@@ -175,24 +234,20 @@ def webview_open():
             return jsonify(status="failed", detail=_warm_error), 202
         _start_warm()
         return jsonify(status="starting", url=url), 202
-    with _lock:
-        try:
-            _pin_viewport(_driver)
-            # CDP Page.navigate returns immediately after issuing the navigation — unlike driver.get(), which
-            # blocks until the page "loads" (undetected-chromedriver ignores page_load_strategy, and a
-            # Cloudflare page never finishes). The page then streams in via /frame.
-            _driver.execute_cdp_cmd("Page.navigate", {"url": url})
-            _current_url = url
-            _nav_gen += 1        # tell the screencast loop to re-arm so frames resume on the new page
-            _frame_cache = None  # drop the previous page's frame so the view doesn't show stale content
-            print(f"browser: opened {url}", flush=True)
-            return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
-        except Exception as e:
-            # The driver died (crashed / was reaped mid-flight). Drop it so the next open cold-launches
-            # fresh, and tell the client to retry — don't wedge on a dead handle.
-            print(f"browser: open failed ({e}) — dropping driver, will re-warm", flush=True)
-            _driver = None
-            return jsonify(status="starting", detail=str(e)[:200]), 202
+    try:
+        _pin_viewport()
+        # Page.navigate returns immediately (fire-and-forget over the ws) — the page then streams in via
+        # /frame. No lock, no waiting on the renderer, so a slow/CF page can't wedge this.
+        _cdp("Page.navigate", {"url": url})
+        _current_url = url
+        _nav_gen += 1        # tell the screencast loop to re-arm so frames resume on the new page
+        _frame_cache = None  # drop the previous page's frame so the view doesn't show stale content
+        print(f"browser: opened {url}", flush=True)
+        return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
+    except Exception as e:
+        # ws not connected yet (driver just warmed; it connects within ~0.5s) → client retries "starting".
+        print(f"browser: open not ready ({e}) — retry", flush=True)
+        return jsonify(status="starting", detail=str(e)[:200]), 202
 
 
 @app.get("/webview/frame")
@@ -210,34 +265,31 @@ def webview_frame():
 
 @app.post("/webview/input")
 def webview_input():
+    if _driver is None:
+        return ("", 409)
     x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
-    with _lock:
-        if _driver is None:
-            return ("", 409)
-        try:
-            for t in ("mousePressed", "mouseReleased"):
-                _driver.execute_cdp_cmd("Input.dispatchMouseEvent",
-                                        {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
-            return ("", 200)
-        except Exception as e:
-            print(f"browser: input failed: {e}", flush=True)
-            return ("", 500)
+    try:
+        for t in ("mousePressed", "mouseReleased"):
+            _cdp("Input.dispatchMouseEvent",
+                 {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
+        return ("", 200)
+    except Exception as e:
+        print(f"browser: input failed: {e}", flush=True)
+        return ("", 500)
 
 
 @app.post("/webview/scroll")
 def webview_scroll():
+    if _driver is None:
+        return ("", 409)
     x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
     dy = int(request.args.get("dy", 0))
-    with _lock:
-        if _driver is None:
-            return ("", 409)
-        try:
-            _driver.execute_cdp_cmd("Input.dispatchMouseEvent",
-                                    {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": dy})
-            return ("", 200)
-        except Exception as e:
-            print(f"browser: scroll failed: {e}", flush=True)
-            return ("", 500)
+    try:
+        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": dy})
+        return ("", 200)
+    except Exception as e:
+        print(f"browser: scroll failed: {e}", flush=True)
+        return ("", 500)
 
 
 @app.post("/webview/close")
@@ -246,14 +298,13 @@ def webview_close():
     # and paying the ~2-3s relaunch every time. The idle reaper quits it later if nobody reopens.
     global _current_url
     _touch()
-    with _lock:
-        if _driver is not None:
-            try:
-                _driver.execute_cdp_cmd("Page.navigate", {"url": "about:blank"})  # non-blocking, like open
-            except Exception:
-                pass
-            _current_url = ""
-            print("browser: page closed (Chromium kept warm)", flush=True)
+    if _driver is not None:
+        try:
+            _cdp("Page.navigate", {"url": "about:blank"})  # fire-and-forget, like open
+        except Exception:
+            pass
+        _current_url = ""
+        print("browser: page closed (Chromium kept warm)", flush=True)
     return ("", 200)
 
 
@@ -280,23 +331,14 @@ def _captcha_mod():
     return _captcha
 
 
-def _cdp(cmd, params=None):
-    """One CDP command under the lock. Locking PER-OP (not around the whole solve) lets /frame interleave
-    so the streamed view keeps updating while we click, and never holds the lock for the ~seconds a solve
-    takes."""
-    with _lock:
-        if _driver is None:
-            raise RuntimeError("no driver")
-        return _driver.execute_cdp_cmd(cmd, params or {})
-
-
 def _eval_js(expr):
-    return (_cdp("Runtime.evaluate", {"expression": expr, "returnByValue": True}) or {}).get("result", {}).get("value")
+    r = _cdp("Runtime.evaluate", {"expression": expr, "returnByValue": True}, want_reply=True, timeout=8)
+    return ((r or {}).get("result") or {}).get("value")
 
 
 def _cdp_click(x, y):
     for t in ("mousePressed", "mouseReleased"):
-        _cdp("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
+        _cdp("Input.dispatchMouseEvent", {"type": t, "x": int(x), "y": int(y), "button": "left", "clickCount": 1})
 
 
 def _on_challenge():
@@ -420,85 +462,117 @@ def _page_ws_url():
 
 
 def _screencast_loop():
-    """Event-driven frame channel — the CDP analog of JCEF's onPaint, and the fix for the poll model that
-    wedged the sidecar. We open our OWN websocket to Chromium's DevTools and Page.startScreencast; Chrome
-    then PUSHES a JPEG each time the page actually repaints. A static or hung page simply sends nothing —
-    no lock held, no thread pinned, the sidecar stays responsive. Runs only while a client is polling /frame
-    (_frame_wanted_until) and re-arms after each navigation (_nav_gen)."""
-    global _frame_cache, _fps
-    ws = None
-    started = False
+    """The ONE DevTools websocket, read here and only here. It carries two things:
+
+      • pushed frames  — Page.startScreencast makes Chrome push a JPEG per repaint (the CDP analog of JCEF's
+        onPaint), started only while a client is polling /frame. A static/hung page just sends nothing.
+      • control replies — navigate/input/scroll/close/eval are SENT on this same socket by request threads
+        (_cdp); this thread is the sole reader, so it routes each response back to its waiter by id.
+
+    Because this reader never blocks a request thread and control sends are fire-and-forget, nothing can hold
+    a lock waiting on a busy renderer — the failure that wedged the old poll+selenium model on a link click.
+    We re-arm the screencast on ANY main-frame navigation (our /open AND a user clicking a link), so frames
+    keep flowing when the URL changes — the thing JCEF did for free."""
+    global _frame_cache, _fps, _driver, _ws
+    started = False           # screencast currently running on _ws
     seen_gen = -1
-    msg_id = 0
     fcount = 0
     window = time.time()
-    last_warn = 0.0   # throttle connect/error logging so a down endpoint doesn't spam the log
-
-    def _send(method, params=None):
-        nonlocal msg_id
-        msg_id += 1
-        ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+    last_warn = 0.0
+    connect_fail_since = 0.0
 
     def _arm():
-        _send("Page.startScreencast",
-              {"format": "jpeg", "quality": 55, "maxWidth": WIDTH, "maxHeight": HEIGHT, "everyNthFrame": 1})
+        _cdp("Page.startScreencast",
+             {"format": "jpeg", "quality": 55, "maxWidth": WIDTH, "maxHeight": HEIGHT, "everyNthFrame": 1})
 
     while True:
-        # No browser, or nobody watching → tear the screencast down and idle cheaply.
-        if _driver is None or time.time() >= _frame_wanted_until:
-            if ws is not None:
-                try: ws.close()
-                except Exception: pass
-                ws, started = None, False
-            _fps = 0.0
-            time.sleep(0.2)
-            continue
-        try:
-            if ws is None:
+        if _driver is None:
+            if _ws is not None:
+                _drop_ws()
+            started, _fps = False, 0.0
+            time.sleep(0.2); continue
+
+        # Connect the shared ws as soon as the driver is up — control needs it even before frames are polled.
+        if _ws is None:
+            try:
                 url = _page_ws_url()
                 if not url:
-                    if time.time() - last_warn > 5:
-                        print(f"browser: screencast — no page target yet (addr={_devtools_addr()})", flush=True)
-                        last_warn = time.time()
-                    time.sleep(0.5); continue
-                ws = websocket.create_connection(url, timeout=5)
-                ws.settimeout(1.0)
-                started = False
-                print("browser: screencast connected", flush=True)
-            if not started:
-                _send("Page.enable")
+                    raise RuntimeError("no page target")
+                conn = websocket.create_connection(url, enable_multithread=True, timeout=5)
+                conn.settimeout(1.0)
+                with _ws_lock:
+                    _ws = conn
+                _cdp("Page.enable")
+                started, seen_gen, connect_fail_since = False, -1, 0.0
+                print("browser: devtools ws connected", flush=True)
+            except Exception as e:
+                now = time.time()
+                if connect_fail_since == 0.0:
+                    connect_fail_since = now
+                if now - last_warn > 5:
+                    print(f"browser: devtools connect failed ({type(e).__name__}: {e})", flush=True)
+                    last_warn = now
+                # Port never came up = Chromium is really dead → recreate so /open can re-warm.
+                if now - connect_fail_since > 15:
+                    print("browser: devtools unreachable 15s — recreating Chromium", flush=True)
+                    victim = None
+                    with _lock:
+                        victim, _driver = _driver, None
+                    if victim is not None:
+                        try: victim.quit()
+                        except Exception: pass
+                    connect_fail_since = 0.0
+                time.sleep(0.5); continue
+
+        wanted = time.time() < _frame_wanted_until
+        try:
+            if wanted and (not started or seen_gen != _nav_gen):
                 _arm()
                 started, seen_gen = True, _nav_gen
-            elif seen_gen != _nav_gen:
-                _arm()                      # page changed → re-arm so frames resume
-                seen_gen = _nav_gen
+            elif started and not wanted:
+                _cdp("Page.stopScreencast")
+                started, _fps = False, 0.0
+
+            ws = _ws
+            if ws is None:
+                continue
             try:
                 raw = ws.recv()
             except websocket.WebSocketTimeoutException:
-                continue  # no repaint since last frame = normal (static page); loop re-checks driver/wanted
+                continue  # no message = normal (static page, idle); loop re-checks driver/wanted/nav
             if not raw:
                 continue
             m = json.loads(raw)
-            if m.get("method") == "Page.screencastFrame":
+            mid = m.get("id")
+            if mid is not None:                          # a command response → hand it to its waiter
+                with _pending_lock:
+                    slot = _pending.get(mid)
+                    if slot:
+                        slot["result"] = m.get("result")
+                        slot["ev"].set()
+                continue
+            method = m.get("method")
+            if method == "Page.screencastFrame":
                 p = m["params"]
                 _frame_cache = base64.b64decode(p["data"])
-                _send("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
+                _cdp("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
                 fcount += 1
                 dt = time.time() - window
                 if dt >= 5.0:
                     _fps = fcount / dt
                     print(f"browser: screencast {_fps:.1f} fps", flush=True)
                     fcount, window = 0, time.time()
+            elif method == "Page.frameNavigated" and not (m.get("params", {}).get("frame", {}).get("parentId")):
+                # A main-frame navigation the page did itself (link click) — re-arm so frames resume.
+                if wanted:
+                    _arm()
         except Exception as e:
-            # ws died (driver recreated/quit, endpoint down, or the target went away) → drop it and
-            # reconnect next pass. Log throttled (not just under VERBOSE) so a persistent failure is visible.
+            # ws died (driver recreated/quit, endpoint down, or the target went away) → drop and reconnect.
             if time.time() - last_warn > 5:
-                print(f"browser: screencast reconnect ({type(e).__name__}: {e})", flush=True)
+                print(f"browser: devtools ws error ({type(e).__name__}: {e})", flush=True)
                 last_warn = time.time()
-            try:
-                if ws is not None: ws.close()
-            except Exception: pass
-            ws, started = None, False
+            _drop_ws()
+            started = False
             time.sleep(0.5)
 
 
