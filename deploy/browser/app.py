@@ -88,6 +88,9 @@ def _build_driver_once():
     # Pin a known DevTools port so the screencast thread can always reach it, even if the driver doesn't
     # report debuggerAddress as a capability (undetected-chromedriver sometimes doesn't).
     opts.add_argument(f"--remote-debugging-port={DEVTOOLS_PORT}")
+    # Chrome 111+ rejects DevTools websocket handshakes whose Origin isn't allow-listed (403 Forbidden). Our
+    # screencast ws connects from localhost, so allow all origins — the port is bound to 127.0.0.1 only anyway.
+    opts.add_argument("--remote-allow-origins=*")
     # Don't block get() until the whole page finishes: an interactive view streams the load via frames,
     # and a Cloudflare-gated page (MangaFire) never "finishes" — a normal strategy hangs open() forever.
     opts.page_load_strategy = "none"
