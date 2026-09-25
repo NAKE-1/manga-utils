@@ -34,6 +34,12 @@ app = Flask(__name__)
 VERBOSE = os.environ.get("MU_BROWSER_VERBOSE", "") not in ("", "0", "false", "False")
 logging.getLogger("werkzeug").setLevel(logging.INFO if VERBOSE else logging.WARNING)
 
+
+def _dbg(msg):
+    """Low-volume diagnostic trace (navigations, screencast arm, target crashes, cdp errors). Always on —
+    these are rare events, not per-frame — so the log tells the story of a freeze without needing VERBOSE."""
+    print(f"browser dbg: {msg}", flush=True)
+
 IDLE_QUIT_SEC = 900   # close idle Chromium after 15 min (5 min was too aggressive — constant cold relaunches)
 _last_activity = time.time()
 
@@ -220,6 +226,37 @@ def health():
                    fps=round(_fps, 1))
 
 
+@app.get("/webview/debug")
+def webview_debug():
+    """Snapshot for diagnosing a freeze — hit this (curl http://localhost:9000/webview/debug) while it's
+    stuck. `targets` shows every Chromium tab/popup (a tap that opened an ad tab shows up as an extra page
+    target); `live` is what the tab we actually control reports as its URL/title (times out fast if that
+    renderer is pinned). Mismatch between current_url and live, or an unexpected extra target, is the smoking
+    gun."""
+    info = {
+        "driver": _driver is not None,
+        "ws_connected": _ws is not None,
+        "current_url": _current_url,
+        "fps": round(_fps, 1),
+        "frame_bytes": len(_frame_cache) if _frame_cache else 0,
+        "frame_wanted": time.time() < _frame_wanted_until,
+        "nav_gen": _nav_gen,
+        "pending_cmds": len(_pending),
+    }
+    try:
+        addr = _devtools_addr()
+        raw = urllib.request.urlopen(f"http://{addr}/json", timeout=3).read()
+        info["targets"] = [{"type": t.get("type"), "url": (t.get("url") or "")[:120],
+                            "title": (t.get("title") or "")[:60]} for t in json.loads(raw)]
+    except Exception as e:
+        info["targets_error"] = f"{type(e).__name__}: {e}"
+    try:
+        info["live"] = _eval_js("(function(){return location.href+' | '+document.title;})()")
+    except Exception as e:
+        info["live_error"] = f"{type(e).__name__}: {e}"
+    return jsonify(**info)
+
+
 @app.post("/webview/open")
 def webview_open():
     global _current_url, _frame_cache, _nav_gen
@@ -268,6 +305,7 @@ def webview_input():
     if _driver is None:
         return ("", 409)
     x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
+    _dbg(f"tap {x},{y}")
     try:
         for t in ("mousePressed", "mouseReleased"):
             _cdp("Input.dispatchMouseEvent",
@@ -480,6 +518,8 @@ def _screencast_loop():
     window = time.time()
     last_warn = 0.0
     connect_fail_since = 0.0
+    last_frame_at = time.time()   # for the self-heal re-arm below
+    stalled = False               # meant to be streaming but Chrome has gone quiet (logged once per episode)
 
     def _arm():
         _cdp("Page.startScreencast",
@@ -528,7 +568,17 @@ def _screencast_loop():
         try:
             if wanted and (not started or seen_gen != _nav_gen):
                 _arm()
-                started, seen_gen = True, _nav_gen
+                started, seen_gen, last_frame_at = True, _nav_gen, time.time()
+                _dbg("screencast armed (open/nav)")
+            elif wanted and started and time.time() - last_frame_at > 3.0:
+                # SELF-HEAL: we're meant to be streaming but Chrome has gone quiet for 3s. Some navigations
+                # (CF redirects, JS location changes) don't fire a clean Page.frameNavigated, so re-arm
+                # unconditionally. On a truly static page this just pulls one fresh keyframe — harmless.
+                _arm()
+                last_frame_at = time.time()
+                if not stalled:
+                    _dbg("stalled: no frames while watching — re-arming (renderer busy, or wrong/gone tab?)")
+                    stalled = True
             elif started and not wanted:
                 _cdp("Page.stopScreencast")
                 started, _fps = False, 0.0
@@ -545,6 +595,9 @@ def _screencast_loop():
             m = json.loads(raw)
             mid = m.get("id")
             if mid is not None:                          # a command response → hand it to its waiter
+                err = m.get("error")
+                if err:
+                    _dbg(f"cdp error on id {mid}: {err}")
                 with _pending_lock:
                     slot = _pending.get(mid)
                     if slot:
@@ -556,6 +609,10 @@ def _screencast_loop():
                 p = m["params"]
                 _frame_cache = base64.b64decode(p["data"])
                 _cdp("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
+                last_frame_at = time.time()
+                if stalled:
+                    _dbg("frames resumed")
+                    stalled = False
                 fcount += 1
                 dt = time.time() - window
                 if dt >= 5.0:
@@ -563,9 +620,15 @@ def _screencast_loop():
                     print(f"browser: screencast {_fps:.1f} fps", flush=True)
                     fcount, window = 0, time.time()
             elif method == "Page.frameNavigated" and not (m.get("params", {}).get("frame", {}).get("parentId")):
-                # A main-frame navigation the page did itself (link click) — re-arm so frames resume.
+                # A main-frame navigation the page did itself (link click / redirect) — re-arm so frames resume.
+                _dbg(f"frameNavigated -> {m.get('params', {}).get('frame', {}).get('url', '?')[:120]}")
                 if wanted:
                     _arm()
+                    last_frame_at = time.time()
+            elif method == "Page.loadEventFired":
+                _dbg("loadEventFired")
+            elif method == "Inspector.targetCrashed":
+                print("browser: renderer TARGET CRASHED (Inspector.targetCrashed)", flush=True)
         except Exception as e:
             # ws died (driver recreated/quit, endpoint down, or the target went away) → drop and reconnect.
             if time.time() - last_warn > 5:
