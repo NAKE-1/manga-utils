@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # first, includes pre-releases) and take the first chromium.mv3 asset.
 RUN mkdir -p /app/ublock && \
     URL="$(curl -fsSL 'https://api.github.com/repos/uBlockOrigin/uBOL-home/releases?per_page=10' \
-        | grep -oE 'https://[^\"]*chromium\.mv3\.zip' | head -n1)" && \
+        | grep -oE 'https://[^\"]*\.chromium\.zip' | head -n1)" && \
     if [ -n "$URL" ]; then \
         echo "browser: fetching uBO Lite from $URL" && \
         curl -fsSL "$URL" -o /tmp/ubol.zip && unzip -q /tmp/ubol.zip -d /app/ublock && rm /tmp/ubol.zip && \
