@@ -17,17 +17,19 @@ needed. Autosolve / cookie sharing / CF fetch come in later phases; this phase i
 """
 import base64
 import logging
+import os
 import threading
 import time
 
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
-# Quiet Flask/werkzeug's per-request access log — it spams one line per /frame, /scroll, /input (dozens/sec).
-# We keep our own meaningful prints (open/close/ready/solve) instead.
-logging.getLogger("werkzeug").setLevel(logging.WARNING)
+# MU_BROWSER_VERBOSE=1 un-quiets werkzeug's per-request access log for diagnosing. Off by default (it spams
+# one line per /frame etc.); we keep our own meaningful prints (open/close/ready/solve) regardless.
+VERBOSE = os.environ.get("MU_BROWSER_VERBOSE", "") not in ("", "0", "false", "False")
+logging.getLogger("werkzeug").setLevel(logging.INFO if VERBOSE else logging.WARNING)
 
-IDLE_QUIT_SEC = 300   # close idle Chromium after 5 min to free RAM (a warm reopen is instant; a cold one ~2-3s)
+IDLE_QUIT_SEC = 900   # close idle Chromium after 15 min (5 min was too aggressive — constant cold relaunches)
 _last_activity = time.time()
 
 
@@ -62,9 +64,11 @@ _driver = None                    # the ready driver, or None while cold/warming
 _current_url = ""
 _warming = False                  # a background launch is in flight
 _warm_error = ""                  # last launch failure, surfaced as status=failed
+_frame_cache = None               # latest JPEG, produced by _frame_pump; /frame serves this WITHOUT the lock
+_frame_wanted_until = 0.0         # capture only while a client is actively polling /frame
 
 
-def _build_driver():
+def _build_driver_once():
     """Create the one headed Chromium via undetected-chromedriver (headed passes Cloudflare on this box)."""
     import undetected_chromedriver as uc
     opts = uc.ChromeOptions()
@@ -80,7 +84,30 @@ def _build_driver():
     d = uc.Chrome(options=opts, headless=False, use_subprocess=True,
                   driver_executable_path="/usr/bin/chromedriver")
     d.set_page_load_timeout(45)
+    # CRITICAL: cap how long any command waits on chromedriver. A Cloudflare challenge page can pin the
+    # renderer's main thread, and chromedriver's DEFAULT wait is 600s — that command holds our lock the whole
+    # time and wedges the sidecar ("unreachable"). Fail in ~12s instead: a hung page becomes a recoverable
+    # blip, the lock frees, and the pump/clicks resume once the renderer settles.
+    try:
+        d.command_executor.set_timeout(12)
+    except Exception as e:
+        print(f"browser: couldn't set command timeout: {e}", flush=True)
     return d
+
+
+def _build_driver():
+    """Launch with one retry — undetected-chromedriver's cold start is occasionally flaky (driver/version
+    race, Xvfb timing). A single retry turns most of those transient failures into a clean start instead
+    of a failed warm the user sees as 'unreachable'."""
+    last = None
+    for i in range(2):
+        try:
+            return _build_driver_once()
+        except Exception as e:
+            last = e
+            print(f"browser: Chromium launch attempt {i + 1}/2 failed: {e}", flush=True)
+            time.sleep(2)
+    raise last
 
 
 def _warm():
@@ -121,7 +148,7 @@ def health():
 
 @app.post("/webview/open")
 def webview_open():
-    global _current_url, _driver
+    global _current_url, _driver, _frame_cache
     url = (request.get_json(silent=True) or {}).get("url") or request.args.get("url") or ""
     if not url.startswith("http"):
         return jsonify(status="failed", detail="a http(s) url is required"), 400
@@ -141,6 +168,7 @@ def webview_open():
             # Cloudflare page never finishes). The page then streams in via /frame.
             _driver.execute_cdp_cmd("Page.navigate", {"url": url})
             _current_url = url
+            _frame_cache = None  # drop the previous page's frame so the view doesn't show stale content
             print(f"browser: opened {url}", flush=True)
             return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
         except Exception as e:
@@ -153,16 +181,15 @@ def webview_open():
 
 @app.get("/webview/frame")
 def webview_frame():
+    # HOT PATH (~7/s): serve the cached frame with NO driver lock. _frame_pump does the actual capture in the
+    # background, so a burst of frame polls can never contend for the lock or block on a busy Chromium — the
+    # thing that made the sidecar time out and read as "unreachable" under load.
+    global _frame_wanted_until
     _touch()
-    with _lock:
-        if _driver is None:
-            return ("", 204)
-        try:
-            res = _driver.execute_cdp_cmd("Page.captureScreenshot", {"format": "jpeg", "quality": 55})
-            return Response(base64.b64decode(res["data"]), mimetype="image/jpeg")
-        except Exception as e:
-            print(f"browser: frame failed: {e}", flush=True)
-            return ("", 204)
+    _frame_wanted_until = time.time() + 2.0  # keep the pump capturing while we're polling
+    if _frame_cache is None:
+        return ("", 204)
+    return Response(_frame_cache, mimetype="image/jpeg")
 
 
 @app.post("/webview/input")
@@ -325,6 +352,29 @@ def webview_autosolve():
                    message="gave up after retries — try solving manually"), 200
 
 
+def _frame_pump():
+    """Capture the tab to _frame_cache ~7x/s while a client is actively watching (a recent /frame). One
+    capturer taking the lock briefly, instead of every /frame request racing for it — see webview_frame()."""
+    global _frame_cache
+    while True:
+        if _driver is not None and _current_url and time.time() < _frame_wanted_until:
+            try:
+                res = _cdp("Page.captureScreenshot", {"format": "jpeg", "quality": 55})
+                _frame_cache = base64.b64decode(res["data"])
+                time.sleep(0.14)
+            except Exception:
+                # renderer busy/hung (e.g. a Cloudflare challenge) — back off so we don't hog the lock
+                # retrying a doomed capture and starve clicks/navigate.
+                time.sleep(1.0)
+        else:
+            time.sleep(0.1)
+
+
 if __name__ == "__main__":
     threading.Thread(target=_idle_reaper, daemon=True).start()
-    app.run(host="0.0.0.0", port=9000, threaded=True)
+    threading.Thread(target=_frame_pump, daemon=True).start()
+    print(f"browser: sidecar starting on :9000 (waitress, verbose={VERBOSE})", flush=True)
+    # waitress = a real WSGI server. The Flask dev server (app.run) buckles under the sustained frame-poll
+    # load and drops connections ("unreachable"); waitress handles the concurrency properly.
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=9000, threads=16)
