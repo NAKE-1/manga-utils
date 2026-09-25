@@ -62,6 +62,7 @@ def _idle_reaper():
                 pass
             print("browser: idle — Chromium closed to free RAM", flush=True)
 
+DEVTOOLS_PORT = 9222              # fixed Chromium DevTools port the screencast websocket connects to
 WIDTH, HEIGHT = 440, 780          # keep in lockstep with JcefRemoteView.WIDTH/HEIGHT so the client's
                                   # frame->OSR coordinate math needs zero changes.
 _lock = threading.Lock()          # selenium's driver is NOT thread-safe; serialize every op.
@@ -84,6 +85,9 @@ def _build_driver_once():
     opts.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm exhaustion in Docker
     opts.add_argument("--disable-gpu")
     opts.add_argument(f"--window-size={WIDTH},{HEIGHT}")
+    # Pin a known DevTools port so the screencast thread can always reach it, even if the driver doesn't
+    # report debuggerAddress as a capability (undetected-chromedriver sometimes doesn't).
+    opts.add_argument(f"--remote-debugging-port={DEVTOOLS_PORT}")
     # Don't block get() until the whole page finishes: an interactive view streams the load via frames,
     # and a Cloudflare-gated page (MangaFire) never "finishes" — a normal strategy hangs open() forever.
     opts.page_load_strategy = "none"
@@ -397,7 +401,7 @@ def _devtools_addr():
     """host:port of Chromium's DevTools endpoint. chromedriver already runs Chromium with a debug port and
     reports it here, so we don't have to pin one ourselves."""
     caps = getattr(_driver, "capabilities", None) or {}
-    return caps.get("goog:chromeOptions", {}).get("debuggerAddress")
+    return caps.get("goog:chromeOptions", {}).get("debuggerAddress") or f"127.0.0.1:{DEVTOOLS_PORT}"
 
 
 def _page_ws_url():
@@ -425,6 +429,7 @@ def _screencast_loop():
     msg_id = 0
     fcount = 0
     window = time.time()
+    last_warn = 0.0   # throttle connect/error logging so a down endpoint doesn't spam the log
 
     def _send(method, params=None):
         nonlocal msg_id
@@ -449,10 +454,14 @@ def _screencast_loop():
             if ws is None:
                 url = _page_ws_url()
                 if not url:
+                    if time.time() - last_warn > 5:
+                        print(f"browser: screencast — no page target yet (addr={_devtools_addr()})", flush=True)
+                        last_warn = time.time()
                     time.sleep(0.5); continue
                 ws = websocket.create_connection(url, timeout=5)
                 ws.settimeout(1.0)
                 started = False
+                print("browser: screencast connected", flush=True)
             if not started:
                 _send("Page.enable")
                 _arm()
@@ -478,9 +487,11 @@ def _screencast_loop():
                     print(f"browser: screencast {_fps:.1f} fps", flush=True)
                     fcount, window = 0, time.time()
         except Exception as e:
-            # ws died (driver recreated/quit, or the target went away) → drop it and reconnect next pass.
-            if VERBOSE:
-                print(f"browser: screencast reconnect ({e})", flush=True)
+            # ws died (driver recreated/quit, endpoint down, or the target went away) → drop it and
+            # reconnect next pass. Log throttled (not just under VERBOSE) so a persistent failure is visible.
+            if time.time() - last_warn > 5:
+                print(f"browser: screencast reconnect ({type(e).__name__}: {e})", flush=True)
+                last_warn = time.time()
             try:
                 if ws is not None: ws.close()
             except Exception: pass
