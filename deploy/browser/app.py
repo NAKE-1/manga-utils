@@ -133,7 +133,6 @@ def webview_open():
             return jsonify(status="failed", detail=_warm_error), 202
         _start_warm()
         return jsonify(status="starting", url=url), 202
-    global _driver
     with _lock:
         try:
             _pin_viewport(_driver)
