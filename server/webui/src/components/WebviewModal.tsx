@@ -14,7 +14,7 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const lastObj = useRef<string | null>(null)
-  const drag = useRef<{ x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null)
+  const drag = useRef<{ x: number; y: number; startX: number; startY: number; moved: boolean; touching: boolean } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -129,17 +129,26 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
     fetch(`/api/webview/scroll?x=${o.x}&y=${o.y}&dx=${dx}&dy=${dy}`, { method: 'POST' }).catch(() => {})
   }
 
-  // Pointer drag = scroll (touch or mouse); a drag that barely moved is treated as a tap → click.
+  // Pointer drag = a real finger pan (touch start→move→end) so touch carousels/lists drag, not just the
+  // page. A drag that barely moved is treated as a tap → mouse click. Touch begins only once we've actually
+  // moved, so a tap stays a clean click (no phantom touch).
+  function sendTouch(phase: 'start' | 'move' | 'end', clientX: number, clientY: number) {
+    const o = toOsr(clientX, clientY)
+    if (!o) return
+    fetch(`/api/webview/touch?phase=${phase}&x=${o.x}&y=${o.y}`, { method: 'POST' }).catch(() => {})
+  }
   function onDown(e: PointerEvent<HTMLImageElement>) {
-    drag.current = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false }
+    drag.current = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false, touching: false }
     imgRef.current?.setPointerCapture(e.pointerId)
   }
   function onMove(e: PointerEvent<HTMLImageElement>) {
     const d = drag.current
     if (!d) return
-    if (Math.abs(e.clientX - d.startX) > 6 || Math.abs(e.clientY - d.startY) > 6) d.moved = true
-    // finger up/left → positive → page down/right (content follows the finger)
-    sendScroll(e.clientX, e.clientY, d.x - e.clientX, d.y - e.clientY)
+    if (!d.moved && (Math.abs(e.clientX - d.startX) > 6 || Math.abs(e.clientY - d.startY) > 6)) d.moved = true
+    if (d.moved) {
+      if (!d.touching) { sendTouch('start', d.startX, d.startY); d.touching = true } // finger down at origin
+      sendTouch('move', e.clientX, e.clientY)
+    }
     d.x = e.clientX
     d.y = e.clientY
   }
@@ -147,7 +156,9 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
     const d = drag.current
     drag.current = null
     imgRef.current?.releasePointerCapture(e.pointerId)
-    if (d && !d.moved) sendClick(e.clientX, e.clientY) // it was a tap, not a scroll
+    if (!d) return
+    if (d.touching) sendTouch('end', d.x, d.y)      // finish the pan
+    else if (!d.moved) sendClick(e.clientX, e.clientY) // it was a tap, not a drag
   }
 
   // Mouse wheel → scroll. React's onWheel is passive (can't preventDefault), so attach non-passively

@@ -136,6 +136,19 @@ object JcefRemoteView {
         runCatching { b.invalidate() }
     }
 
+    private var lastTouchX = 0
+    private var lastTouchY = 0
+
+    /** JCEF has no touch input, so a finger pan falls back to wheel scrolling by the delta from the last
+     *  point. Carousel drag won't work here (no touch), but page scroll does — same as before. */
+    fun touch(phase: String, x: Int, y: Int) {
+        when (phase) {
+            "start" -> { lastTouchX = x; lastTouchY = y }
+            "move" -> { scroll(x, y, lastTouchX - x, lastTouchY - y); lastTouchX = x; lastTouchY = y }
+            // "end" -> nothing
+        }
+    }
+
     /** The latest frame as a JPEG, or null if nothing has painted yet. Also nudges the next repaint. */
     fun frameJpeg(): ByteArray? {
         val bytes: ByteArray; val w: Int; val h: Int

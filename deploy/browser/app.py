@@ -97,6 +97,20 @@ _pending_lock = threading.Lock()
 POPUP_BLOCK_JS = "try{window.open=function(){return null;};}catch(e){}"
 
 
+def _ublock_dir():
+    """Locate the uBO Lite extension (the folder holding manifest.json) under UBLOCK_DIR, wherever the release
+    zip unpacked it. None if adblock is off or the extension isn't present."""
+    if not ADBLOCK:
+        return None
+    try:
+        for root, _dirs, files in os.walk(UBLOCK_DIR):
+            if "manifest.json" in files:
+                return root
+    except Exception:
+        pass
+    return None
+
+
 def _build_driver_once():
     """Create the one headed Chromium via undetected-chromedriver (headed passes Cloudflare on this box)."""
     import undetected_chromedriver as uc
@@ -114,10 +128,13 @@ def _build_driver_once():
     opts.add_argument("--remote-allow-origins=*")
     # uBlock Origin Lite (MV3) adblock, if bundled. Headed Chromium loads unpacked extensions fine (headless
     # wouldn't). Kills banner/inline ads + trackers; popups are already handled by the onBeforePopup replica.
-    if ADBLOCK and os.path.isdir(UBLOCK_DIR) and os.path.isfile(os.path.join(UBLOCK_DIR, "manifest.json")):
-        opts.add_argument(f"--load-extension={UBLOCK_DIR}")
-        opts.add_argument(f"--disable-extensions-except={UBLOCK_DIR}")
-        print("browser: uBO Lite adblock enabled", flush=True)
+    ext = _ublock_dir()
+    if ext:
+        opts.add_argument(f"--load-extension={ext}")
+        opts.add_argument(f"--disable-extensions-except={ext}")
+        print(f"browser: uBO Lite adblock enabled ({ext})", flush=True)
+    elif ADBLOCK:
+        print("browser: adblock ON but no extension found under /app/ublock (download may have failed)", flush=True)
     # Don't block get() until the whole page finishes: an interactive view streams the load via frames,
     # and a Cloudflare-gated page (MangaFire) never "finishes" — a normal strategy hangs open() forever.
     opts.page_load_strategy = "none"
@@ -360,6 +377,26 @@ def webview_scroll():
         return ("", 500)
 
 
+@app.post("/webview/touch")
+def webview_touch():
+    # Real finger pan via Input.dispatchTouchEvent, so touch-drag carousels/lists actually move (a mouse wheel
+    # only scrolls overflow containers, not JS touch carousels). phase = start|move|end at OSR pixel x,y.
+    if _driver is None:
+        return ("", 409)
+    phase = request.args.get("phase", "")
+    x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
+    typ = {"start": "touchStart", "move": "touchMove", "end": "touchEnd"}.get(phase)
+    if not typ:
+        return ("", 400)
+    pts = [] if phase == "end" else [{"x": x, "y": y}]
+    try:
+        _cdp("Input.dispatchTouchEvent", {"type": typ, "touchPoints": pts})
+        return ("", 200)
+    except Exception as e:
+        print(f"browser: touch failed: {e}", flush=True)
+        return ("", 500)
+
+
 @app.post("/webview/close")
 def webview_close():
     # Keep Chromium WARM (like JCEF): just blank the page so the next open is instant, instead of quitting
@@ -554,10 +591,15 @@ def _screencast_loop():
     last_warn = 0.0
     connect_fail_since = 0.0
     armed_at = time.time()        # when we last (re)started screencast for the current page
-    got_frame = False             # got >=1 frame since the last arm? distinguishes "static" from "stuck load"
-    stalled = False               # a load produced no frames (logged once per episode)
+    last_frame_at = time.time()   # last frame received (drives the quiet/stall recovery)
+    got_frame = False             # got >=1 frame since the last arm? (a stuck LOAD recovers faster)
+    stalled = False               # currently in a no-frames episode (logged once)
 
     def _arm():
+        # Re-pin the 440x780 viewport BEFORE every screencast start. The device-metrics override is per ws
+        # session, so a reconnect (fast close/reopen) drops it and the page reflows to a wider viewport that
+        # screencast then scales down — the blurry, stretched render. Pinning here keeps it correct always.
+        _pin_viewport()
         _cdp("Page.startScreencast",
              {"format": "jpeg", "quality": 55, "maxWidth": WIDTH, "maxHeight": HEIGHT, "everyNthFrame": 1})
 
@@ -583,6 +625,8 @@ def _screencast_loop():
                 # Auto-attach to popups this page spawns so we can close them at birth (JCEF onBeforePopup).
                 _cdp("Target.setAutoAttach",
                      {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True})
+                # Enable touch so finger-pan (Input.dispatchTouchEvent) reaches touch carousels/lists.
+                _cdp("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
                 started, seen_gen, connect_fail_since = False, -1, 0.0
                 print("browser: devtools ws connected", flush=True)
             except Exception as e:
@@ -609,15 +653,17 @@ def _screencast_loop():
             if wanted and (not started or seen_gen != _nav_gen):
                 _arm()
                 started, seen_gen = True, _nav_gen
-                armed_at, got_frame = time.time(), False
+                armed_at = last_frame_at = time.time()
+                got_frame = False
                 _dbg("screencast armed (open/nav)")
-            elif wanted and started and not got_frame and time.time() - armed_at > 4.0:
-                # Heal only a load that produced ZERO frames (genuinely stuck). A page that painted then went
-                # quiet is just static — leave its last frame up instead of churning stop/start every few secs.
+            elif wanted and started and time.time() - last_frame_at > (4.0 if not got_frame else 8.0):
+                # No frames while we're meant to be streaming → recover: cycle screencast (which re-pins the
+                # viewport and pulls a fresh keyframe). A stuck LOAD (never painted) recovers after 4s; a page
+                # that painted then went quiet waits 8s so a genuinely static reader isn't churned. Logged once.
                 _cdp("Page.stopScreencast"); _arm()
-                armed_at = time.time()
+                last_frame_at = time.time()
                 if not stalled:
-                    _dbg("no frames since load — cycling screencast (stuck load?)")
+                    _dbg("no frames while watching — cycling screencast (frozen render or static page)")
                     stalled = True
             elif started and not wanted:
                 _cdp("Page.stopScreencast")
@@ -658,6 +704,7 @@ def _screencast_loop():
                 _frame_cache = base64.b64decode(p["data"])
                 _cdp("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
                 got_frame = True
+                last_frame_at = time.time()
                 if stalled:
                     _dbg("frames resumed")
                     stalled = False
@@ -672,7 +719,8 @@ def _screencast_loop():
                 _dbg(f"frameNavigated -> {m.get('params', {}).get('frame', {}).get('url', '?')[:120]}")
                 if wanted:
                     _arm()
-                    armed_at, got_frame = time.time(), False
+                    armed_at = last_frame_at = time.time()
+                    got_frame = False
             elif method == "Target.attachedToTarget":
                 # A popup opened (target=_blank / window.open that still spawned a tab). Close it at birth and
                 # leave the main frame untouched — exactly JCEF's onBeforePopup=true. No false positives:
@@ -698,6 +746,8 @@ def _screencast_loop():
 if __name__ == "__main__":
     threading.Thread(target=_idle_reaper, daemon=True).start()
     threading.Thread(target=_screencast_loop, daemon=True).start()
+    _ext = _ublock_dir()
+    print(f"browser: adblock {'ready (' + _ext + ')' if _ext else 'ABSENT — no extension under /app/ublock'}", flush=True)
     print(f"browser: sidecar starting on :9000 (waitress, verbose={VERBOSE})", flush=True)
     # waitress = a real WSGI server. The Flask dev server (app.run) buckles under the sustained frame-poll
     # load and drops connections ("unreachable"); waitress handles the concurrency properly.

@@ -2248,6 +2248,16 @@ fun Application.module() {
             WebviewScrollLog.onScroll()
             call.respond(HttpStatusCode.OK)
         }
+        // Finger pan (real touch): lets touch-drag carousels/lists move, not just overflow scrollers. phase =
+        // start|move|end at OSR pixel x,y. JCEF has no touch input, so it falls back to wheel-scroll by delta.
+        post("/api/webview/touch") {
+            val phase = call.request.queryParameters["phase"] ?: ""
+            val x = call.request.queryParameters["x"]?.toIntOrNull() ?: 0
+            val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
+            if (useChromeEngine()) ChromeEngine.touch(phase, x, y) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.touch(phase, x, y)
+            WebviewScrollLog.onScroll()
+            call.respond(HttpStatusCode.OK)
+        }
         // Auto-solve the shape-captcha currently shown in the streamed WebView (detect→match→click→refresh
         // →verify loop). host= drives which host gets cleared on success (defaults to mangafire.to).
         post("/api/webview/autosolve") {
