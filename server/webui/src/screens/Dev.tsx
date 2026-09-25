@@ -521,11 +521,11 @@ export function Dev() {
 
         <div className="set-card">
           <div className="set-row-label">WebView engine</div>
-          <div className="set-hint">Which browser backs the streamed WebView + Cloudflare fetch. <b>JCEF</b> runs in-process (can crash the whole server — a known libcef bug). <b>Chrome sidecar</b> runs in its own container (crash-isolated) — <i>not built yet; selecting it has no effect until the sidecar ships (P2)</i>.</div>
+          <div className="set-hint">Which browser backs the streamed WebView. <b>JCEF</b> runs in-process (can crash — or intermittently wedge — the whole server; a known libcef bug). <b>Chrome sidecar</b> runs in its own container, so a browser crash can't take the server down — the reliable choice. (Auto-solve is JCEF-only for now; on Chrome you tap the captcha manually.)</div>
           <div className="set-actions">
             <select className="wv-test-src" value={engine} disabled={engineBusy} onChange={(e) => changeEngine(e.target.value)}>
               <option value="jcef">JCEF (in-process)</option>
-              <option value="chrome">Chrome sidecar (isolated) — not built yet</option>
+              <option value="chrome">Chrome sidecar (isolated) — recommended</option>
             </select>
           </div>
         </div>

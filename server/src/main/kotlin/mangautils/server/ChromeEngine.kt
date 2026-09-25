@@ -20,9 +20,13 @@ object ChromeEngine {
     val url: String? = System.getenv("MU_BROWSER_SIDECAR_URL")?.trim()?.trimEnd('/')?.ifBlank { null }
     val configured: Boolean get() = url != null
 
+    // SHORT timeouts on purpose: /open returns "starting" or "ready" fast, and a frame is a quick JPEG. If
+    // the sidecar ever hangs, we must fail in seconds — a long timeout blocks request threads, and with the
+    // client retrying open every 2s that exhausts the pool → the health check stalls → autoheal restarts the
+    // whole server (the RejectedExecutionException cascade). Fail fast, let the client retry.
     private val http = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
     /** POST /webview/open — returns the sidecar's raw JSON body ({status, w, h, url}) or null if unreachable. */
