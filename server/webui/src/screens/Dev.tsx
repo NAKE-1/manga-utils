@@ -555,6 +555,7 @@ export function Dev() {
           </div>
           <div className="set-actions">
             <button className="btn primary" disabled={!wvUrl.trim() && !wvSourceId} onClick={() => setWvOpen(wvUrl.trim() ? { url: wvUrl.trim() } : { source: wvSourceId })}>Open WebView</button>
+            <button className="btn" title="Open MangaFire's shape-captcha challenge to test the solver" onClick={() => setWvOpen({ url: 'https://mangafire.to/@waf/challenge?return=%2F' })}>🧩 Open WAF challenge</button>
           </div>
         </div>
 
