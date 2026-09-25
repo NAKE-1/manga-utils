@@ -517,6 +517,38 @@ def _page_ws_url():
     return pool[0]["webSocketDebuggerUrl"]
 
 
+def _reap_extra_tabs():
+    """Stay single-view like JCEF: close ad/popup tabs and bring the tab we drive back to the foreground.
+    Clicking an ad on these sites opens a NEW tab that steals focus; Chrome only screencasts the FOREGROUND
+    tab, so ours goes background and stops painting — a frozen 'loading page' that reopening can't fix. Uses
+    DevTools' plain HTTP /json/close and /json/activate (no ws needed)."""
+    try:
+        addr = _devtools_addr()
+        pages = [t for t in json.loads(urllib.request.urlopen(f"http://{addr}/json", timeout=2).read())
+                 if t.get("type") == "page"]
+        if len(pages) <= 1:
+            return  # nothing stole focus
+        reals = [t for t in pages if not (t.get("url") or "").startswith("about:")]
+        keep = None
+        for t in (reals or pages):
+            if _current_url and (t.get("url") or "").startswith(_current_url[:40]):
+                keep = t; break
+        if keep is None:
+            keep = (reals or pages)[0]
+        for t in pages:
+            if t is not keep and t.get("id"):
+                try:
+                    urllib.request.urlopen(f"http://{addr}/json/close/{t['id']}", timeout=2).read()
+                    _dbg(f"closed popup tab -> {(t.get('url') or '')[:80]}")
+                except Exception:
+                    pass
+        if keep.get("id"):
+            try: urllib.request.urlopen(f"http://{addr}/json/activate/{keep['id']}", timeout=2).read()
+            except Exception: pass
+    except Exception as e:
+        _dbg(f"reap tabs failed: {type(e).__name__}: {e}")
+
+
 def _screencast_loop():
     """The ONE DevTools websocket, read here and only here. It carries two things:
 
@@ -592,11 +624,12 @@ def _screencast_loop():
                 # SELF-HEAL: we're meant to be streaming but Chrome has gone quiet for 3s. Some navigations
                 # (CF redirects, JS location changes) don't fire a clean Page.frameNavigated, so re-arm
                 # unconditionally. On a truly static page this just pulls one fresh keyframe — harmless.
+                _reap_extra_tabs()                    # an ad popup stealing focus is the usual cause — kill it
                 _cdp("Page.stopScreencast"); _arm()   # stop+start: a bare start returns "already active" and
                                                        # emits NO new frame, so we must cycle it for a keyframe
                 last_frame_at = time.time()
                 if not stalled:
-                    _dbg("stalled: no frames while watching — cycling screencast (renderer busy, or wrong/gone tab?)")
+                    _dbg("stalled: no frames while watching — reaping popups + cycling screencast")
                     stalled = True
             elif started and not wanted:
                 _cdp("Page.stopScreencast")
