@@ -6,21 +6,26 @@ surface the in-process JCEF WebView had, but in its own process/container so a b
 the server down:
 
   POST /webview/open   {url}      -> navigate, pin the 440x780 viewport         -> {status, w, h}
-  GET  /webview/frame             -> Page.captureScreenshot (jpeg) of the tab   -> image/jpeg
+  GET  /webview/frame             -> latest screencast JPEG (pushed by Chrome)  -> image/jpeg
   POST /webview/input  ?x&y       -> Input.dispatchMouseEvent press+release (a tap)
   POST /webview/scroll ?x&y&dy    -> Input.dispatchMouseEvent mouseWheel
   POST /webview/close             -> quit the browser
   GET  /health                    -> {ok, open}
 
-Frames are pulled per request (the server already polls /frame ~7x/s), so no async CDP event plumbing is
-needed. Autosolve / cookie sharing / CF fetch come in later phases; this phase is just "does it stream".
+Frames are event-driven: a background thread opens its OWN websocket to Chromium's DevTools and runs
+Page.startScreencast, so Chrome PUSHES a JPEG on every repaint (the CDP analog of JCEF's onPaint). This
+replaced the old Page.captureScreenshot poll, whose synchronous "render a frame now" call held the driver
+lock and, when the renderer lagged, starved every other op until the thread pool drained.
 """
 import base64
+import json
 import logging
 import os
 import threading
 import time
+import urllib.request
 
+import websocket
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
@@ -64,8 +69,10 @@ _driver = None                    # the ready driver, or None while cold/warming
 _current_url = ""
 _warming = False                  # a background launch is in flight
 _warm_error = ""                  # last launch failure, surfaced as status=failed
-_frame_cache = None               # latest JPEG, produced by _frame_pump; /frame serves this WITHOUT the lock
+_frame_cache = None               # latest JPEG, pushed by _screencast_loop; /frame serves this WITHOUT the lock
 _frame_wanted_until = 0.0         # capture only while a client is actively polling /frame
+_nav_gen = 0                      # bumped on each navigate so the screencast re-arms after a page change
+_fps = 0.0                        # frames/sec pushed by Chrome, updated ~every 5s (surfaced on /health)
 
 
 def _build_driver_once():
@@ -143,12 +150,13 @@ def _pin_viewport(d):
 @app.get("/health")
 def health():
     state = "ready" if _driver is not None else ("failed" if _warm_error else ("starting" if _warming else "cold"))
-    return jsonify(ok=True, open=_driver is not None, state=state, url=_current_url, w=WIDTH, h=HEIGHT)
+    return jsonify(ok=True, open=_driver is not None, state=state, url=_current_url, w=WIDTH, h=HEIGHT,
+                   fps=round(_fps, 1))
 
 
 @app.post("/webview/open")
 def webview_open():
-    global _current_url, _driver, _frame_cache
+    global _current_url, _driver, _frame_cache, _nav_gen
     url = (request.get_json(silent=True) or {}).get("url") or request.args.get("url") or ""
     if not url.startswith("http"):
         return jsonify(status="failed", detail="a http(s) url is required"), 400
@@ -168,6 +176,7 @@ def webview_open():
             # Cloudflare page never finishes). The page then streams in via /frame.
             _driver.execute_cdp_cmd("Page.navigate", {"url": url})
             _current_url = url
+            _nav_gen += 1        # tell the screencast loop to re-arm so frames resume on the new page
             _frame_cache = None  # drop the previous page's frame so the view doesn't show stale content
             print(f"browser: opened {url}", flush=True)
             return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
@@ -181,9 +190,9 @@ def webview_open():
 
 @app.get("/webview/frame")
 def webview_frame():
-    # HOT PATH (~7/s): serve the cached frame with NO driver lock. _frame_pump does the actual capture in the
-    # background, so a burst of frame polls can never contend for the lock or block on a busy Chromium — the
-    # thing that made the sidecar time out and read as "unreachable" under load.
+    # HOT PATH (~7/s): serve the cached frame with NO driver lock. _screencast_loop fills _frame_cache from
+    # Chrome's pushed frames, so a burst of frame polls can never contend for the lock or block on a busy
+    # Chromium — the thing that made the sidecar time out and read as "unreachable" under load.
     global _frame_wanted_until
     _touch()
     _frame_wanted_until = time.time() + 2.0  # keep the pump capturing while we're polling
@@ -384,46 +393,104 @@ def webview_autosolve():
                    message="gave up after retries — try solving manually"), 200
 
 
-def _frame_pump():
-    """Capture the tab to _frame_cache ~7x/s while a client is actively watching (a recent /frame). One
-    capturer taking the lock briefly, instead of every /frame request racing for it — see webview_frame()."""
-    global _frame_cache, _driver
-    fails = 0
+def _devtools_addr():
+    """host:port of Chromium's DevTools endpoint. chromedriver already runs Chromium with a debug port and
+    reports it here, so we don't have to pin one ourselves."""
+    caps = getattr(_driver, "capabilities", None) or {}
+    return caps.get("goog:chromeOptions", {}).get("debuggerAddress")
+
+
+def _page_ws_url():
+    """The page target's raw CDP websocket URL (from DevTools /json), or None if not up yet."""
+    addr = _devtools_addr()
+    if not addr:
+        return None
+    raw = urllib.request.urlopen(f"http://{addr}/json", timeout=3).read()
+    for t in json.loads(raw):
+        if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+            return t["webSocketDebuggerUrl"]
+    return None
+
+
+def _screencast_loop():
+    """Event-driven frame channel — the CDP analog of JCEF's onPaint, and the fix for the poll model that
+    wedged the sidecar. We open our OWN websocket to Chromium's DevTools and Page.startScreencast; Chrome
+    then PUSHES a JPEG each time the page actually repaints. A static or hung page simply sends nothing —
+    no lock held, no thread pinned, the sidecar stays responsive. Runs only while a client is polling /frame
+    (_frame_wanted_until) and re-arms after each navigation (_nav_gen)."""
+    global _frame_cache, _fps
+    ws = None
+    started = False
+    seen_gen = -1
+    msg_id = 0
+    fcount = 0
+    window = time.time()
+
+    def _send(method, params=None):
+        nonlocal msg_id
+        msg_id += 1
+        ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+
+    def _arm():
+        _send("Page.startScreencast",
+              {"format": "jpeg", "quality": 55, "maxWidth": WIDTH, "maxHeight": HEIGHT, "everyNthFrame": 1})
+
     while True:
-        if _driver is not None and _current_url and time.time() < _frame_wanted_until:
+        # No browser, or nobody watching → tear the screencast down and idle cheaply.
+        if _driver is None or time.time() >= _frame_wanted_until:
+            if ws is not None:
+                try: ws.close()
+                except Exception: pass
+                ws, started = None, False
+            _fps = 0.0
+            time.sleep(0.2)
+            continue
+        try:
+            if ws is None:
+                url = _page_ws_url()
+                if not url:
+                    time.sleep(0.5); continue
+                ws = websocket.create_connection(url, timeout=5)
+                ws.settimeout(1.0)
+                started = False
+            if not started:
+                _send("Page.enable")
+                _arm()
+                started, seen_gen = True, _nav_gen
+            elif seen_gen != _nav_gen:
+                _arm()                      # page changed → re-arm so frames resume
+                seen_gen = _nav_gen
             try:
-                res = _cdp("Page.captureScreenshot", {"format": "jpeg", "quality": 55})
-                _frame_cache = base64.b64decode(res["data"])
-                fails = 0
-                time.sleep(0.14)
-            except Exception:
-                # renderer busy/hung (e.g. a Cloudflare challenge) — back off so we don't hog the lock.
-                fails += 1
-                # Sustained failures = the tab's renderer is effectively dead (Cloudflare pinned it and it
-                # never recovered). Recreate Chromium so the user can get a working view again by reopening,
-                # instead of a permanently frozen session. Null under the lock, quit OUTSIDE it (deadlock-safe).
-                if fails >= 6:
-                    print("browser: renderer frozen too long — recreating Chromium", flush=True)
-                    victim = None
-                    with _lock:
-                        victim = _driver
-                        _driver = None
-                    if victim is not None:
-                        try:
-                            victim.quit()
-                        except Exception:
-                            pass
-                    _frame_cache = None
-                    fails = 0
-                time.sleep(1.0)
-        else:
-            fails = 0
-            time.sleep(0.1)
+                raw = ws.recv()
+            except websocket.WebSocketTimeoutException:
+                continue  # no repaint since last frame = normal (static page); loop re-checks driver/wanted
+            if not raw:
+                continue
+            m = json.loads(raw)
+            if m.get("method") == "Page.screencastFrame":
+                p = m["params"]
+                _frame_cache = base64.b64decode(p["data"])
+                _send("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
+                fcount += 1
+                dt = time.time() - window
+                if dt >= 5.0:
+                    _fps = fcount / dt
+                    print(f"browser: screencast {_fps:.1f} fps", flush=True)
+                    fcount, window = 0, time.time()
+        except Exception as e:
+            # ws died (driver recreated/quit, or the target went away) → drop it and reconnect next pass.
+            if VERBOSE:
+                print(f"browser: screencast reconnect ({e})", flush=True)
+            try:
+                if ws is not None: ws.close()
+            except Exception: pass
+            ws, started = None, False
+            time.sleep(0.5)
 
 
 if __name__ == "__main__":
     threading.Thread(target=_idle_reaper, daemon=True).start()
-    threading.Thread(target=_frame_pump, daemon=True).start()
+    threading.Thread(target=_screencast_loop, daemon=True).start()
     print(f"browser: sidecar starting on :9000 (waitress, verbose={VERBOSE})", flush=True)
     # waitress = a real WSGI server. The Flask dev server (app.run) buckles under the sustained frame-poll
     # load and drops connections ("unreachable"); waitress handles the concurrency properly.
