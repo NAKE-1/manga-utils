@@ -37,18 +37,23 @@ def _touch():
 
 
 def _idle_reaper():
-    """Quit Chromium after IDLE_QUIT_SEC of no activity so it doesn't hold ~400MB while nobody's using it."""
+    """Quit Chromium after IDLE_QUIT_SEC of no activity so it doesn't hold ~400MB while nobody's using it.
+    CRITICAL: null the reference under the lock, then quit() OUTSIDE it — a hung quit() must NOT hold the
+    lock (that deadlocks every /open behind it), and _driver must already be None so the next open re-warms."""
     global _driver
     while True:
         time.sleep(30)
+        victim = None
         with _lock:
             if _driver is not None and (time.time() - _last_activity) > IDLE_QUIT_SEC:
-                try:
-                    _driver.quit()
-                except Exception:
-                    pass
+                victim = _driver
                 _driver = None
-                print("browser: idle — Chromium closed to free RAM", flush=True)
+        if victim is not None:
+            try:
+                victim.quit()
+            except Exception:
+                pass
+            print("browser: idle — Chromium closed to free RAM", flush=True)
 
 WIDTH, HEIGHT = 440, 780          # keep in lockstep with JcefRemoteView.WIDTH/HEIGHT so the client's
                                   # frame->OSR coordinate math needs zero changes.
@@ -116,7 +121,7 @@ def health():
 
 @app.post("/webview/open")
 def webview_open():
-    global _current_url
+    global _current_url, _driver
     url = (request.get_json(silent=True) or {}).get("url") or request.args.get("url") or ""
     if not url.startswith("http"):
         return jsonify(status="failed", detail="a http(s) url is required"), 400
@@ -128,6 +133,7 @@ def webview_open():
             return jsonify(status="failed", detail=_warm_error), 202
         _start_warm()
         return jsonify(status="starting", url=url), 202
+    global _driver
     with _lock:
         try:
             _pin_viewport(_driver)
@@ -136,8 +142,11 @@ def webview_open():
             print(f"browser: opened {url}", flush=True)
             return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
         except Exception as e:
-            print(f"browser: open failed: {e}", flush=True)
-            return jsonify(status="failed", detail=str(e)), 500
+            # The driver died (crashed / was reaped mid-flight). Drop it so the next open cold-launches
+            # fresh, and tell the client to retry — don't wedge on a dead handle.
+            print(f"browser: open failed ({e}) — dropping driver, will re-warm", flush=True)
+            _driver = None
+            return jsonify(status="starting", detail=str(e)[:200]), 202
 
 
 @app.get("/webview/frame")
