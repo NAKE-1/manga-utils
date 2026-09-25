@@ -68,6 +68,9 @@ def _build_driver():
     opts.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm exhaustion in Docker
     opts.add_argument("--disable-gpu")
     opts.add_argument(f"--window-size={WIDTH},{HEIGHT}")
+    # Don't block get() until the whole page finishes: an interactive view streams the load via frames,
+    # and a Cloudflare-gated page (MangaFire) never "finishes" — a normal strategy hangs open() forever.
+    opts.page_load_strategy = "none"
     # Use the system chromedriver (matches the Debian chromium build); uc patches a copy of it for stealth.
     d = uc.Chrome(options=opts, headless=False, use_subprocess=True,
                   driver_executable_path="/usr/bin/chromedriver")
