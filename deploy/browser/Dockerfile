@@ -18,7 +18,7 @@ ENV CHROME_BIN=/usr/bin/chromium \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py entrypoint.sh ./
+COPY app.py entrypoint.sh captcha.py classes.json best.onnx ./
 RUN chmod +x entrypoint.sh
 
 EXPOSE 9000

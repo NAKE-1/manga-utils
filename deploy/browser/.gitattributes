@@ -1,2 +1,4 @@
 # These run in a Linux container — force LF so entrypoint.sh + app.py don't get CRLF on checkout.
 * text eol=lf
+# ...but never touch binaries (the ONNX model), or line-ending conversion corrupts them.
+*.onnx -text

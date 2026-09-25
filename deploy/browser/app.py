@@ -206,12 +206,116 @@ def webview_close():
     with _lock:
         if _driver is not None:
             try:
-                _driver.get("about:blank")
+                _driver.execute_cdp_cmd("Page.navigate", {"url": "about:blank"})  # non-blocking, like open
             except Exception:
                 pass
             _current_url = ""
             print("browser: page closed (Chromium kept warm)", flush=True)
     return ("", 200)
+
+
+# ---- YOLO shape-captcha autosolve (P3) — reads MangaFire's live challenge, runs the ONNX detector, clicks
+# the shapes via CDP. Same read JS + A->B match + viewport-coordinate math as the JVM's autoSolveLiveCaptcha.
+AUTOSOLVE_TRIES = 6
+# Same DOM read the JVM uses: #main = the grid image (B), #thumb = the order strip (A).
+CAPTCHA_READ_JS = (
+    "(function(){var m=document.getElementById('main'),t=document.getElementById('thumb');"
+    "if(!m||!t||!m.naturalWidth)return JSON.stringify({error:'no shape-captcha on this page'});"
+    "var r=m.getBoundingClientRect();return JSON.stringify({a:t.src,b:m.src,"
+    "rect:{left:r.left,top:r.top,width:r.width,height:r.height},nw:m.naturalWidth,nh:m.naturalHeight});})()"
+)
+
+_captcha = None
+
+
+def _captcha_mod():
+    """Lazy-load the ONNX detector (heavy) only when autosolve is first used."""
+    global _captcha
+    if _captcha is None:
+        import captcha as c
+        _captcha = c
+    return _captcha
+
+
+def _cdp(cmd, params=None):
+    """One CDP command under the lock. Locking PER-OP (not around the whole solve) lets /frame interleave
+    so the streamed view keeps updating while we click, and never holds the lock for the ~seconds a solve
+    takes."""
+    with _lock:
+        if _driver is None:
+            raise RuntimeError("no driver")
+        return _driver.execute_cdp_cmd(cmd, params or {})
+
+
+def _eval_js(expr):
+    return (_cdp("Runtime.evaluate", {"expression": expr, "returnByValue": True}) or {}).get("result", {}).get("value")
+
+
+def _cdp_click(x, y):
+    for t in ("mousePressed", "mouseReleased"):
+        _cdp("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
+
+
+def _on_challenge():
+    p = _eval_js("(function(){return location.pathname;})()") or ""
+    return "@waf" in p or "challenge" in p
+
+
+@app.post("/webview/autosolve")
+def webview_autosolve():
+    import json as _json
+    import random
+    import time as _time
+    if _driver is None:
+        return jsonify(solved=False, detected=0, clicked=0, tries=0, message="open the challenge first"), 200
+    _touch()
+    cap = _captcha_mod()
+    detected = 0
+    for attempt in range(1, AUTOSOLVE_TRIES + 1):
+        _touch()
+        raw = _eval_js(CAPTCHA_READ_JS)
+        if not raw:
+            return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message="couldn't read the page"), 200
+        try:
+            dom = _json.loads(raw)
+        except Exception:
+            return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message="page returned no JSON"), 200
+        if dom.get("error"):
+            return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message=dom["error"]), 200
+        a, b = dom.get("a", ""), dom.get("b", "")
+        nw, nh, rect = dom.get("nw", 0), dom.get("nh", 0), dom.get("rect", {})
+        if not a or not b or nw <= 0 or nh <= 0:
+            _cdp("Page.reload", {}); _time.sleep(1.5); continue
+        try:
+            clicks, missing = cap.solve(cap.decode_data_uri(a), cap.decode_data_uri(b))
+        except Exception as e:
+            print(f"browser: autosolve detect failed: {e}", flush=True)
+            return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message="detect/solve failed — see log"), 200
+        detected = len(clicks) + len(missing)
+        if not clicks or missing:
+            print(f"browser: autosolve try {attempt}: incomplete (missing {missing}) — refreshing", flush=True)
+            _cdp("Page.reload", {}); _time.sleep(1.5); continue
+        for (cx, cy) in clicks:
+            vx = rect["left"] + (cx / nw) * rect["width"] + random.randint(-2, 2)
+            vy = rect["top"] + (cy / nh) * rect["height"] + random.randint(-2, 2)
+            _cdp_click(vx, vy)
+            _time.sleep(random.uniform(1.0, 1.3))  # human pacing; lock is free here so frames keep flowing
+        # wait up to 8s for the page to navigate off the challenge (= passed)
+        deadline = _time.time() + 8
+        passed = False
+        while _time.time() < deadline:
+            if not _on_challenge():
+                passed = True
+                break
+            _time.sleep(0.5)
+        if passed:
+            print(f"browser: autosolve SOLVED in {len(clicks)} clicks (try {attempt})", flush=True)
+            return jsonify(solved=True, detected=detected, clicked=len(clicks), tries=attempt,
+                           message=f"solved in {len(clicks)} clicks"), 200
+        print(f"browser: autosolve try {attempt}: clicked {len(clicks)} but didn't pass — refreshing", flush=True)
+        _cdp("Page.reload", {}); _time.sleep(1.5)
+    return jsonify(solved=False, detected=detected, clicked=0, tries=AUTOSOLVE_TRIES,
+                   message="gave up after retries — try solving manually"), 200
 
 
 if __name__ == "__main__":

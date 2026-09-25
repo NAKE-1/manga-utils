@@ -1,3 +1,8 @@
 flask==3.0.3
 selenium==4.25.0
 undetected-chromedriver==3.5.5
+# YOLO shape-captcha autosolve (same pins as the solver sidecar — numpy<2 / onnxruntime<1.19 avoid the
+# x86-64-v2 crash on this box).
+onnxruntime>=1.17,<1.19
+numpy>=1.26,<2
+pillow>=10.0

@@ -2249,10 +2249,12 @@ fun Application.module() {
         // →verify loop). host= drives which host gets cleared on success (defaults to mangafire.to).
         post("/api/webview/autosolve") {
             val host = call.request.queryParameters["host"]?.takeIf { it.isNotBlank() } ?: "mangafire.to"
-            // Auto-solve drives the JCEF WebView (RV.evalJs/click). On the Chrome sidecar the challenge is in
-            // the sidecar's browser, not JCEF, so there's nothing to read — say so clearly (P3 wires it).
+            // Chrome engine: the challenge is in the sidecar's browser — run the YOLO solve THERE (it reads
+            // the DOM, detects, and clicks via CDP) and pass its {solved,…,message} JSON straight through.
             if (useChromeEngine()) {
-                return@post call.respond(AutoSolveDto(false, 0, 0, 0, "Auto-solve isn't wired to the Chrome engine yet — tap the shapes manually"))
+                val body = withContext(Dispatchers.IO) { ChromeEngine.autosolve() }
+                    ?: return@post call.respond(AutoSolveDto(false, 0, 0, 0, "browser sidecar unreachable"))
+                return@post call.respondText(body, ContentType.Application.Json)
             }
             val res = withContext(Dispatchers.IO) {
                 runCatching { autoSolveLiveCaptcha(host) }.onFailure { log.warn("autosolve error: {}", it.message) }.getOrNull()

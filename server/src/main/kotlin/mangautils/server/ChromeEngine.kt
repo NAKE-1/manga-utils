@@ -29,6 +29,13 @@ object ChromeEngine {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    // Separate client for autosolve only — a full YOLO solve loop (up to 6 tries, each with clicks + an 8s
+    // wait) legitimately runs ~60s, so it needs a long read timeout the fast open/frame client must NOT have.
+    private val httpLong = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(150, TimeUnit.SECONDS)
+        .build()
+
     /** POST /webview/open — returns the sidecar's raw JSON body ({status, w, h, url}) or null if unreachable. */
     fun open(pageUrl: String): String? {
         val base = url ?: return null
@@ -53,6 +60,18 @@ object ChromeEngine {
     fun input(x: Int, y: Int) = post("/webview/input?x=$x&y=$y")
     fun scroll(x: Int, y: Int, dy: Int) = post("/webview/scroll?x=$x&y=$y&dy=$dy")
     fun close() = post("/webview/close")
+
+    /** POST /webview/autosolve — runs the YOLO solve loop in the sidecar. Returns the raw JSON body
+     *  ({solved, detected, clicked, tries, message}) or null if unreachable. Uses a LONG timeout: a full
+     *  6-try solve (clicks + 8s waits each) can take ~60s, far past the short client used for open/frame. */
+    fun autosolve(): String? {
+        val base = url ?: return null
+        return runCatching {
+            httpLong.newCall(Request.Builder().url("$base/webview/autosolve").post(EMPTY).build()).execute().use {
+                it.body?.string()
+            }
+        }.onFailure { log.info("chrome: autosolve failed: {}", it.message) }.getOrNull()
+    }
 
     private fun post(path: String) {
         val base = url ?: return
