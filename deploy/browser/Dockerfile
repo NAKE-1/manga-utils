@@ -8,7 +8,19 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium chromium-driver xvfb \
         ca-certificates fonts-liberation fonts-noto-cjk fonts-noto-color-emoji \
+        curl unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# uBlock Origin Lite (MV3) — the only ad/popup blocker that ships a ready-to-load unpacked build, and MV2 is
+# dead on Chromium 153 so full uBO isn't an option. Loaded via --load-extension in app.py. Fetched at build
+# time from the official uBOL release; if the download fails the build still succeeds (adblock just absent).
+RUN mkdir -p /app/ublock && \
+    URL="$(curl -fsSL https://api.github.com/repos/uBlockOrigin/uBOL-home/releases/latest \
+        | grep -oE 'https://[^\"]*chromium\.mv3\.zip' | head -n1)" && \
+    if [ -n "$URL" ]; then \
+        echo "browser: fetching uBO Lite from $URL" && \
+        curl -fsSL "$URL" -o /tmp/ubol.zip && unzip -q /tmp/ubol.zip -d /app/ublock && rm /tmp/ubol.zip ; \
+    else echo "browser: WARN could not resolve uBO Lite release — adblock will be absent" ; fi
 
 ENV CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_BIN=/usr/bin/chromedriver \

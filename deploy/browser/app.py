@@ -70,6 +70,8 @@ def _idle_reaper():
 
 DEVTOOLS_PORT = 9222              # fixed Chromium DevTools port the screencast websocket connects to
 SCROLL_MULT = float(os.environ.get("MU_BROWSER_SCROLL_MULT", "1.0") or "1.0")  # wheel sensitivity knob
+ADBLOCK = os.environ.get("MU_BROWSER_ADBLOCK", "1") not in ("", "0", "false", "False")  # load uBO Lite
+UBLOCK_DIR = "/app/ublock"
 WIDTH, HEIGHT = 440, 780          # keep in lockstep with JcefRemoteView.WIDTH/HEIGHT so the client's
                                   # frame->OSR coordinate math needs zero changes.
 _lock = threading.Lock()          # selenium's driver is NOT thread-safe; serialize every op.
@@ -110,6 +112,12 @@ def _build_driver_once():
     # Chrome 111+ rejects DevTools websocket handshakes whose Origin isn't allow-listed (403 Forbidden). Our
     # screencast ws connects from localhost, so allow all origins — the port is bound to 127.0.0.1 only anyway.
     opts.add_argument("--remote-allow-origins=*")
+    # uBlock Origin Lite (MV3) adblock, if bundled. Headed Chromium loads unpacked extensions fine (headless
+    # wouldn't). Kills banner/inline ads + trackers; popups are already handled by the onBeforePopup replica.
+    if ADBLOCK and os.path.isdir(UBLOCK_DIR) and os.path.isfile(os.path.join(UBLOCK_DIR, "manifest.json")):
+        opts.add_argument(f"--load-extension={UBLOCK_DIR}")
+        opts.add_argument(f"--disable-extensions-except={UBLOCK_DIR}")
+        print("browser: uBO Lite adblock enabled", flush=True)
     # Don't block get() until the whole page finishes: an interactive view streams the load via frames,
     # and a Cloudflare-gated page (MangaFire) never "finishes" — a normal strategy hangs open() forever.
     opts.page_load_strategy = "none"
