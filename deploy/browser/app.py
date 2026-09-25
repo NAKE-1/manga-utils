@@ -350,20 +350,36 @@ def webview_autosolve():
             vy = rect["top"] + (cy / nh) * rect["height"] + random.randint(-2, 2)
             _cdp_click(vx, vy)
             _time.sleep(random.uniform(1.0, 1.3))  # human pacing; lock is free here so frames keep flowing
-        # wait up to 8s for the page to navigate off the challenge (= passed)
+        # wait up to 8s for the page to navigate off the challenge (= passed). The verify/redirect can itself
+        # trigger a fresh Cloudflare check that FREEZES the renderer — catch that so it fails cleanly instead
+        # of crashing the request, and report it honestly.
         deadline = _time.time() + 8
         passed = False
+        froze = False
         while _time.time() < deadline:
-            if not _on_challenge():
-                passed = True
+            try:
+                if not _on_challenge():
+                    passed = True
+                    break
+            except Exception:
+                froze = True
                 break
             _time.sleep(0.5)
         if passed:
             print(f"browser: autosolve SOLVED in {len(clicks)} clicks (try {attempt})", flush=True)
             return jsonify(solved=True, detected=detected, clicked=len(clicks), tries=attempt,
                            message=f"solved in {len(clicks)} clicks"), 200
+        if froze:
+            print(f"browser: autosolve clicked {len(clicks)} but the verify/redirect froze (Cloudflare)", flush=True)
+            return jsonify(solved=False, detected=detected, clicked=len(clicks), tries=attempt,
+                           message=f"clicked {len(clicks)} shapes, but MangaFire's verify step froze the browser (Cloudflare) — this is why MangaFire uses the solver, not the WebView"), 200
         print(f"browser: autosolve try {attempt}: clicked {len(clicks)} but didn't pass — refreshing", flush=True)
-        _cdp("Page.reload", {}); _time.sleep(1.5)
+        try:
+            _cdp("Page.reload", {})
+        except Exception:
+            return jsonify(solved=False, detected=detected, clicked=len(clicks), tries=attempt,
+                           message="page froze after the clicks (Cloudflare) — MangaFire uses the solver"), 200
+        _time.sleep(1.5)
     return jsonify(solved=False, detected=detected, clicked=0, tries=AUTOSOLVE_TRIES,
                    message="gave up after retries — try solving manually"), 200
 
