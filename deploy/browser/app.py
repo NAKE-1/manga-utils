@@ -271,16 +271,23 @@ def webview_autosolve():
     _touch()
     cap = _captcha_mod()
     detected = 0
+    # Log what the page actually is, once — the usual failure is the shape grid not being present (Cloudflare
+    # interstitial / Turnstile / already-passed), and we need to SEE that instead of a silent 3ms fail.
+    loc = _eval_js("(function(){return location.href+' | title='+document.title;})()")
+    print(f"browser: autosolve on {loc}", flush=True)
     for attempt in range(1, AUTOSOLVE_TRIES + 1):
         _touch()
         raw = _eval_js(CAPTCHA_READ_JS)
         if not raw:
+            print("browser: autosolve — DOM read returned nothing", flush=True)
             return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message="couldn't read the page"), 200
         try:
             dom = _json.loads(raw)
         except Exception:
+            print(f"browser: autosolve — non-JSON read: {str(raw)[:120]}", flush=True)
             return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message="page returned no JSON"), 200
         if dom.get("error"):
+            print(f"browser: autosolve — {dom['error']}", flush=True)
             return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message=dom["error"]), 200
         a, b = dom.get("a", ""), dom.get("b", "")
         nw, nh, rect = dom.get("nw", 0), dom.get("nh", 0), dom.get("rect", {})
