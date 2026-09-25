@@ -14,12 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # uBlock Origin Lite (MV3) — the only ad/popup blocker that ships a ready-to-load unpacked build, and MV2 is
 # dead on Chromium 153 so full uBO isn't an option. Loaded via --load-extension in app.py. Fetched at build
 # time from the official uBOL release; if the download fails the build still succeeds (adblock just absent).
+# NOTE: uBOL releases are marked pre-release, so /releases/latest 404s — query the releases LIST (newest
+# first, includes pre-releases) and take the first chromium.mv3 asset.
 RUN mkdir -p /app/ublock && \
-    URL="$(curl -fsSL https://api.github.com/repos/uBlockOrigin/uBOL-home/releases/latest \
+    URL="$(curl -fsSL 'https://api.github.com/repos/uBlockOrigin/uBOL-home/releases?per_page=10' \
         | grep -oE 'https://[^\"]*chromium\.mv3\.zip' | head -n1)" && \
     if [ -n "$URL" ]; then \
         echo "browser: fetching uBO Lite from $URL" && \
-        curl -fsSL "$URL" -o /tmp/ubol.zip && unzip -q /tmp/ubol.zip -d /app/ublock && rm /tmp/ubol.zip ; \
+        curl -fsSL "$URL" -o /tmp/ubol.zip && unzip -q /tmp/ubol.zip -d /app/ublock && rm /tmp/ubol.zip && \
+        echo "browser: uBO Lite unpacked:" && find /app/ublock -name manifest.json ; \
     else echo "browser: WARN could not resolve uBO Lite release — adblock will be absent" ; fi
 
 ENV CHROME_BIN=/usr/bin/chromium \
