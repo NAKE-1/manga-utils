@@ -4,6 +4,7 @@ import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, S
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
+import { WebviewTestWizard } from '../components/WebviewTestWizard'
 import { toast } from '../components/Toast'
 
 // Hidden Developer screen (opened from Settings → Developer). Home for the dev/debug tools.
@@ -80,6 +81,8 @@ export function Dev() {
   const [rawBusy, setRawBusy] = useState(false)
   const [verbose, setVerbose] = useState(false)
   const [autoSolve, setAutoSolve] = useState(false)
+  const [engine, setEngine] = useState('jcef') // webviewEngine: 'jcef' (in-process) | 'chrome' (sidecar)
+  const [engineBusy, setEngineBusy] = useState(false)
   const [wvUrl, setWvUrl] = useState('')
   const [wvSourceId, setWvSourceId] = useState('')
   const [wvOpen, setWvOpen] = useState<{ url?: string; source?: string } | null>(null)
@@ -117,7 +120,7 @@ export function Dev() {
     api.library().then(setLibrary).catch(() => {})
     api.devState().then(setStateFiles).catch(() => {})
     api.sources().then(setSources).catch(() => {})
-    api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha) }).catch(() => {})
+    api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha); setEngine(s.webviewEngine || 'jcef') }).catch(() => {})
     api.manifestInfo().then(setMfInfo).catch(() => {})
     refreshCookieHosts()
     return () => clearInterval(t)
@@ -168,6 +171,13 @@ export function Dev() {
     const v = !autoSolve; setAutoSolve(v)
     const r = await api.saveSettings({ autoSolveCaptcha: v }).catch(() => null)
     if (!r) { setAutoSolve(!v); toast('Failed to change setting', 'error') }
+  }
+  async function changeEngine(v: string) {
+    const prev = engine; setEngine(v); setEngineBusy(true)
+    const r = await api.saveSettings({ webviewEngine: v }).catch(() => null)
+    setEngineBusy(false)
+    if (!r) { setEngine(prev); toast('Failed to change engine', 'error') }
+    else toast(v === 'chrome' ? 'Engine → Chrome sidecar' : 'Engine → JCEF (in-process)', 'success')
   }
   async function doLifecycle(kind: 'restart' | 'shutdown') {
     if (!confirm(kind === 'restart' ? 'Restart the server now? Downloads and the WebView will briefly stop.' : 'Shut down the server now? You’ll need to start it again from the machine.')) return
@@ -508,9 +518,27 @@ export function Dev() {
 
       <div className="dev-sec">
         <div className="dev-sec-h">WebView</div>
+
+        <div className="set-card">
+          <div className="set-row-label">WebView engine</div>
+          <div className="set-hint">Which browser backs the streamed WebView + Cloudflare fetch. <b>JCEF</b> runs in-process (can crash the whole server — a known libcef bug). <b>Chrome sidecar</b> runs in its own container (crash-isolated) — <i>not built yet; selecting it has no effect until the sidecar ships (P2)</i>.</div>
+          <div className="set-actions">
+            <select className="wv-test-src" value={engine} disabled={engineBusy} onChange={(e) => changeEngine(e.target.value)}>
+              <option value="jcef">JCEF (in-process)</option>
+              <option value="chrome">Chrome sidecar (isolated) — not built yet</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="set-card">
+          <div className="set-row-label">Guided WebView test</div>
+          <div className="set-hint">Step-by-step parity check for the current engine — render, scroll, click, auto-solve, and cookie/UA/token sharing — with a pass/fail report at the end. Run it on JCEF for a baseline, then on the Chrome sidecar (once built) to confirm parity. Uses the source/URL picked in "WebView tester" below for the general steps.</div>
+          <WebviewTestWizard engine={engine} pick={wvUrl.trim() ? { url: wvUrl.trim() } : wvSourceId ? { source: wvSourceId } : null} />
+        </div>
+
         <div className="set-card">
           <div className="set-row-label">WebView tester</div>
-          <div className="set-hint">Open any site (or a source's homepage) in the streamed Chromium WebView — handy for eyeballing captchas, popups, cookies, and layout while iterating on the WebView.</div>
+          <div className="set-hint">Open any site (or a source's homepage) in the streamed WebView — handy for eyeballing captchas, popups, cookies, and layout while iterating on the WebView.</div>
           <div className="wv-test-row">
             <select className="wv-test-src" value={wvSourceId} onChange={(e) => setWvSourceId(e.target.value)}>
               <option value="">Pick a source…</option>
@@ -674,7 +702,7 @@ export function Dev() {
           )}
         </div>
         <div className="set-card">
-          <div className="set-row-label">JCEF browser pool</div>
+          <div className="set-row-label">Browser pool (fetch)</div>
           <div className="set-hint">Real-Chromium browsers that fetch Cloudflare-protected sources (e.g. MangaFire). Each shows <b>busy/open</b>. If a pool gets stuck on an unsolvable challenge it auto-recovers after 2 failures, but you can force-recycle it here. Per-host size is set by the <code>MU_JCEF_POOL</code> env var.</div>
           <div className="set-actions" style={{ alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
             {pool.length === 0
@@ -687,7 +715,7 @@ export function Dev() {
             <button className="btn" title="Refresh pool status" disabled={poolBusy} onClick={refreshPool}>↻</button>
           </div>
           <div className="set-actions" style={{ marginTop: 8 }}>
-            <button className="btn danger" disabled={poolBusy} onClick={resetPool}>Reset JCEF pool</button>
+            <button className="btn danger" disabled={poolBusy} onClick={resetPool}>Reset browser pool</button>
           </div>
           {poolMsg && <div className="set-hint" style={{ marginTop: 6 }}>{poolMsg}</div>}
         </div>

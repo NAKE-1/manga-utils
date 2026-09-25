@@ -482,6 +482,7 @@ private data class SettingsDto(
     val notify: mangautils.core.config.NotifyConfig,
     val verboseLogging: Boolean,
     val autoSolveCaptcha: Boolean,
+    val webviewEngine: String,
 )
 
 @Serializable
@@ -582,6 +583,7 @@ private data class SettingsPatch(
     val notify: mangautils.core.config.NotifyConfig? = null,
     val verboseLogging: Boolean? = null,
     val autoSolveCaptcha: Boolean? = null,
+    val webviewEngine: String? = null,
 )
 
 @Serializable
@@ -669,7 +671,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.healthCheckEnabled, s.healthCheckHour,
     s.autoBackupEnabled, s.autoBackupHour, s.autoBackupKeep,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
-    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha,
+    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha, s.webviewEngine,
 )
 
 @Serializable
@@ -2142,6 +2144,7 @@ fun Application.module() {
             body.notify?.let { s = s.copy(notify = it) }
             body.verboseLogging?.let { s = s.copy(verboseLogging = it) }
             body.autoSolveCaptcha?.let { s = s.copy(autoSolveCaptcha = it) }
+            body.webviewEngine?.let { e -> s = s.copy(webviewEngine = if (e == "chrome") "chrome" else "jcef") }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
