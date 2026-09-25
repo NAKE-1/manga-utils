@@ -2232,6 +2232,7 @@ fun Application.module() {
             val y = call.request.queryParameters["y"]?.toIntOrNull()
             if (x == null || y == null) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("x and y required"))
             if (useChromeEngine()) ChromeEngine.input(x, y) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
+            log.info("WEBVIEW  tap {},{}", x, y)
             call.respond(HttpStatusCode.OK)
         }
         // Forward a scroll gesture to the offscreen WebView (OSR has no native input). x,y = OSR pixel under
@@ -2248,6 +2249,11 @@ fun Application.module() {
         // →verify loop). host= drives which host gets cleared on success (defaults to mangafire.to).
         post("/api/webview/autosolve") {
             val host = call.request.queryParameters["host"]?.takeIf { it.isNotBlank() } ?: "mangafire.to"
+            // Auto-solve drives the JCEF WebView (RV.evalJs/click). On the Chrome sidecar the challenge is in
+            // the sidecar's browser, not JCEF, so there's nothing to read — say so clearly (P3 wires it).
+            if (useChromeEngine()) {
+                return@post call.respond(AutoSolveDto(false, 0, 0, 0, "Auto-solve isn't wired to the Chrome engine yet — tap the shapes manually"))
+            }
             val res = withContext(Dispatchers.IO) {
                 runCatching { autoSolveLiveCaptcha(host) }.onFailure { log.warn("autosolve error: {}", it.message) }.getOrNull()
             } ?: return@post call.respond(HttpStatusCode.InternalServerError, ErrorDto("auto-solve error — see log"))

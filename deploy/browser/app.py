@@ -16,11 +16,39 @@ Frames are pulled per request (the server already polls /frame ~7x/s), so no asy
 needed. Autosolve / cookie sharing / CF fetch come in later phases; this phase is just "does it stream".
 """
 import base64
+import logging
 import threading
+import time
 
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
+# Quiet Flask/werkzeug's per-request access log — it spams one line per /frame, /scroll, /input (dozens/sec).
+# We keep our own meaningful prints (open/close/ready/solve) instead.
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+IDLE_QUIT_SEC = 300   # close idle Chromium after 5 min to free RAM (a warm reopen is instant; a cold one ~2-3s)
+_last_activity = time.time()
+
+
+def _touch():
+    global _last_activity
+    _last_activity = time.time()
+
+
+def _idle_reaper():
+    """Quit Chromium after IDLE_QUIT_SEC of no activity so it doesn't hold ~400MB while nobody's using it."""
+    global _driver
+    while True:
+        time.sleep(30)
+        with _lock:
+            if _driver is not None and (time.time() - _last_activity) > IDLE_QUIT_SEC:
+                try:
+                    _driver.quit()
+                except Exception:
+                    pass
+                _driver = None
+                print("browser: idle — Chromium closed to free RAM", flush=True)
 
 WIDTH, HEIGHT = 440, 780          # keep in lockstep with JcefRemoteView.WIDTH/HEIGHT so the client's
                                   # frame->OSR coordinate math needs zero changes.
@@ -89,6 +117,7 @@ def webview_open():
     url = (request.get_json(silent=True) or {}).get("url") or request.args.get("url") or ""
     if not url.startswith("http"):
         return jsonify(status="failed", detail="a http(s) url is required"), 400
+    _touch()
     # Not up yet → kick off the (lazy, background) launch and tell the client to retry — same "Starting…"
     # UX the CEF path uses. Chromium only runs after the first WebView open (no RAM when unused).
     if _driver is None:
@@ -110,6 +139,7 @@ def webview_open():
 
 @app.get("/webview/frame")
 def webview_frame():
+    _touch()
     with _lock:
         if _driver is None:
             return ("", 204)
@@ -155,18 +185,21 @@ def webview_scroll():
 
 @app.post("/webview/close")
 def webview_close():
-    global _driver, _current_url
+    # Keep Chromium WARM (like JCEF): just blank the page so the next open is instant, instead of quitting
+    # and paying the ~2-3s relaunch every time. The idle reaper quits it later if nobody reopens.
+    global _current_url
+    _touch()
     with _lock:
         if _driver is not None:
             try:
-                _driver.quit()
+                _driver.get("about:blank")
             except Exception:
                 pass
-            _driver = None
             _current_url = ""
-            print("browser: closed", flush=True)
+            print("browser: page closed (Chromium kept warm)", flush=True)
     return ("", 200)
 
 
 if __name__ == "__main__":
+    threading.Thread(target=_idle_reaper, daemon=True).start()
     app.run(host="0.0.0.0", port=9000, threaded=True)
