@@ -89,7 +89,7 @@ def _build_driver_once():
     # time and wedges the sidecar ("unreachable"). Fail in ~12s instead: a hung page becomes a recoverable
     # blip, the lock frees, and the pump/clicks resume once the renderer settles.
     try:
-        d.command_executor.set_timeout(12)
+        d.command_executor.set_timeout(8)
     except Exception as e:
         print(f"browser: couldn't set command timeout: {e}", flush=True)
     return d
@@ -298,13 +298,29 @@ def webview_autosolve():
     _touch()
     cap = _captcha_mod()
     detected = 0
-    # Log what the page actually is, once — the usual failure is the shape grid not being present (Cloudflare
-    # interstitial / Turnstile / already-passed), and we need to SEE that instead of a silent 3ms fail.
-    loc = _eval_js("(function(){return location.href+' | title='+document.title;})()")
+    # Log what the page actually is, once — the usual "failure" is the shape grid not being present.
+    try:
+        loc = _eval_js("(function(){return location.href+' | title='+document.title;})()") or ""
+    except Exception as e:
+        print(f"browser: autosolve — page unresponsive ({e})", flush=True)
+        return jsonify(solved=False, detected=0, clicked=0, tries=0,
+                       message="page is unresponsive (renderer busy) — can't autosolve"), 200
     print(f"browser: autosolve on {loc}", flush=True)
+    # Cloudflare's Turnstile interstitial ("Security check" / "Just a moment") comes BEFORE the shape captcha
+    # and pins the renderer — there's nothing to click, and looping/hammering it wedges the sidecar. Bail now.
+    low = loc.lower()
+    if any(s in low for s in ("security check", "just a moment", "checking your", "attention required", "verify you are human")):
+        print("browser: autosolve — Cloudflare interstitial, not the shape captcha — bailing", flush=True)
+        return jsonify(solved=False, detected=0, clicked=0, tries=0,
+                       message="Cloudflare check (not the shape captcha) — MangaFire is handled by the solver, the browser can't pass this"), 200
     for attempt in range(1, AUTOSOLVE_TRIES + 1):
         _touch()
-        raw = _eval_js(CAPTCHA_READ_JS)
+        try:
+            raw = _eval_js(CAPTCHA_READ_JS)
+        except Exception as e:
+            print(f"browser: autosolve — read timed out ({e})", flush=True)
+            return jsonify(solved=False, detected=0, clicked=0, tries=attempt,
+                           message="page unresponsive — can't read the captcha"), 200
         if not raw:
             print("browser: autosolve — DOM read returned nothing", flush=True)
             return jsonify(solved=False, detected=0, clicked=0, tries=attempt, message="couldn't read the page"), 200
@@ -355,18 +371,37 @@ def webview_autosolve():
 def _frame_pump():
     """Capture the tab to _frame_cache ~7x/s while a client is actively watching (a recent /frame). One
     capturer taking the lock briefly, instead of every /frame request racing for it — see webview_frame()."""
-    global _frame_cache
+    global _frame_cache, _driver
+    fails = 0
     while True:
         if _driver is not None and _current_url and time.time() < _frame_wanted_until:
             try:
                 res = _cdp("Page.captureScreenshot", {"format": "jpeg", "quality": 55})
                 _frame_cache = base64.b64decode(res["data"])
+                fails = 0
                 time.sleep(0.14)
             except Exception:
-                # renderer busy/hung (e.g. a Cloudflare challenge) — back off so we don't hog the lock
-                # retrying a doomed capture and starve clicks/navigate.
+                # renderer busy/hung (e.g. a Cloudflare challenge) — back off so we don't hog the lock.
+                fails += 1
+                # Sustained failures = the tab's renderer is effectively dead (Cloudflare pinned it and it
+                # never recovered). Recreate Chromium so the user can get a working view again by reopening,
+                # instead of a permanently frozen session. Null under the lock, quit OUTSIDE it (deadlock-safe).
+                if fails >= 6:
+                    print("browser: renderer frozen too long — recreating Chromium", flush=True)
+                    victim = None
+                    with _lock:
+                        victim = _driver
+                        _driver = None
+                    if victim is not None:
+                        try:
+                            victim.quit()
+                        except Exception:
+                            pass
+                    _frame_cache = None
+                    fails = 0
                 time.sleep(1.0)
         else:
+            fails = 0
             time.sleep(0.1)
 
 
