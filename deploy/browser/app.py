@@ -136,7 +136,10 @@ def webview_open():
     with _lock:
         try:
             _pin_viewport(_driver)
-            _driver.get(url)
+            # CDP Page.navigate returns immediately after issuing the navigation — unlike driver.get(), which
+            # blocks until the page "loads" (undetected-chromedriver ignores page_load_strategy, and a
+            # Cloudflare page never finishes). The page then streams in via /frame.
+            _driver.execute_cdp_cmd("Page.navigate", {"url": url})
             _current_url = url
             print(f"browser: opened {url}", flush=True)
             return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
