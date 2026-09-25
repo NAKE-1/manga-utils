@@ -172,6 +172,7 @@ def _cdp(method, params=None, want_reply=False, timeout=8):
     waited on a busy renderer is exactly what re-wedged the sidecar after a link click. want_reply=True waits
     for the matching response with a hard timeout (autosolve's DOM reads); a hung renderer times out cleanly.
     The screencast loop is the sole reader and routes responses back here by id."""
+    global _ws
     mid = _next_id()
     ev = None
     if want_reply:
@@ -185,7 +186,19 @@ def _cdp(method, params=None, want_reply=False, timeout=8):
                 with _pending_lock:
                     _pending.pop(mid, None)
             raise RuntimeError("devtools ws not connected")
-        ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        try:
+            ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        except Exception:
+            # Send failed (socket dead or write blocked past its timeout). Drop the ws NOW so the loop
+            # reconnects and every other request fails fast instead of piling on the lock — that pile-up is
+            # what made "the entire thing freeze and become unusable". (Set directly; we already hold the lock.)
+            _ws = None
+            try: ws.close()
+            except Exception: pass
+            if ev is not None:
+                with _pending_lock:
+                    _pending.pop(mid, None)
+            raise
     if not want_reply:
         return None
     if not ev.wait(timeout):
@@ -402,13 +415,10 @@ def webview_autosolve():
         return jsonify(solved=False, detected=0, clicked=0, tries=0,
                        message="page is unresponsive (renderer busy) — can't autosolve"), 200
     print(f"browser: autosolve on {loc}", flush=True)
-    # Cloudflare's Turnstile interstitial ("Security check" / "Just a moment") comes BEFORE the shape captcha
-    # and pins the renderer — there's nothing to click, and looping/hammering it wedges the sidecar. Bail now.
-    low = loc.lower()
-    if any(s in low for s in ("security check", "just a moment", "checking your", "attention required", "verify you are human")):
-        print("browser: autosolve — Cloudflare interstitial, not the shape captcha — bailing", flush=True)
-        return jsonify(solved=False, detected=0, clicked=0, tries=0,
-                       message="Cloudflare check (not the shape captcha) — MangaFire is handled by the solver, the browser can't pass this"), 200
+    # NOTE: MangaFire's shape-captcha page ALSO reports title "Security check", so we do NOT bail on the title.
+    # We just try to read the shape grid (#main/#thumb) below; if it isn't there, that path reports cleanly
+    # ("no shape-captcha on this page"). The renderer no longer freezes on these pages (push frames), so
+    # there's nothing to protect against by pre-bailing.
     for attempt in range(1, AUTOSOLVE_TRIES + 1):
         _touch()
         try:
@@ -488,15 +498,23 @@ def _devtools_addr():
 
 
 def _page_ws_url():
-    """The page target's raw CDP websocket URL (from DevTools /json), or None if not up yet."""
+    """The active page target's raw CDP websocket URL (from DevTools /json), or None if not up yet. Prefers a
+    real page over about:blank, and one matching what we last navigated to, so a reconnect after a target swap
+    lands on the tab the user is actually looking at — not a leftover blank/background tab."""
     addr = _devtools_addr()
     if not addr:
         return None
     raw = urllib.request.urlopen(f"http://{addr}/json", timeout=3).read()
-    for t in json.loads(raw):
-        if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
-            return t["webSocketDebuggerUrl"]
-    return None
+    pages = [t for t in json.loads(raw) if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+    if not pages:
+        return None
+    reals = [t for t in pages if not (t.get("url") or "").startswith("about:")]
+    pool = reals or pages
+    if _current_url:
+        for t in pool:
+            if (t.get("url") or "").startswith(_current_url[:40]):
+                return t["webSocketDebuggerUrl"]
+    return pool[0]["webSocketDebuggerUrl"]
 
 
 def _screencast_loop():
@@ -574,10 +592,11 @@ def _screencast_loop():
                 # SELF-HEAL: we're meant to be streaming but Chrome has gone quiet for 3s. Some navigations
                 # (CF redirects, JS location changes) don't fire a clean Page.frameNavigated, so re-arm
                 # unconditionally. On a truly static page this just pulls one fresh keyframe — harmless.
-                _arm()
+                _cdp("Page.stopScreencast"); _arm()   # stop+start: a bare start returns "already active" and
+                                                       # emits NO new frame, so we must cycle it for a keyframe
                 last_frame_at = time.time()
                 if not stalled:
-                    _dbg("stalled: no frames while watching — re-arming (renderer busy, or wrong/gone tab?)")
+                    _dbg("stalled: no frames while watching — cycling screencast (renderer busy, or wrong/gone tab?)")
                     stalled = True
             elif started and not wanted:
                 _cdp("Page.stopScreencast")
@@ -597,7 +616,15 @@ def _screencast_loop():
             if mid is not None:                          # a command response → hand it to its waiter
                 err = m.get("error")
                 if err:
-                    _dbg(f"cdp error on id {mid}: {err}")
+                    emsg = err.get("message") or ""
+                    if emsg == "Not attached to an active page":
+                        # The tab we're driving detached (navigation swapped the target). Reconnect to the
+                        # current active page instead of sending into the void — the freeze that made it
+                        # "unusable" after clicking on MangaFire.
+                        _dbg("detached from active page — reconnecting to the active tab")
+                        _drop_ws(); started = False; time.sleep(0.3); continue
+                    if emsg != "Screencast is already active":   # benign: screencast persists across navs
+                        _dbg(f"cdp error on id {mid}: {err}")
                 with _pending_lock:
                     slot = _pending.get(mid)
                     if slot:
