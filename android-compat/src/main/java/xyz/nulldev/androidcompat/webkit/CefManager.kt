@@ -33,6 +33,7 @@ import kotlin.io.path.deleteExisting
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.deleteRecursively
 import kotlin.io.path.div
+import kotlin.io.path.writeText
 import kotlin.io.path.exists
 import kotlin.io.path.getPosixFilePermissions
 import kotlin.io.path.inputStream
@@ -70,6 +71,10 @@ object CefManager {
     private val cefDir: Path by lazy { dataRoot / "bin" / "jcef" }
     private val cacheDir: Path by lazy { dataRoot / "cache" / "jcef" }
     private val releaseFile: Path by lazy { cefDir / "release" }
+    // Written when CEF starts, deleted on a CLEAN shutdown. If it's still there at the next start, the prior
+    // run crashed/was killed mid-use — a libcef SIGILL leaves the persistent cache half-written, which makes
+    // the next init hang below INITIALIZED forever. So on a dirty marker we WIPE the cache to recover.
+    private val dirtyMarker: Path by lazy { dataRoot / "cache" / "jcef.dirty" }
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -141,12 +146,24 @@ object CefManager {
                 }
             ProcessBuilder(cmd).redirectErrorStream(true).start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
         }
+        // Dirty-cache recovery: if the prior run didn't shut down cleanly (crash/kill), a libcef SIGILL can
+        // leave the persistent cache corrupted → the next init hangs below INITIALIZED (a plain restart can't
+        // fix it, the cache outlives the container). Wipe the whole cache dir in that case. Costs the stored
+        // cf_clearance cookies (re-solved on next use) — a fine trade for a WebView that actually starts.
         runCatching {
-            if (cacheDir.exists()) {
-                listOf("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile").forEach {
-                    runCatching { (cacheDir / it).deleteIfExists() }
+            if (dirtyMarker.exists()) {
+                logger.warn { "CEF cache marked dirty (prior run crashed/killed mid-use) — wiping $cacheDir to avoid a corrupt-cache init hang" }
+                if (cacheDir.exists()) cacheDir.deleteRecursively()
+            } else {
+                // not dirty → only clear leftover Chromium singleton locks (lighter touch)
+                if (cacheDir.exists()) {
+                    listOf("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile").forEach {
+                        runCatching { (cacheDir / it).deleteIfExists() }
+                    }
                 }
             }
+            cacheDir.createDirectories()
+            runCatching { dirtyMarker.writeText("1") } // mark running; removed on clean shutdown
         }
     }
 
@@ -164,6 +181,8 @@ object CefManager {
             }
             ProcessBuilder(cmd).redirectErrorStream(true).start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
         }
+        // Clean shutdown → clear the dirty marker so the next start does NOT wipe a healthy cache.
+        runCatching { dirtyMarker.deleteIfExists() }
     }
 
     private fun initBlocking() {
