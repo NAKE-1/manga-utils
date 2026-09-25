@@ -111,19 +111,27 @@ object JcefRemoteView {
         runCatching { b.invalidate() }
     }
 
-    /** Forward a wheel scroll at OSR-pixel ([x],[y]). [deltaY] > 0 scrolls the page DOWN. OSR gets no
-     *  native input, so the client's scroll gesture has to be forwarded as a wheel event or it does nothing. */
-    fun scroll(x: Int, y: Int, deltaY: Int) {
+    /** Forward a wheel scroll at OSR-pixel ([x],[y]). [deltaY] > 0 scrolls the page DOWN, [deltaX] > 0 scrolls
+     *  RIGHT. OSR gets no native input, so the client's scroll gesture has to be forwarded as a wheel event or
+     *  it does nothing. */
+    fun scroll(x: Int, y: Int, deltaX: Int, deltaY: Int) {
         val b = browser ?: return
-        runCatching {
-            // MouseWheelEvent(source, id, when, mods, x, y, clicks, popupTrigger, scrollType, scrollAmount, wheelRotation).
-            // JCEF/CEF inverts wheelRotation relative to the caller's convention (the client sends deltaY>0
-            // to mean "scroll the page DOWN"), so negate it here — otherwise a drag/scroll goes the wrong way.
-            val ev = java.awt.event.MouseWheelEvent(
+        // MouseWheelEvent(source, id, when, mods, x, y, clicks, popupTrigger, scrollType, scrollAmount, wheelRotation).
+        // JCEF/CEF inverts wheelRotation relative to the caller's convention (the client sends delta>0 to mean
+        // "page down / right"), so negate it. Horizontal wheels use the SHIFT modifier — CEF reads a shifted
+        // wheel as horizontal scroll.
+        if (deltaY != 0) runCatching {
+            b.sendMouseWheelEvent(java.awt.event.MouseWheelEvent(
                 panel, java.awt.event.MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(), 0, x, y, 0, false,
                 java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, -deltaY,
-            )
-            b.sendMouseWheelEvent(ev)
+            ))
+        }
+        if (deltaX != 0) runCatching {
+            b.sendMouseWheelEvent(java.awt.event.MouseWheelEvent(
+                panel, java.awt.event.MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(),
+                java.awt.event.InputEvent.SHIFT_DOWN_MASK, x, y, 0, false,
+                java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, -deltaX,
+            ))
         }
         runCatching { b.invalidate() }
     }

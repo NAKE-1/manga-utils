@@ -2236,12 +2236,15 @@ fun Application.module() {
             call.respond(HttpStatusCode.OK)
         }
         // Forward a scroll gesture to the offscreen WebView (OSR has no native input). x,y = OSR pixel under
-        // the pointer; dy = scroll delta (>0 = down). Without this a scroll just moves the page behind it.
+        // the pointer; dy = vertical delta (>0 = down), dx = horizontal delta (>0 = right). Without this a
+        // scroll just moves the page behind it.
         post("/api/webview/scroll") {
             val x = call.request.queryParameters["x"]?.toIntOrNull() ?: 0
             val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
-            val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dy required"))
-            if (useChromeEngine()) ChromeEngine.scroll(x, y, dy) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dy)
+            val dx = call.request.queryParameters["dx"]?.toIntOrNull() ?: 0
+            val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: 0
+            if (dx == 0 && dy == 0) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dx or dy required"))
+            if (useChromeEngine()) ChromeEngine.scroll(x, y, dx, dy) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dx, dy)
             WebviewScrollLog.onScroll()
             call.respond(HttpStatusCode.OK)
         }

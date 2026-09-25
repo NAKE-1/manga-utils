@@ -69,6 +69,7 @@ def _idle_reaper():
             print("browser: idle — Chromium closed to free RAM", flush=True)
 
 DEVTOOLS_PORT = 9222              # fixed Chromium DevTools port the screencast websocket connects to
+SCROLL_MULT = float(os.environ.get("MU_BROWSER_SCROLL_MULT", "1.0") or "1.0")  # wheel sensitivity knob
 WIDTH, HEIGHT = 440, 780          # keep in lockstep with JcefRemoteView.WIDTH/HEIGHT so the client's
                                   # frame->OSR coordinate math needs zero changes.
 _lock = threading.Lock()          # selenium's driver is NOT thread-safe; serialize every op.
@@ -85,6 +86,13 @@ _ws_lock = threading.Lock()       # guards _ws swap + serializes sends (recv run
 _ws_id = 0                        # one id space for every CDP command sent on _ws
 _pending = {}                     # command id -> {"ev": Event, "result": <cdp result>} for want_reply calls
 _pending_lock = threading.Lock()
+
+# Replicate JCEF's popup blocking (CefLifeSpanHandler.onBeforePopup returning true): CANCEL every popup and
+# leave the current page untouched — never redirect the main frame. Two layers: (1) no-op window.open so
+# programmatic popups return null without navigating; (2) Target auto-attach below closes any popup TAB the
+# instant it's created (target=_blank etc.). Same-frame navigations create no target, so legit clicks are
+# never touched — that's what stops the false positives the reactive reap caused.
+POPUP_BLOCK_JS = "try{window.open=function(){return null;};}catch(e){}"
 
 
 def _build_driver_once():
@@ -334,9 +342,10 @@ def webview_scroll():
     if _driver is None:
         return ("", 409)
     x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
-    dy = int(request.args.get("dy", 0))
+    dx = int(round(int(request.args.get("dx", 0)) * SCROLL_MULT))
+    dy = int(round(int(request.args.get("dy", 0)) * SCROLL_MULT))
     try:
-        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": dy})
+        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": dx, "deltaY": dy})
         return ("", 200)
     except Exception as e:
         print(f"browser: scroll failed: {e}", flush=True)
@@ -517,38 +526,6 @@ def _page_ws_url():
     return pool[0]["webSocketDebuggerUrl"]
 
 
-def _reap_extra_tabs():
-    """Stay single-view like JCEF: close ad/popup tabs and bring the tab we drive back to the foreground.
-    Clicking an ad on these sites opens a NEW tab that steals focus; Chrome only screencasts the FOREGROUND
-    tab, so ours goes background and stops painting — a frozen 'loading page' that reopening can't fix. Uses
-    DevTools' plain HTTP /json/close and /json/activate (no ws needed)."""
-    try:
-        addr = _devtools_addr()
-        pages = [t for t in json.loads(urllib.request.urlopen(f"http://{addr}/json", timeout=2).read())
-                 if t.get("type") == "page"]
-        if len(pages) <= 1:
-            return  # nothing stole focus
-        reals = [t for t in pages if not (t.get("url") or "").startswith("about:")]
-        keep = None
-        for t in (reals or pages):
-            if _current_url and (t.get("url") or "").startswith(_current_url[:40]):
-                keep = t; break
-        if keep is None:
-            keep = (reals or pages)[0]
-        for t in pages:
-            if t is not keep and t.get("id"):
-                try:
-                    urllib.request.urlopen(f"http://{addr}/json/close/{t['id']}", timeout=2).read()
-                    _dbg(f"closed popup tab -> {(t.get('url') or '')[:80]}")
-                except Exception:
-                    pass
-        if keep.get("id"):
-            try: urllib.request.urlopen(f"http://{addr}/json/activate/{keep['id']}", timeout=2).read()
-            except Exception: pass
-    except Exception as e:
-        _dbg(f"reap tabs failed: {type(e).__name__}: {e}")
-
-
 def _screencast_loop():
     """The ONE DevTools websocket, read here and only here. It carries two things:
 
@@ -568,8 +545,9 @@ def _screencast_loop():
     window = time.time()
     last_warn = 0.0
     connect_fail_since = 0.0
-    last_frame_at = time.time()   # for the self-heal re-arm below
-    stalled = False               # meant to be streaming but Chrome has gone quiet (logged once per episode)
+    armed_at = time.time()        # when we last (re)started screencast for the current page
+    got_frame = False             # got >=1 frame since the last arm? distinguishes "static" from "stuck load"
+    stalled = False               # a load produced no frames (logged once per episode)
 
     def _arm():
         _cdp("Page.startScreencast",
@@ -593,6 +571,10 @@ def _screencast_loop():
                 with _ws_lock:
                     _ws = conn
                 _cdp("Page.enable")
+                _cdp("Page.addScriptToEvaluateOnNewDocument", {"source": POPUP_BLOCK_JS})
+                # Auto-attach to popups this page spawns so we can close them at birth (JCEF onBeforePopup).
+                _cdp("Target.setAutoAttach",
+                     {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True})
                 started, seen_gen, connect_fail_since = False, -1, 0.0
                 print("browser: devtools ws connected", flush=True)
             except Exception as e:
@@ -618,18 +600,16 @@ def _screencast_loop():
         try:
             if wanted and (not started or seen_gen != _nav_gen):
                 _arm()
-                started, seen_gen, last_frame_at = True, _nav_gen, time.time()
+                started, seen_gen = True, _nav_gen
+                armed_at, got_frame = time.time(), False
                 _dbg("screencast armed (open/nav)")
-            elif wanted and started and time.time() - last_frame_at > 3.0:
-                # SELF-HEAL: we're meant to be streaming but Chrome has gone quiet for 3s. Some navigations
-                # (CF redirects, JS location changes) don't fire a clean Page.frameNavigated, so re-arm
-                # unconditionally. On a truly static page this just pulls one fresh keyframe — harmless.
-                _reap_extra_tabs()                    # an ad popup stealing focus is the usual cause — kill it
-                _cdp("Page.stopScreencast"); _arm()   # stop+start: a bare start returns "already active" and
-                                                       # emits NO new frame, so we must cycle it for a keyframe
-                last_frame_at = time.time()
+            elif wanted and started and not got_frame and time.time() - armed_at > 4.0:
+                # Heal only a load that produced ZERO frames (genuinely stuck). A page that painted then went
+                # quiet is just static — leave its last frame up instead of churning stop/start every few secs.
+                _cdp("Page.stopScreencast"); _arm()
+                armed_at = time.time()
                 if not stalled:
-                    _dbg("stalled: no frames while watching — reaping popups + cycling screencast")
+                    _dbg("no frames since load — cycling screencast (stuck load?)")
                     stalled = True
             elif started and not wanted:
                 _cdp("Page.stopScreencast")
@@ -669,7 +649,7 @@ def _screencast_loop():
                 p = m["params"]
                 _frame_cache = base64.b64decode(p["data"])
                 _cdp("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
-                last_frame_at = time.time()
+                got_frame = True
                 if stalled:
                     _dbg("frames resumed")
                     stalled = False
@@ -684,7 +664,15 @@ def _screencast_loop():
                 _dbg(f"frameNavigated -> {m.get('params', {}).get('frame', {}).get('url', '?')[:120]}")
                 if wanted:
                     _arm()
-                    last_frame_at = time.time()
+                    armed_at, got_frame = time.time(), False
+            elif method == "Target.attachedToTarget":
+                # A popup opened (target=_blank / window.open that still spawned a tab). Close it at birth and
+                # leave the main frame untouched — exactly JCEF's onBeforePopup=true. No false positives:
+                # same-frame navigations never attach a target.
+                ti = m.get("params", {}).get("targetInfo", {})
+                if ti.get("type") == "page" and ti.get("targetId"):
+                    _cdp("Target.closeTarget", {"targetId": ti["targetId"]})
+                    _dbg(f"blocked popup -> {(ti.get('url') or '')[:100]}")
             elif method == "Page.loadEventFired":
                 _dbg("loadEventFired")
             elif method == "Inspector.targetCrashed":

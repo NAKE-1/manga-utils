@@ -14,7 +14,7 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const lastObj = useRef<string | null>(null)
-  const drag = useRef<{ y: number; startY: number; moved: boolean } | null>(null)
+  const drag = useRef<{ x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -121,22 +121,26 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
     if (!o || o.x < 0 || o.y < 0 || o.x > dims!.w || o.y > dims!.h) return
     fetch(`/api/webview/input?x=${o.x}&y=${o.y}`, { method: 'POST' }).catch(() => {})
   }
-  function sendScroll(clientX: number, clientY: number, dyScreen: number) {
+  function sendScroll(clientX: number, clientY: number, dxScreen: number, dyScreen: number) {
     const o = toOsr(clientX, clientY)
-    if (!o || dyScreen === 0) return
-    fetch(`/api/webview/scroll?x=${o.x}&y=${o.y}&dy=${Math.round(dyScreen * o.scale)}`, { method: 'POST' }).catch(() => {})
+    if (!o || (dxScreen === 0 && dyScreen === 0)) return
+    const dx = Math.round(dxScreen * o.scale)
+    const dy = Math.round(dyScreen * o.scale)
+    fetch(`/api/webview/scroll?x=${o.x}&y=${o.y}&dx=${dx}&dy=${dy}`, { method: 'POST' }).catch(() => {})
   }
 
   // Pointer drag = scroll (touch or mouse); a drag that barely moved is treated as a tap → click.
   function onDown(e: PointerEvent<HTMLImageElement>) {
-    drag.current = { y: e.clientY, startY: e.clientY, moved: false }
+    drag.current = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false }
     imgRef.current?.setPointerCapture(e.pointerId)
   }
   function onMove(e: PointerEvent<HTMLImageElement>) {
     const d = drag.current
     if (!d) return
-    if (Math.abs(e.clientY - d.startY) > 6) d.moved = true
-    sendScroll(e.clientX, e.clientY, d.y - e.clientY) // finger up → positive → page down
+    if (Math.abs(e.clientX - d.startX) > 6 || Math.abs(e.clientY - d.startY) > 6) d.moved = true
+    // finger up/left → positive → page down/right (content follows the finger)
+    sendScroll(e.clientX, e.clientY, d.x - e.clientX, d.y - e.clientY)
+    d.x = e.clientX
     d.y = e.clientY
   }
   function onUp(e: PointerEvent<HTMLImageElement>) {
@@ -151,7 +155,7 @@ export function WebviewModal({ url, source, path, onClose }: { url?: string; sou
   useEffect(() => {
     const img = imgRef.current
     if (!img) return
-    const onWheel = (e: WheelEvent) => { e.preventDefault(); sendScroll(e.clientX, e.clientY, e.deltaY) }
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); sendScroll(e.clientX, e.clientY, e.deltaX, e.deltaY) }
     img.addEventListener('wheel', onWheel, { passive: false })
     return () => img.removeEventListener('wheel', onWheel)
     // eslint-disable-next-line react-hooks/exhaustive-deps

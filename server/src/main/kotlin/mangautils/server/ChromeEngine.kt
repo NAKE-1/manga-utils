@@ -58,7 +58,7 @@ object ChromeEngine {
     }
 
     fun input(x: Int, y: Int) = post("/webview/input?x=$x&y=$y")
-    fun scroll(x: Int, y: Int, dy: Int) = post("/webview/scroll?x=$x&y=$y&dy=$dy")
+    fun scroll(x: Int, y: Int, dx: Int, dy: Int) = post("/webview/scroll?x=$x&y=$y&dx=$dx&dy=$dy")
     fun close() = post("/webview/close")
 
     /** POST /webview/autosolve — runs the YOLO solve loop in the sidecar. Returns the raw JSON body
