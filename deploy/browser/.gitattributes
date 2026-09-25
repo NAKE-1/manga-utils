@@ -1,0 +1,2 @@
+# These run in a Linux container — force LF so entrypoint.sh + app.py don't get CRLF on checkout.
+* text eol=lf
