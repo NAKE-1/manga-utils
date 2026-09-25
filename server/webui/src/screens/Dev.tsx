@@ -568,8 +568,8 @@ export function Dev() {
           </button>
         </div>
 
-        <div className="set-card">
-          <div className="set-row-label">MangaFire captcha tester</div>
+        <div className="set-card" style={{ display: engine === 'chrome' ? 'none' : undefined }}>
+          <div className="set-row-label">MangaFire captcha tester <span className="set-hint" style={{ display: 'inline' }}>(JCEF only)</span></div>
           <div className="set-hint">Pulls a fresh shape-captcha from <code>/@waf/generate</code> through JCEF. A = the order to click; B = the grid — click the shapes on B in order (this is where the solver will click). Coordinates are shown in B's native pixels.</div>
           <div className="set-actions">
             <button className="btn primary" disabled={capBusy} onClick={genCaptcha}>{capBusy ? 'Fetching…' : cap ? 'New captcha' : 'Generate captcha'}</button>
@@ -701,8 +701,8 @@ export function Dev() {
             </div>
           )}
         </div>
-        <div className="set-card">
-          <div className="set-row-label">Browser pool (fetch)</div>
+        <div className="set-card" style={{ display: engine === 'chrome' ? 'none' : undefined }}>
+          <div className="set-row-label">Browser pool (fetch) <span className="set-hint" style={{ display: 'inline' }}>(JCEF only)</span></div>
           <div className="set-hint">Real-Chromium browsers that fetch Cloudflare-protected sources (e.g. MangaFire). Each shows <b>busy/open</b>. If a pool gets stuck on an unsolvable challenge it auto-recovers after 2 failures, but you can force-recycle it here. Per-host size is set by the <code>MU_JCEF_POOL</code> env var.</div>
           <div className="set-actions" style={{ alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
             {pool.length === 0
