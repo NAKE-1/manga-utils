@@ -47,6 +47,7 @@ services:
                                                         #   The JVM ships its own tzdb, so a named zone works without OS tzdata.
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # always wins over Settings/backup → zero first-run config
       - MU_SOLVER_URL=http://solver:8000               # anti-detect solver sidecar: runs hard-host (MangaFire) requests as an in-page XHR
+      - MU_BROWSER_SIDECAR_URL=http://browser:9000     # out-of-process WebView engine (dev setting "chrome"): isolates browser crashes from the server
       - MU_DYNO_DIR=/dyno                              # where "Back up to USB" writes (matches the bind mount above)
       - MU_JCEF_POOL=5                                 # real-Chromium browsers per Cloudflare host (1–12); 5 = more parallel MangaFire fetches
       # - MU_JCEF_HW_GL=1                               # <- uncomment ONLY after passing the Intel iGPU through + the /dev/dri device below.
@@ -59,6 +60,7 @@ services:
     depends_on:
       - flaresolverr
       - solver
+      - browser
     restart: unless-stopped
     # --- Proxmox/Linux only: zero port config (binds the host's 8080 directly, no -p needed).
     #   If you enable this, remove the ports: block above, and set the FlareSolverr URL to
@@ -86,6 +88,19 @@ services:
     shm_size: "2gb"                            # its own headed Chromium — needs a roomy /dev/shm
     restart: unless-stopped
     # No published port needed — manga-utils reaches it in-network at http://solver:8000
+
+  # Out-of-process WebView engine (Option D): headed Chromium in Xvfb, driven over the Chrome DevTools
+  # Protocol. Only used when the dev setting "WebView engine" = Chrome sidecar; JCEF stays the default.
+  # A browser crash here is isolated (restart:unless-stopped revives it) instead of killing the server.
+  # Build it on the VM:  docker build -f deploy/browser/Dockerfile -t manga-browser:local deploy/browser
+  browser:
+    image: manga-browser:local
+    build:
+      context: ./browser                        # so `docker compose build browser` works too
+    container_name: browser
+    shm_size: "1gb"                             # its own headed Chromium — needs a roomy /dev/shm
+    restart: unless-stopped
+    # No published port needed — manga-utils reaches it in-network at http://browser:9000
 
   # Watchdog: `restart: unless-stopped` already recovers a crash (process exit). autoheal covers the
   # other case — a container that's *running but hung* — by restarting anything the healthcheck marks

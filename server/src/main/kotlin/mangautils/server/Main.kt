@@ -500,6 +500,19 @@ private data class WebViewOpenDto(
 )
 @Serializable
 private data class WebViewStatusDto(val cookies: Int)
+
+// True when the WebView should route to the out-of-process Chrome sidecar instead of in-process JCEF:
+// the dev setting is "chrome" AND MU_BROWSER_SIDECAR_URL is configured. Otherwise JCEF (unchanged).
+private fun useChromeEngine(): Boolean =
+    runCatching { SettingsStore.get().webviewEngine == "chrome" }.getOrDefault(false) && ChromeEngine.configured
+
+// Pull "status" / "detail" out of the sidecar's /webview/open JSON (its w/h are the fixed 440x780 OSR size).
+private fun chromeStatus(body: String?): Pair<String, String?> {
+    if (body == null) return "failed" to "browser sidecar unreachable"
+    val status = Regex(""""status"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1) ?: "starting"
+    val detail = Regex(""""detail"\s*:\s*"([^"]*)"""").find(body)?.groupValues?.get(1)?.ifBlank { null }
+    return status to detail
+}
 // MangaFire /@waf/generate response — snake_case field names match the JSON so no @SerialName needed.
 @Serializable
 private data class WafGenResp(val captcha_id: String = "", val count: Int = 0, val image_base64: String = "", val thumb_base64: String = "")
@@ -2180,6 +2193,17 @@ fun Application.module() {
                         ?: (src.baseUrl.trimEnd('/') + "/" + path.trimStart('/'))
                 }
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("a http(s) url or valid source id is required"))
+            // Chrome sidecar engine: proxy to the out-of-process browser. It returns {status: ready|starting
+            // |failed}; map to the same DTO the client already handles (its w/h are the fixed 440x780).
+            if (useChromeEngine()) {
+                val body = withContext(Dispatchers.IO) { ChromeEngine.open(url) }
+                val (st, detail) = chromeStatus(body)
+                log.info("webview: chrome sidecar {} — {}", st, url)
+                return@post call.respond(
+                    if (st == "ready") HttpStatusCode.OK else HttpStatusCode.Accepted,
+                    WebViewOpenDto(st, xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url, detail),
+                )
+            }
             // Non-blocking: kick off CEF (lazy — no startup prewarm) and, if it isn't up yet, return "starting"
             // immediately so the client can show "Starting Chromium…" + auto-retry, instead of the request
             // hanging on the 30s cold-init and surfacing as "unable to reach server".
@@ -2197,7 +2221,9 @@ fun Application.module() {
             call.respond(WebViewOpenDto("ready", xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url))
         }
         get("/api/webview/frame") {
-            val jpg = withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.frameJpeg() }
+            val jpg = withContext(Dispatchers.IO) {
+                if (useChromeEngine()) ChromeEngine.frameJpeg() else xyz.nulldev.androidcompat.webkit.JcefRemoteView.frameJpeg()
+            }
             if (jpg == null) call.respond(HttpStatusCode.NoContent)
             else call.respondBytes(jpg, ContentType.Image.JPEG)
         }
@@ -2205,7 +2231,7 @@ fun Application.module() {
             val x = call.request.queryParameters["x"]?.toIntOrNull()
             val y = call.request.queryParameters["y"]?.toIntOrNull()
             if (x == null || y == null) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("x and y required"))
-            xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
+            if (useChromeEngine()) ChromeEngine.input(x, y) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
             call.respond(HttpStatusCode.OK)
         }
         // Forward a scroll gesture to the offscreen WebView (OSR has no native input). x,y = OSR pixel under
@@ -2214,7 +2240,7 @@ fun Application.module() {
             val x = call.request.queryParameters["x"]?.toIntOrNull() ?: 0
             val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
             val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dy required"))
-            xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dy)
+            if (useChromeEngine()) ChromeEngine.scroll(x, y, dy) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dy)
             WebviewScrollLog.onScroll()
             call.respond(HttpStatusCode.OK)
         }
@@ -2269,6 +2295,8 @@ fun Application.module() {
             call.respond(WebViewStatusDto(cookies))
         }
         post("/api/webview/close") {
+            // Close whichever engine is active (and JCEF regardless, in case the setting flipped mid-session).
+            if (useChromeEngine()) ChromeEngine.close()
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.close()
             call.respond(HttpStatusCode.OK)
         }

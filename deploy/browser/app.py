@@ -25,8 +25,10 @@ app = Flask(__name__)
 WIDTH, HEIGHT = 440, 780          # keep in lockstep with JcefRemoteView.WIDTH/HEIGHT so the client's
                                   # frame->OSR coordinate math needs zero changes.
 _lock = threading.Lock()          # selenium's driver is NOT thread-safe; serialize every op.
-_driver = None
+_driver = None                    # the ready driver, or None while cold/warming
 _current_url = ""
+_warming = False                  # a background launch is in flight
+_warm_error = ""                  # last launch failure, surfaced as status=failed
 
 
 def _build_driver():
@@ -45,13 +47,28 @@ def _build_driver():
     return d
 
 
-def _ensure_driver():
-    global _driver
-    if _driver is None:
-        print("browser: launching headed Chromium…", flush=True)
-        _driver = _build_driver()
+def _warm():
+    """Launch Chromium off the request thread (cold start ~15-30s) so /open returns 'starting' immediately
+    and the client's existing auto-retry drives it, instead of blocking the request for 30s."""
+    global _driver, _warming, _warm_error
+    try:
+        d = _build_driver()
+        with _lock:
+            _driver = d
         print("browser: Chromium ready", flush=True)
-    return _driver
+    except Exception as e:
+        _warm_error = str(e)
+        print(f"browser: warm failed: {e}", flush=True)
+    finally:
+        _warming = False
+
+
+def _start_warm():
+    global _warming, _warm_error
+    if _driver is None and not _warming:
+        _warming = True
+        _warm_error = ""
+        threading.Thread(target=_warm, daemon=True).start()
 
 
 def _pin_viewport(d):
@@ -62,7 +79,8 @@ def _pin_viewport(d):
 
 @app.get("/health")
 def health():
-    return jsonify(ok=True, open=_driver is not None, url=_current_url, w=WIDTH, h=HEIGHT)
+    state = "ready" if _driver is not None else ("failed" if _warm_error else ("starting" if _warming else "cold"))
+    return jsonify(ok=True, open=_driver is not None, state=state, url=_current_url, w=WIDTH, h=HEIGHT)
 
 
 @app.post("/webview/open")
@@ -71,11 +89,17 @@ def webview_open():
     url = (request.get_json(silent=True) or {}).get("url") or request.args.get("url") or ""
     if not url.startswith("http"):
         return jsonify(status="failed", detail="a http(s) url is required"), 400
+    # Not up yet → kick off the (lazy, background) launch and tell the client to retry — same "Starting…"
+    # UX the CEF path uses. Chromium only runs after the first WebView open (no RAM when unused).
+    if _driver is None:
+        if _warm_error:
+            return jsonify(status="failed", detail=_warm_error), 202
+        _start_warm()
+        return jsonify(status="starting", url=url), 202
     with _lock:
         try:
-            d = _ensure_driver()
-            _pin_viewport(d)
-            d.get(url)
+            _pin_viewport(_driver)
+            _driver.get(url)
             _current_url = url
             print(f"browser: opened {url}", flush=True)
             return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
