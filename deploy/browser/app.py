@@ -594,6 +594,8 @@ def _screencast_loop():
     last_frame_at = time.time()   # last frame received (drives the quiet/stall recovery)
     got_frame = False             # got >=1 frame since the last arm? (a stuck LOAD recovers faster)
     stalled = False               # currently in a no-frames episode (logged once)
+    heal_count = 0                # screencast cycles attempted for THIS page
+    heal_giveup = False           # stop cycling this page — it's static (or a dead load); reset on navigation
 
     def _arm():
         # Re-pin the 440x780 viewport BEFORE every screencast start. The device-metrics override is per ws
@@ -654,17 +656,21 @@ def _screencast_loop():
                 _arm()
                 started, seen_gen = True, _nav_gen
                 armed_at = last_frame_at = time.time()
-                got_frame = False
+                got_frame, heal_count, heal_giveup = False, 0, False
                 _dbg("screencast armed (open/nav)")
-            elif wanted and started and time.time() - last_frame_at > (4.0 if not got_frame else 8.0):
-                # No frames while we're meant to be streaming → recover: cycle screencast (which re-pins the
-                # viewport and pulls a fresh keyframe). A stuck LOAD (never painted) recovers after 4s; a page
-                # that painted then went quiet waits 8s so a genuinely static reader isn't churned. Logged once.
+            elif wanted and started and not heal_giveup and time.time() - last_frame_at > (4.0 if not got_frame else 8.0):
+                # No frames while we're meant to be streaming → recover: cycle screencast (re-pins viewport +
+                # pulls a keyframe). But CAP it: a static reader (atsu) legitimately never repaints, so once a
+                # painted page has been cycled, or a dead load has been tried 3x, give up until the next nav.
+                # Otherwise we'd cycle forever every few seconds — the log spam.
                 _cdp("Page.stopScreencast"); _arm()
                 last_frame_at = time.time()
+                heal_count += 1
                 if not stalled:
-                    _dbg("no frames while watching — cycling screencast (frozen render or static page)")
+                    _dbg("no frames while watching — cycling screencast once (frozen render or static page)")
                     stalled = True
+                if got_frame or heal_count >= 3:
+                    heal_giveup = True   # renderer is alive but static (or a dead load) — stop churning
             elif started and not wanted:
                 _cdp("Page.stopScreencast")
                 started, _fps = False, 0.0
@@ -690,7 +696,9 @@ def _screencast_loop():
                         # "unusable" after clicking on MangaFire.
                         _dbg("detached from active page — reconnecting to the active tab")
                         _drop_ws(); started = False; time.sleep(0.3); continue
-                    if emsg != "Screencast is already active":   # benign: screencast persists across navs
+                    # Benign, ignore: screencast already running (persists across navs), or a touchMove/End
+                    # that raced ahead of its touchStart (fire-and-forget POSTs can reorder) — harmless.
+                    elif emsg not in ("Screencast is already active",) and "TouchStart first" not in emsg:
                         _dbg(f"cdp error on id {mid}: {err}")
                 with _pending_lock:
                     slot = _pending.get(mid)
@@ -720,7 +728,7 @@ def _screencast_loop():
                 if wanted:
                     _arm()
                     armed_at = last_frame_at = time.time()
-                    got_frame = False
+                    got_frame, heal_count, heal_giveup = False, 0, False
             elif method == "Target.attachedToTarget":
                 # A popup opened (target=_blank / window.open that still spawned a tab). Close it at birth and
                 # leave the main frame untouched — exactly JCEF's onBeforePopup=true. No false positives:

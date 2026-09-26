@@ -1,10 +1,9 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost, JcefPool } from '../api'
+import { api, pageSize, DevStats, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost, JcefPool } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
-import { WebviewTestWizard } from '../components/WebviewTestWizard'
 import { toast } from '../components/Toast'
 
 // Hidden Developer screen (opened from Settings → Developer). Home for the dev/debug tools.
@@ -61,10 +60,6 @@ export function Dev() {
   const [mfReport, setMfReport] = useState<import('../api').VerifyReport | null>(null)
   const [mfBusy, setMfBusy] = useState(false)
   const [mfMsg, setMfMsg] = useState('')
-  const [library, setLibrary] = useState<LibraryEntry[]>([])
-  const [simManga, setSimManga] = useState('')
-  const [simMsg, setSimMsg] = useState('')
-  const [simRunning, setSimRunning] = useState(false)
   const [storage, setStorage] = useState<DevStorage | null>(null)
   const [storageBusy, setStorageBusy] = useState(false)
   const [stateFiles, setStateFiles] = useState<DevBucket[]>([])
@@ -117,7 +112,6 @@ export function Dev() {
     const load = () => api.devStats().then((d) => { setS(d); setFailed(false) }).catch(() => setFailed(true))
     load()
     const t = setInterval(load, 3000)
-    api.library().then(setLibrary).catch(() => {})
     api.devState().then(setStateFiles).catch(() => {})
     api.sources().then(setSources).catch(() => {})
     api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha); setEngine(s.webviewEngine || 'jcef') }).catch(() => {})
@@ -337,17 +331,6 @@ export function Dev() {
     catch (e) { setRawResult({ status: -1, ms: 0, snippet: '', error: e instanceof Error ? e.message : 'failed' }) }
     finally { setRawBusy(false) }
   }
-  async function simulate() {
-    const i = simManga.indexOf('|'); if (i < 0) return
-    const sid = simManga.slice(0, i), url = simManga.slice(i + 1)
-    setSimRunning(true); setSimMsg('')
-    const r = await api.simulateUpdate(sid, url).catch(() => null)
-    setSimRunning(false)
-    if (!r) setSimMsg('Failed')
-    else if (r.newChapters < 0) setSimMsg('Open the manga once first (no chapters known yet)')
-    else setSimMsg(`${r.title}: ${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'}${r.autoDownloaded ? ' · auto-downloading' : ''}`)
-  }
-
   return (
     <div className="ext-page">
       <div className="ext-top">
@@ -528,12 +511,6 @@ export function Dev() {
               <option value="chrome">Chrome sidecar (isolated) — recommended</option>
             </select>
           </div>
-        </div>
-
-        <div className="set-card">
-          <div className="set-row-label">Guided WebView test</div>
-          <div className="set-hint">Step-by-step parity check for the current engine — render, scroll, click, auto-solve, and cookie/UA/token sharing — with a pass/fail report at the end. Run it on JCEF for a baseline, then on the Chrome sidecar (once built) to confirm parity. Uses the source/URL picked in "WebView tester" below for the general steps.</div>
-          <WebviewTestWizard engine={engine} pick={wvUrl.trim() ? { url: wvUrl.trim() } : wvSourceId ? { source: wvSourceId } : null} />
         </div>
 
         <div className="set-card">
@@ -792,24 +769,6 @@ export function Dev() {
               )}
             </div>
           )}
-        </div>
-      </div>
-
-      <div className="dev-sec">
-        <div className="dev-sec-h">Testing</div>
-        <div className="set-card">
-          <div className="set-row-label">Simulate a new chapter</div>
-          <div className="set-hint">Makes a library manga look like it got an update — sets its “!” badge, and auto-downloads it if that setting is on.</div>
-          <select className="set-select" value={simManga} onChange={(e) => setSimManga(e.target.value)}>
-            <option value="">Pick a manga…</option>
-            {[...library].sort((a, b) => a.title.localeCompare(b.title)).map((e) => (
-              <option key={e.sourceId + '|' + e.url} value={e.sourceId + '|' + e.url}>{e.title}</option>
-            ))}
-          </select>
-          <div className="set-actions">
-            <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
-            {simMsg && <span className="set-msg">{simMsg}</span>}
-          </div>
         </div>
       </div>
 
