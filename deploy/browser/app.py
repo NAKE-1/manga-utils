@@ -377,26 +377,6 @@ def webview_scroll():
         return ("", 500)
 
 
-@app.post("/webview/touch")
-def webview_touch():
-    # Real finger pan via Input.dispatchTouchEvent, so touch-drag carousels/lists actually move (a mouse wheel
-    # only scrolls overflow containers, not JS touch carousels). phase = start|move|end at OSR pixel x,y.
-    if _driver is None:
-        return ("", 409)
-    phase = request.args.get("phase", "")
-    x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
-    typ = {"start": "touchStart", "move": "touchMove", "end": "touchEnd"}.get(phase)
-    if not typ:
-        return ("", 400)
-    pts = [] if phase == "end" else [{"x": x, "y": y}]
-    try:
-        _cdp("Input.dispatchTouchEvent", {"type": typ, "touchPoints": pts})
-        return ("", 200)
-    except Exception as e:
-        print(f"browser: touch failed: {e}", flush=True)
-        return ("", 500)
-
-
 @app.post("/webview/close")
 def webview_close():
     # Keep Chromium WARM (like JCEF): just blank the page so the next open is instant, instead of quitting
@@ -627,8 +607,8 @@ def _screencast_loop():
                 # Auto-attach to popups this page spawns so we can close them at birth (JCEF onBeforePopup).
                 _cdp("Target.setAutoAttach",
                      {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True})
-                # Enable touch so finger-pan (Input.dispatchTouchEvent) reaches touch carousels/lists.
-                _cdp("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+                # NB: mouse-only, like JCEF. We deliberately do NOT enable touch emulation — it turned on
+                # Chrome's double-tap/pinch zoom gesture, which shrank the view. Drag scrolls via the wheel.
                 started, seen_gen, connect_fail_since = False, -1, 0.0
                 print("browser: devtools ws connected", flush=True)
             except Exception as e:
@@ -696,9 +676,7 @@ def _screencast_loop():
                         # "unusable" after clicking on MangaFire.
                         _dbg("detached from active page — reconnecting to the active tab")
                         _drop_ws(); started = False; time.sleep(0.3); continue
-                    # Benign, ignore: screencast already running (persists across navs), or a touchMove/End
-                    # that raced ahead of its touchStart (fire-and-forget POSTs can reorder) — harmless.
-                    elif emsg not in ("Screencast is already active",) and "TouchStart first" not in emsg:
+                    elif emsg != "Screencast is already active":   # benign: screencast persists across navs
                         _dbg(f"cdp error on id {mid}: {err}")
                 with _pending_lock:
                     slot = _pending.get(mid)
@@ -709,13 +687,6 @@ def _screencast_loop():
             method = m.get("method")
             if method == "Page.screencastFrame":
                 p = m["params"]
-                # Touch mode enables double-tap / pinch zoom, which drops the page scale and leaves the view
-                # shrunk to a corner. Lock it at 1x: if the frame reports a scale off 1, reset it and re-pin.
-                psf = (p.get("metadata") or {}).get("pageScaleFactor")
-                if psf and abs(psf - 1.0) > 0.02:
-                    _cdp("Emulation.resetPageScaleFactor")
-                    _pin_viewport()
-                    _dbg(f"reset zoom (pageScaleFactor was {psf:.2f})")
                 _frame_cache = base64.b64decode(p["data"])
                 _cdp("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
                 got_frame = True

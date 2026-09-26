@@ -1310,7 +1310,7 @@ fun Application.module() {
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p == "/api/version" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/solver/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events" || p == "/api/webview/scroll" || p == "/api/webview/touch" || p == "/api/webview/input")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p == "/api/version" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/solver/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events" || p == "/api/webview/scroll" || p == "/api/webview/input")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -2245,16 +2245,6 @@ fun Application.module() {
             val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: 0
             if (dx == 0 && dy == 0) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dx or dy required"))
             if (useChromeEngine()) ChromeEngine.scroll(x, y, dx, dy) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dx, dy)
-            WebviewScrollLog.onScroll()
-            call.respond(HttpStatusCode.OK)
-        }
-        // Finger pan (real touch): lets touch-drag carousels/lists move, not just overflow scrollers. phase =
-        // start|move|end at OSR pixel x,y. JCEF has no touch input, so it falls back to wheel-scroll by delta.
-        post("/api/webview/touch") {
-            val phase = call.request.queryParameters["phase"] ?: ""
-            val x = call.request.queryParameters["x"]?.toIntOrNull() ?: 0
-            val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
-            if (useChromeEngine()) ChromeEngine.touch(phase, x, y) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.touch(phase, x, y)
             WebviewScrollLog.onScroll()
             call.respond(HttpStatusCode.OK)
         }
