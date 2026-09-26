@@ -370,8 +370,17 @@ def webview_scroll():
     x = int(request.args.get("x", 0)); y = int(request.args.get("y", 0))
     dx = int(round(int(request.args.get("dx", 0)) * SCROLL_MULT))
     dy = int(round(int(request.args.get("dy", 0)) * SCROLL_MULT))
+    if dx == 0 and dy == 0:
+        return ("", 200)
     try:
-        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": x, "y": y, "deltaX": dx, "deltaY": dy})
+        # Smooth compositor scroll (like the old touch pan, but no persistent touch mode → no double-tap zoom).
+        # A wheel event forces a discrete main-thread scroll+raster per tick, which is choppy on heavy pages;
+        # a touch scroll-gesture scrolls on the compositor. CDP signs: +xDistance=left, +yDistance=up, so we
+        # negate our (+right/+down) deltas. High speed so each small per-move gesture completes near-instantly.
+        _cdp("Input.synthesizeScrollGesture", {
+            "x": x, "y": y, "xDistance": -dx, "yDistance": -dy,
+            "gestureSourceType": "touch", "speed": 6000, "preventFling": True,
+        })
         return ("", 200)
     except Exception as e:
         print(f"browser: scroll failed: {e}", flush=True)
