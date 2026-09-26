@@ -181,5 +181,26 @@ def fetch():
             return jsonify(status=0, error=str(e)), 500
 
 
+@app.post("/waf-test")
+def waf_test():
+    """Dev: force a full /@waf shape-captcha solve against MangaFire live (generate -> YOLO -> verify),
+    regardless of whether anything is currently challenged — to prove the solver works end to end. Clearance
+    is best-effort: /@waf/generate is MangaFire's own bot-check and usually answers on a plain impersonated
+    session even when Cloudflare isn't gating. Watch `docker logs solver` for the "solved in N clicks" line."""
+    host = (request.get_json(silent=True) or {}).get("host") or "mangafire.to"
+    origin = f"https://{host}"
+    with _lock:
+        try:
+            cf, ua, _ = _get_clearance(host, origin)
+            sess = _session(host)
+            if cf:
+                sess.cookies.set("cf_clearance", cf, domain="." + host)
+            solved = _solve_waf(sess, origin, ua)
+            return jsonify(ok=solved, host=host, had_clearance=bool(cf))
+        except Exception as e:  # noqa: BLE001
+            _sessions.pop(host, None)
+            return jsonify(ok=False, error=str(e)), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, threaded=False)  # lock serializes anyway
