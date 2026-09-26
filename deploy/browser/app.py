@@ -318,12 +318,13 @@ def webview_open():
         _start_warm()
         return jsonify(status="starting", url=url), 202
     try:
-        _pin_viewport()
         # Page.navigate returns immediately (fire-and-forget over the ws) — the page then streams in via
-        # /frame. No lock, no waiting on the renderer, so a slow/CF page can't wedge this.
+        # /frame. No lock, no waiting on the renderer, so a slow/CF page can't wedge this. We do NOT arm/pin
+        # here — that happens on Page.frameNavigated once the new page has committed and is attached; arming
+        # mid-navigation is what threw "Not attached to an active page" and forced a ws reconnect every open.
         _cdp("Page.navigate", {"url": url})
         _current_url = url
-        _nav_gen += 1        # tell the screencast loop to re-arm so frames resume on the new page
+        _nav_gen += 1
         _frame_cache = None  # drop the previous page's frame so the view doesn't show stale content
         print(f"browser: opened {url}", flush=True)
         return jsonify(status="ready", w=WIDTH, h=HEIGHT, url=url)
@@ -565,7 +566,6 @@ def _screencast_loop():
     keep flowing when the URL changes — the thing JCEF did for free."""
     global _frame_cache, _fps, _driver, _ws
     started = False           # screencast currently running on _ws
-    seen_gen = -1
     fcount = 0
     window = time.time()
     last_warn = 0.0
@@ -578,10 +578,8 @@ def _screencast_loop():
     heal_giveup = False           # stop cycling this page — it's static (or a dead load); reset on navigation
 
     def _arm():
-        # Re-pin the 440x780 viewport BEFORE every screencast start. The device-metrics override is per ws
-        # session, so a reconnect (fast close/reopen) drops it and the page reflows to a wider viewport that
-        # screencast then scales down — the blurry, stretched render. Pinning here keeps it correct always.
-        _pin_viewport()
+        # Just (re)start the screencast. The viewport pin is done separately on connect and on each
+        # frameNavigated — NOT here — so a heal cycle or re-arm doesn't force a full relayout every time.
         _cdp("Page.startScreencast",
              {"format": "jpeg", "quality": 55, "maxWidth": WIDTH, "maxHeight": HEIGHT, "everyNthFrame": 1})
 
@@ -609,7 +607,8 @@ def _screencast_loop():
                      {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True})
                 # NB: mouse-only, like JCEF. We deliberately do NOT enable touch emulation — it turned on
                 # Chrome's double-tap/pinch zoom gesture, which shrank the view. Drag scrolls via the wheel.
-                started, seen_gen, connect_fail_since = False, -1, 0.0
+                _pin_viewport()   # per-session override; set it once here (a reconnect otherwise reflows wide)
+                started, connect_fail_since = False, 0.0
                 print("browser: devtools ws connected", flush=True)
             except Exception as e:
                 now = time.time()
@@ -632,12 +631,14 @@ def _screencast_loop():
 
         wanted = time.time() < _frame_wanted_until
         try:
-            if wanted and (not started or seen_gen != _nav_gen):
+            if wanted and not started:
+                # Initial arm only (e.g. reconnecting to an already-loaded page). Per-navigation re-arming is
+                # driven by Page.frameNavigated below, AFTER the page commits — not mid-navigation.
                 _arm()
-                started, seen_gen = True, _nav_gen
+                started = True
                 armed_at = last_frame_at = time.time()
                 got_frame, heal_count, heal_giveup = False, 0, False
-                _dbg("screencast armed (open/nav)")
+                _dbg("screencast armed (initial)")
             elif wanted and started and not heal_giveup and time.time() - last_frame_at > (4.0 if not got_frame else 8.0):
                 # No frames while we're meant to be streaming → recover: cycle screencast (re-pins viewport +
                 # pulls a keyframe). But CAP it: a static reader (atsu) legitimately never repaints, so once a
@@ -704,7 +705,9 @@ def _screencast_loop():
                 # A main-frame navigation the page did itself (link click / redirect) — re-arm so frames resume.
                 _dbg(f"frameNavigated -> {m.get('params', {}).get('frame', {}).get('url', '?')[:120]}")
                 if wanted:
+                    _pin_viewport()   # page has committed & is attached now → safe to pin + (re)arm here
                     _arm()
+                    started = True
                     armed_at = last_frame_at = time.time()
                     got_frame, heal_count, heal_giveup = False, 0, False
             elif method == "Target.attachedToTarget":
