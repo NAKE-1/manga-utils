@@ -709,6 +709,13 @@ def _screencast_loop():
             method = m.get("method")
             if method == "Page.screencastFrame":
                 p = m["params"]
+                # Touch mode enables double-tap / pinch zoom, which drops the page scale and leaves the view
+                # shrunk to a corner. Lock it at 1x: if the frame reports a scale off 1, reset it and re-pin.
+                psf = (p.get("metadata") or {}).get("pageScaleFactor")
+                if psf and abs(psf - 1.0) > 0.02:
+                    _cdp("Emulation.resetPageScaleFactor")
+                    _pin_viewport()
+                    _dbg(f"reset zoom (pageScaleFactor was {psf:.2f})")
                 _frame_cache = base64.b64decode(p["data"])
                 _cdp("Page.screencastFrameAck", {"sessionId": p["sessionId"]})
                 got_frame = True
