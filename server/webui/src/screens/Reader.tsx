@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, pageUrl, Chapter } from '../api'
+import { api, pageUrl, coverUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings, IconJetBrains } from '../components/icons'
 import { WebviewModal } from '../components/WebviewModal'
 import { useNet } from '../components/NetStatus'
@@ -180,6 +180,7 @@ export function Reader() {
   const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
   const [warnAck, setWarnAck] = useState(0) // banner dismissed at this failure count; reappears if more fail
   const [chapters, setChapters] = useState<Chapter[]>([])
+  const [coverSrc, setCoverSrc] = useState<string | null>(null) // series cover for the top reader bumper
   const [page, setPage] = useState(1)
   const [progress, setProgress] = useState(0)
   const [chrome, setChrome] = useState(true)
@@ -296,7 +297,7 @@ export function Reader() {
     // read-on-finish ON: skip the open-time mark — the finish effect / Forward button does it instead.
     if (!readOnFinish) api.setRead(sourceId, manga, chapter, true)
     api.detail(sourceId, manga)
-      .then((d) => { setChapters(d.chapters); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
+      .then((d) => { setChapters(d.chapters); setCoverSrc(coverUrl(sourceId, d.manga.thumbnailUrl, title) || null); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
       .catch(() => api.recordHistory(sourceId, manga, chapter, title, name))
     return () => {
       clearTimeout(settle)
@@ -564,17 +565,31 @@ export function Reader() {
           // slow/down source still can't pin every connection AND the next pages are always mounted ahead.
           const renderCeil = loadMode === 'eager' ? count - 1 : Math.max(renderMax, Math.max(preload, 3))
           return (
-            <div className="strip" style={{ gap: gap + 'px' }}>
-              {Array.from({ length: count }, (_, i) => {
-                if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
-                return (
-                  <React.Fragment key={i}>
-                    <ReaderPage index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
-                    {i === renderCeil && renderCeil < count - 1 && <div ref={setSentinel} className="reader-sentinel" aria-hidden />}
-                  </React.Fragment>
-                )
-              })}
-            </div>
+            <>
+              {/* Top bumper — keeps page 1 clear of the top bar and brands the lead-in (short chapters). */}
+              <div className="rbump rbump-top">
+                {coverSrc && <img className="rbump-cover" src={coverSrc} alt="" draggable={false} />}
+                <div className="rbump-series">{title}</div>
+                <div className="rbump-chap">{name || `Chapter ${curNum}`}</div>
+              </div>
+              <div className="strip" style={{ gap: gap + 'px' }}>
+                {Array.from({ length: count }, (_, i) => {
+                  if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
+                  return (
+                    <React.Fragment key={i}>
+                      <ReaderPage index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
+                      {i === renderCeil && renderCeil < count - 1 && <div ref={setSentinel} className="reader-sentinel" aria-hidden />}
+                    </React.Fragment>
+                  )
+                })}
+              </div>
+              {/* Bottom bumper — "end of chapter" + manga-utils mark, clear of the bottom controls. */}
+              <div className="rbump rbump-bot">
+                <div className="rbump-end"><span>End of chapter</span></div>
+                <div className="rbump-word">manga<span className="u">-utils</span></div>
+                <div className="rbump-flourish">✦ ✦ ✦</div>
+              </div>
+            </>
           )
         })()}
       </div>
