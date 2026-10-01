@@ -566,11 +566,15 @@ export function Reader() {
           const renderCeil = loadMode === 'eager' ? count - 1 : Math.max(renderMax, Math.max(preload, 3))
           return (
             <>
-              {/* Top bumper — keeps page 1 clear of the top bar and brands the lead-in (short chapters). */}
-              <div className="rbump rbump-top">
-                {coverSrc && <img className="rbump-cover" src={coverSrc} alt="" draggable={false} />}
-                <div className="rbump-series">{title}</div>
-                <div className="rbump-chap">{name || `Chapter ${curNum}`}</div>
+              {/* Top bumper — cover-hero: the series cover fills the width and fades into the reader
+                  background, with the title + chapter set in the dark fade. Keeps page 1 clear of the top bar. */}
+              <div className="rbump-hero">
+                {coverSrc && <div className="rbump-art" style={{ backgroundImage: `url("${coverSrc}")` }} />}
+                <div className="rbump-scrim" />
+                <div className="rbump-herotext">
+                  <div className="rbump-series">{title}</div>
+                  <div className="rbump-chap">{name || `Chapter ${curNum}`}</div>
+                </div>
               </div>
               <div className="strip" style={{ gap: gap + 'px' }}>
                 {Array.from({ length: count }, (_, i) => {

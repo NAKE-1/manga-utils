@@ -1404,14 +1404,27 @@ main > * { animation: fade-up .22s ease backwards; }
 
 .wv-url { flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #8aa0ad; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ---- Reader bumpers: end-caps that keep short chapters' first/last pages clear of the floating chrome,
-        and brand the dead space with the series info (top) + manga-utils mark (bottom). ---- */
+/* ---- Reader bumpers: end-caps that keep short chapters' first/last pages clear of the floating chrome.
+        TOP = a cover-hero (full-width art fading into the reader bg, title/chapter in the fade);
+        BOTTOM = "end of chapter" + the manga-utils mark. ---- */
 .rbump { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
   text-align: center; padding: 40px 22px; min-height: 42vh; background: var(--bg-2); color: var(--text); }
-.rbump-top { border-bottom: 1px dashed var(--border); }
 .rbump-bot { border-top: 1px dashed var(--border); }
-.rbump-cover { width: 76px; height: auto; aspect-ratio: 3 / 4; object-fit: cover; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); box-shadow: 0 10px 26px rgba(0,0,0,.4); }
+
+/* top cover-hero */
+.rbump-hero { position: relative; width: 100%; min-height: 54vh; overflow: hidden;
+  display: flex; align-items: flex-end; background: var(--bg-2); }
+.rbump-art { position: absolute; inset: 0; background-size: cover; background-position: center 18%;
+  background-repeat: no-repeat; }
+.rbump-scrim { position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 28%, rgba(0,0,0,.45) 60%, var(--bg) 97%); }
+.rbump-herotext { position: relative; z-index: 1; width: 100%; text-align: center;
+  padding: 0 22px calc(30px + var(--safe-b)); }
+.rbump-hero .rbump-series { font-size: 22px; font-weight: 800; line-height: 1.2; letter-spacing: -.01em;
+  color: #fff; text-shadow: 0 2px 16px rgba(0,0,0,.78); max-width: none; }
+.rbump-hero .rbump-chap { font-size: 13px; color: rgba(255,255,255,.82); margin-top: 6px;
+  text-shadow: 0 1px 10px rgba(0,0,0,.78); }
+
 .rbump-series { font-size: 16px; font-weight: 700; line-height: 1.3; max-width: 240px; }
 .rbump-chap { font-size: 12.5px; color: var(--muted); letter-spacing: .02em; }
 .rbump-end { display: flex; align-items: center; gap: 14px; width: 100%; max-width: 260px; justify-content: center;
