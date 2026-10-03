@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, pageSize, DevStats, LibraryEntry, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost, JcefPool } from '../api'
+import { api, pageSize, DevStats, DevStorage, DevBucket, ReqLog, Source, SourceDiag, RawResult, CorruptReport, SeriesBackfillResult, CookieHost, JcefPool } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import { MigrationModal } from '../components/MigrationModal'
 import { WebviewModal } from '../components/WebviewModal'
@@ -49,6 +49,8 @@ export function Dev() {
   const [pool, setPool] = useState<JcefPool[]>([])
   const [poolMsg, setPoolMsg] = useState('')
   const [poolBusy, setPoolBusy] = useState(false)
+  const [solverTest, setSolverTest] = useState<import('../api').SolverTest | null>(null)
+  const [solverBusy, setSolverBusy] = useState(false)
   const [client, setClient] = useState<Record<string, string>>({})
   const [corrupt, setCorrupt] = useState<CorruptReport | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
@@ -58,10 +60,6 @@ export function Dev() {
   const [mfReport, setMfReport] = useState<import('../api').VerifyReport | null>(null)
   const [mfBusy, setMfBusy] = useState(false)
   const [mfMsg, setMfMsg] = useState('')
-  const [library, setLibrary] = useState<LibraryEntry[]>([])
-  const [simManga, setSimManga] = useState('')
-  const [simMsg, setSimMsg] = useState('')
-  const [simRunning, setSimRunning] = useState(false)
   const [storage, setStorage] = useState<DevStorage | null>(null)
   const [storageBusy, setStorageBusy] = useState(false)
   const [stateFiles, setStateFiles] = useState<DevBucket[]>([])
@@ -78,6 +76,8 @@ export function Dev() {
   const [rawBusy, setRawBusy] = useState(false)
   const [verbose, setVerbose] = useState(false)
   const [autoSolve, setAutoSolve] = useState(false)
+  const [engine, setEngine] = useState('jcef') // webviewEngine: 'jcef' (in-process) | 'chrome' (sidecar)
+  const [engineBusy, setEngineBusy] = useState(false)
   const [wvUrl, setWvUrl] = useState('')
   const [wvSourceId, setWvSourceId] = useState('')
   const [wvOpen, setWvOpen] = useState<{ url?: string; source?: string } | null>(null)
@@ -112,10 +112,9 @@ export function Dev() {
     const load = () => api.devStats().then((d) => { setS(d); setFailed(false) }).catch(() => setFailed(true))
     load()
     const t = setInterval(load, 3000)
-    api.library().then(setLibrary).catch(() => {})
     api.devState().then(setStateFiles).catch(() => {})
     api.sources().then(setSources).catch(() => {})
-    api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha) }).catch(() => {})
+    api.getSettings().then((s) => { setVerbose(s.verboseLogging); setAutoSolve(s.autoSolveCaptcha); setEngine(s.webviewEngine || 'jcef') }).catch(() => {})
     api.manifestInfo().then(setMfInfo).catch(() => {})
     refreshCookieHosts()
     return () => clearInterval(t)
@@ -167,6 +166,13 @@ export function Dev() {
     const r = await api.saveSettings({ autoSolveCaptcha: v }).catch(() => null)
     if (!r) { setAutoSolve(!v); toast('Failed to change setting', 'error') }
   }
+  async function changeEngine(v: string) {
+    const prev = engine; setEngine(v); setEngineBusy(true)
+    const r = await api.saveSettings({ webviewEngine: v }).catch(() => null)
+    setEngineBusy(false)
+    if (!r) { setEngine(prev); toast('Failed to change engine', 'error') }
+    else toast(v === 'chrome' ? 'Engine → Chrome sidecar' : 'Engine → JCEF (in-process)', 'success')
+  }
   async function doLifecycle(kind: 'restart' | 'shutdown') {
     if (!confirm(kind === 'restart' ? 'Restart the server now? Downloads and the WebView will briefly stop.' : 'Shut down the server now? You’ll need to start it again from the machine.')) return
     setLifecycle(kind)
@@ -202,6 +208,13 @@ export function Dev() {
     setPoolBusy(true); setPoolMsg('')
     try { const r = await api.jcefReset(); setPoolMsg(`Reset — ${r.disposed} browser(s) disposed. New ones build on the next request.`); refreshPool() }
     catch { setPoolMsg('Reset failed') } finally { setPoolBusy(false) }
+  }
+
+  async function runSolverTest() {
+    setSolverBusy(true); setSolverTest(null)
+    try { setSolverTest(await api.solverTest()) }
+    catch (e) { setSolverTest({ solverConfigured: false, solverHealthy: false, flareReachable: false, ok: false, results: 0, ms: 0, error: e instanceof Error ? e.message : 'test failed' }) }
+    finally { setSolverBusy(false) }
   }
 
   function refreshCookieHosts() {
@@ -318,17 +331,6 @@ export function Dev() {
     catch (e) { setRawResult({ status: -1, ms: 0, snippet: '', error: e instanceof Error ? e.message : 'failed' }) }
     finally { setRawBusy(false) }
   }
-  async function simulate() {
-    const i = simManga.indexOf('|'); if (i < 0) return
-    const sid = simManga.slice(0, i), url = simManga.slice(i + 1)
-    setSimRunning(true); setSimMsg('')
-    const r = await api.simulateUpdate(sid, url).catch(() => null)
-    setSimRunning(false)
-    if (!r) setSimMsg('Failed')
-    else if (r.newChapters < 0) setSimMsg('Open the manga once first (no chapters known yet)')
-    else setSimMsg(`${r.title}: ${r.newChapters} new chapter${r.newChapters === 1 ? '' : 's'}${r.autoDownloaded ? ' · auto-downloading' : ''}`)
-  }
-
   return (
     <div className="ext-page">
       <div className="ext-top">
@@ -499,9 +501,21 @@ export function Dev() {
 
       <div className="dev-sec">
         <div className="dev-sec-h">WebView</div>
+
+        <div className="set-card">
+          <div className="set-row-label">WebView engine</div>
+          <div className="set-hint">Which browser backs the streamed WebView. <b>JCEF</b> runs in-process (can crash — or intermittently wedge — the whole server; a known libcef bug). <b>Chrome sidecar</b> runs in its own container, so a browser crash can't take the server down — the reliable choice. (Auto-solve is JCEF-only for now; on Chrome you tap the captcha manually.)</div>
+          <div className="set-actions">
+            <select className="wv-test-src" value={engine} disabled={engineBusy} onChange={(e) => changeEngine(e.target.value)}>
+              <option value="jcef">JCEF (in-process)</option>
+              <option value="chrome">Chrome sidecar (isolated) — recommended</option>
+            </select>
+          </div>
+        </div>
+
         <div className="set-card">
           <div className="set-row-label">WebView tester</div>
-          <div className="set-hint">Open any site (or a source's homepage) in the streamed Chromium WebView — handy for eyeballing captchas, popups, cookies, and layout while iterating on the WebView.</div>
+          <div className="set-hint">Open any site (or a source's homepage) in the streamed WebView — handy for eyeballing captchas, popups, cookies, and layout while iterating on the WebView.</div>
           <div className="wv-test-row">
             <select className="wv-test-src" value={wvSourceId} onChange={(e) => setWvSourceId(e.target.value)}>
               <option value="">Pick a source…</option>
@@ -518,6 +532,7 @@ export function Dev() {
           </div>
           <div className="set-actions">
             <button className="btn primary" disabled={!wvUrl.trim() && !wvSourceId} onClick={() => setWvOpen(wvUrl.trim() ? { url: wvUrl.trim() } : { source: wvSourceId })}>Open WebView</button>
+            <button className="btn" title="Open MangaFire's shape-captcha challenge to test the solver" onClick={() => setWvOpen({ url: 'https://mangafire.to/@waf/challenge?return=%2F' })}>🧩 Open WAF challenge</button>
           </div>
         </div>
 
@@ -531,8 +546,8 @@ export function Dev() {
           </button>
         </div>
 
-        <div className="set-card">
-          <div className="set-row-label">MangaFire captcha tester</div>
+        <div className="set-card" style={{ display: engine === 'chrome' ? 'none' : undefined }}>
+          <div className="set-row-label">MangaFire captcha tester <span className="set-hint" style={{ display: 'inline' }}>(JCEF only)</span></div>
           <div className="set-hint">Pulls a fresh shape-captcha from <code>/@waf/generate</code> through JCEF. A = the order to click; B = the grid — click the shapes on B in order (this is where the solver will click). Coordinates are shown in B's native pixels.</div>
           <div className="set-actions">
             <button className="btn primary" disabled={capBusy} onClick={genCaptcha}>{capBusy ? 'Fetching…' : cap ? 'New captcha' : 'Generate captcha'}</button>
@@ -649,7 +664,23 @@ export function Dev() {
           {cookieMsg && <div className="set-hint" style={{ marginTop: 6 }}>{cookieMsg}</div>}
         </div>
         <div className="set-card">
-          <div className="set-row-label">JCEF browser pool</div>
+          <div className="set-row-label">MangaFire / solver self-test</div>
+          <div className="set-hint">Pings the anti-detect <b>solver sidecar</b> (<code>MU_SOLVER_URL</code>) and runs a REAL popular-page fetch through the full chain (okhttp 403 → JCEF skipped for the hard host → FlareSolverr interceptor → solver in-page XHR). Green = MangaFire actually loads data. The first run is slow (a real cold solve).</div>
+          <div className="set-actions" style={{ marginTop: 8 }}>
+            <button className="btn" disabled={solverBusy} onClick={runSolverTest}>{solverBusy ? 'Testing…' : 'Run test'}</button>
+          </div>
+          {solverTest && (
+            <div className="set-hint" style={{ marginTop: 8, lineHeight: 1.7 }}>
+              <div><b style={{ color: solverTest.ok ? 'var(--good, #5fce8f)' : 'var(--bad, #e86e8f)' }}>{solverTest.ok ? '✓ WORKING' : '✕ FAILED'}</b>{solverTest.sourceName ? ` — ${solverTest.sourceName}` : ''}{solverTest.host ? ` (${solverTest.host})` : ''}</div>
+              <div>Results: <b>{solverTest.results}</b> · took <b>{(solverTest.ms / 1000).toFixed(1)}s</b></div>
+              <div>Solver: {solverTest.solverConfigured ? (solverTest.solverHealthy ? `✓ healthy${solverTest.solverOrigin ? ` (on ${solverTest.solverOrigin})` : ''}` : '✕ unreachable') : 'not configured (MU_SOLVER_URL unset)'}</div>
+              <div>FlareSolverr: {solverTest.flareReachable ? '✓ reachable' : '✕ unreachable'}</div>
+              {solverTest.error && <div style={{ color: 'var(--bad, #e86e8f)' }}>Error: {solverTest.error}</div>}
+            </div>
+          )}
+        </div>
+        <div className="set-card" style={{ display: engine === 'chrome' ? 'none' : undefined }}>
+          <div className="set-row-label">Browser pool (fetch) <span className="set-hint" style={{ display: 'inline' }}>(JCEF only)</span></div>
           <div className="set-hint">Real-Chromium browsers that fetch Cloudflare-protected sources (e.g. MangaFire). Each shows <b>busy/open</b>. If a pool gets stuck on an unsolvable challenge it auto-recovers after 2 failures, but you can force-recycle it here. Per-host size is set by the <code>MU_JCEF_POOL</code> env var.</div>
           <div className="set-actions" style={{ alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
             {pool.length === 0
@@ -662,7 +693,7 @@ export function Dev() {
             <button className="btn" title="Refresh pool status" disabled={poolBusy} onClick={refreshPool}>↻</button>
           </div>
           <div className="set-actions" style={{ marginTop: 8 }}>
-            <button className="btn danger" disabled={poolBusy} onClick={resetPool}>Reset JCEF pool</button>
+            <button className="btn danger" disabled={poolBusy} onClick={resetPool}>Reset browser pool</button>
           </div>
           {poolMsg && <div className="set-hint" style={{ marginTop: 6 }}>{poolMsg}</div>}
         </div>
@@ -738,24 +769,6 @@ export function Dev() {
               )}
             </div>
           )}
-        </div>
-      </div>
-
-      <div className="dev-sec">
-        <div className="dev-sec-h">Testing</div>
-        <div className="set-card">
-          <div className="set-row-label">Simulate a new chapter</div>
-          <div className="set-hint">Makes a library manga look like it got an update — sets its “!” badge, and auto-downloads it if that setting is on.</div>
-          <select className="set-select" value={simManga} onChange={(e) => setSimManga(e.target.value)}>
-            <option value="">Pick a manga…</option>
-            {[...library].sort((a, b) => a.title.localeCompare(b.title)).map((e) => (
-              <option key={e.sourceId + '|' + e.url} value={e.sourceId + '|' + e.url}>{e.title}</option>
-            ))}
-          </select>
-          <div className="set-actions">
-            <button className="btn primary" disabled={simRunning || !simManga} onClick={simulate}>{simRunning ? 'Simulating…' : 'Simulate update'}</button>
-            {simMsg && <span className="set-msg">{simMsg}</span>}
-          </div>
         </div>
       </div>
 

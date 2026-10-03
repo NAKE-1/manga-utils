@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type HealthReport, type HealthSource, type DiagResult } from '../api'
+import { api, type HealthReport, type HealthSource, type DiagResult, type ServiceStatus, type ServicesHealth } from '../api'
 import { IconArrowLeft } from '../components/icons'
 
 function ago(ts: number): string {
@@ -12,7 +12,7 @@ function ago(ts: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-type State = { key: 'ok' | 'degraded' | 'down'; label: string }
+type State = { key: 'ok' | 'degraded' | 'down' | 'off'; label: string }
 function statusOf(h: HealthSource): State {
   if (h.down || h.cfState === 'red') return { key: 'down', label: h.cfState === 'red' ? 'Cloudflare — no bypass' : 'Unreachable' }
   if (h.imagesDown) return { key: 'degraded', label: 'Images down' }
@@ -21,14 +21,37 @@ function statusOf(h: HealthSource): State {
   return { key: 'ok', label: 'OK' }
 }
 
+// A bypass service chip (FlareSolverr / MangaFire solver). Grey when never configured — not an alarm.
+function svcState(s: ServiceStatus): State {
+  if (!s.configured) return { key: 'off', label: 'not configured' }
+  if (!s.reachable) return { key: 'down', label: s.error || 'unreachable' }
+  return { key: 'ok', label: s.detail || 'reachable' }
+}
+function ServiceChip({ name, s }: { name: string; s: ServiceStatus }) {
+  const st = svcState(s)
+  return (
+    <div className={'hl-card ' + (st.key === 'off' ? '' : st.key)}>
+      <span className={'hl-dot ' + st.key} />
+      <div className="hl-main">
+        <div className="hl-name">{name}</div>
+        <div className="hl-sub">{st.label}{s.url && st.key !== 'off' && <> · {s.url}</>}</div>
+      </div>
+    </div>
+  )
+}
+
 export default function Health() {
   const nav = useNavigate()
   const [rep, setRep] = useState<HealthReport | null>(null)
+  const [svc, setSvc] = useState<ServicesHealth | null>(null)
   const [sweep, setSweep] = useState<{ done: number; total: number } | null>(null)
   const [tests, setTests] = useState<Record<string, DiagResult | 'run'>>({})
   const alive = useRef(true)
 
-  async function load() { setRep(await api.healthSources().catch(() => null)) }
+  async function load() {
+    setRep(await api.healthSources().catch(() => null))
+    api.healthServices().then((s) => alive.current && setSvc(s)).catch(() => {}) // parallel — don't block the list
+  }
   useEffect(() => { alive.current = true; load(); return () => { alive.current = false } }, [])
 
   async function runSweep() {
@@ -58,6 +81,13 @@ export default function Health() {
 
       {rep === null ? <div className="spinner" /> : (
         <>
+          {svc && (
+            <div className="hl-list hl-svc">
+              <ServiceChip name="FlareSolverr" s={svc.flareSolverr} />
+              <ServiceChip name="MangaFire solver" s={svc.solver} />
+            </div>
+          )}
+
           <div className="dm-overview">
             <div className="dm-stat"><span className="dm-stat-n hl-ok">{rep.healthy}</span><span className="dm-stat-l">healthy</span></div>
             <div className="dm-stat"><span className="dm-stat-n hl-deg">{rep.degraded}</span><span className="dm-stat-l">degraded</span></div>

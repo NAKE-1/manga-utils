@@ -119,6 +119,9 @@ data class Settings(
     /** Auto-solve MangaFire's interactive shape-captcha with the ONNX detector when a block is hit
      *  (incl. unattended overnight updates). Off by default. */
     val autoSolveCaptcha: Boolean = false,
+    /** Which WebView engine backs the streamed browser + CF fetch: "jcef" (in-process JCEF, default) or
+     *  "chrome" (the crash-isolated headed-Chrome sidecar, once built). Dev-only switch. */
+    val webviewEngine: String = "jcef",
 )
 
 @Serializable

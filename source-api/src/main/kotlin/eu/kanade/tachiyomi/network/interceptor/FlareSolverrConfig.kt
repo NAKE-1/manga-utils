@@ -24,6 +24,20 @@ object FlareSolverrConfig {
      */
     val solvedUserAgents = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    /**
+     * Hosts whose requests we run ENTIRELY through FlareSolverr's browser (it makes the request and hands
+     * back the body), instead of via JCEF/okhttp. Needed where OUR fingerprint is Cloudflare-flagged: in a
+     * container JCEF's offscreen Chromium is detected as a bot (the challenge shows even on a manual solve),
+     * so cookie replay and JCEF both fail — but FlareSolverr's headed browser passes, so let it do the fetch.
+     * Comma-separated env `MU_FS_FETCH_HOSTS`; default MangaFire. Read by both the FS and JCEF interceptors.
+     */
+    val fetchThroughHosts: Set<String> =
+        (System.getenv("MU_FS_FETCH_HOSTS") ?: "mangafire.to")
+            .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+
+    fun fetchesThrough(host: String): Boolean =
+        fetchThroughHosts.any { host.equals(it, true) || host.endsWith(".$it", true) }
+
     /** Whether the last attempt to talk to FlareSolverr got through. */
     @Volatile var reachable: Boolean = true
         private set

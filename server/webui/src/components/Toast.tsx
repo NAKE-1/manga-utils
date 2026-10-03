@@ -66,6 +66,7 @@ export function Toasts() {
 // the events we want to toast).
 let flareCursor: number | null = null
 let mfCursor: number | null = null // MangaFire captcha auto-solver event cursor
+let solverCursor: number | null = null // MangaFire solver sidecar event cursor
 let notifyRateAt = -1 // last-seen Discord rate-limit timestamp (-1 = not yet synced)
 
 export function DownloadWatcher() {
@@ -104,9 +105,25 @@ export function DownloadWatcher() {
         mfCursor = r.lastId
       } catch { /* ignore */ }
     }
+    // MangaFire solver sidecar (curl_cffi + YOLO) — a fresh /@waf shapes-captcha solve.
+    const solverTick = async () => {
+      try {
+        const r = await api.solverEvents(solverCursor ?? undefined)
+        if (solverCursor == null) { solverCursor = r.lastId; return } // first poll: sync only, no backlog
+        for (const e of r.events) {
+          // Only real work is toasted (the solver stays silent on warm/routine traffic), so these are rare —
+          // keep them unkeyed so each stands as its own toast for its full duration.
+          if (e.phase === 'solved') toast(`MF solver · ${e.host} captcha solved ✓`, 'success', 3500, undefined, { bg: true })
+          else if (e.phase === 'cleared') toast(`MF solver · ${e.host} cleared Cloudflare ✓`, 'success', 3500, undefined, { bg: true })
+          else if (e.phase === 'failed') toast(`MF solver · ${e.host} failed`, 'error', 4000, undefined, { bg: true })
+        }
+        solverCursor = r.lastId
+      } catch { /* ignore */ }
+    }
     const tick = async () => {
       flareTick()
       mfTick()
+      solverTick()
       try {
         const d = await api.downloads()
         for (const t of d.tasks) {

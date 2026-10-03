@@ -27,12 +27,26 @@ export function Downloads() {
   const [tab, setTab] = useState('all')       // 'all' or a sourceId — filters the active list
   const [showDone, setShowDone] = useState(false) // Completed section expanded?
   const rate = useRef({ t: 0, done: 0, rate: 0 })
+  // Just-resumed task ids → hold-until (epoch ms). A poll that predates the click can still carry the old
+  // "interrupted"; keep those tasks shown as "queued" until a poll actually shows progress or the hold lapses.
+  const resumeHold = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
     let alive = true
     const tick = async () => {
       const d = await api.downloads().catch(() => null)
       if (!alive || !d) return
+      // Per-task resume hold (fixes the resume flicker): don't let a stale poll bounce a just-resumed task
+      // back to interrupted/offlinewait — pin it at "queued" until it actually starts running or the hold ends.
+      if (resumeHold.current.size) {
+        const nowH = Date.now()
+        for (const t of d.tasks) {
+          const until = resumeHold.current.get(t.id)
+          if (until == null) continue
+          if (nowH > until || t.state === 'running') resumeHold.current.delete(t.id)
+          else if (t.state === 'interrupted' || t.state === 'offlinewait') t.state = 'queued'
+        }
+      }
       // pages/sec (smoothed) over remaining chapter-pages (chapters not yet started use the average).
       const totalDone = d.tasks.reduce((a, t) => a + t.pagesDone, 0)
       const now = Date.now()
@@ -69,8 +83,20 @@ export function Downloads() {
 
   async function forceRetry(t: DlTask) { setData(await api.forceRetryDownload(t.id).then((r) => r.json()).catch(() => data)) }
   async function move(t: DlTask, dir: 'up' | 'down') { setData(await api.moveDownload(t.id, dir).then((r) => r.json()).catch(() => data)) }
-  async function resume(t: DlTask) { setData(await api.resumeDownload(t.id).then((r) => r.json()).catch(() => data)) }
-  async function resumeAll() { setData(await api.resumeAllDownloads().then((r) => r.json()).catch(() => data)) }
+  // Optimistic: flip the affected task(s) to "queued" locally right away so the click feels instant, even
+  // though the server's resume does synchronous disk work (repairFor deletes half-written chapters) before
+  // it responds. The server response + the 1s poll reconcile the real state (which one actually runs).
+  async function resume(t: DlTask) {
+    resumeHold.current.set(t.id, Date.now() + 3000)
+    setData((d) => d && { ...d, tasks: d.tasks.map((x) => (x.id === t.id ? { ...x, state: 'queued' } : x)) })
+    try { setData(await api.resumeDownload(t.id).then((r) => r.json())) } catch { /* keep optimistic; poll reconciles */ }
+  }
+  async function resumeAll() {
+    const hold = Date.now() + 3000
+    for (const x of data?.tasks ?? []) if (x.state === 'interrupted' || x.state === 'offlinewait') resumeHold.current.set(x.id, hold)
+    setData((d) => d && { ...d, tasks: d.tasks.map((x) => (x.state === 'interrupted' || x.state === 'offlinewait' ? { ...x, state: 'queued' } : x)) })
+    try { setData(await api.resumeAllDownloads().then((r) => r.json())) } catch { /* keep optimistic; poll reconciles */ }
+  }
 
   if (!data) return <div className="spinner" />
   const tasks = data.tasks
@@ -102,7 +128,7 @@ export function Downloads() {
       <div className="list-head">
         <span className="list-title">Downloads{data.active > 0 ? ` · ${data.active} active` : ''}</span>
         <div className="dl-head-actions">
-          {active.some((t) => t.state === 'interrupted') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
+          {active.some((t) => t.state === 'interrupted' || t.state === 'offlinewait') && <button className="dl-link dl-resume" onClick={resumeAll}>Resume all</button>}
           {data.active > 0 && <button className="dl-link" onClick={stopAll}>Stop all</button>}
         </div>
       </div>
@@ -195,7 +221,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
               : parked
                 ? <button className="dl-link dl-resume" onClick={onForce}>Retry now</button>
                 : offline
-                  ? <span className="dl-state">Paused</span>
+                  ? <button className="dl-link dl-resume" onClick={onResume}>Resume</button>
                   : failed && t.failedChapters.length
                   ? <button className="dl-link" onClick={onRetry}>Retry {t.failed}</button>
                   : <span className={'dl-state ' + (failed || t.state === 'stopped' ? 'failed' : 'done')}>{t.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Done'}</span>}

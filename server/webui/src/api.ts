@@ -137,6 +137,14 @@ async function getJson<T>(url: string, retries = 2, timeoutMs = 15000, signal?: 
 /** Result of probing FlareSolverr. `url` is set when auto-discovery found a working endpoint. */
 export interface FlareTest { ok: boolean; version?: string; error?: string; url?: string }
 
+/** Result of the solver self-test: solver health + a real MangaFire popular fetch through the full chain. */
+export interface SolverTest {
+  solverConfigured: boolean; solverUrl?: string | null; solverHealthy: boolean; solverOrigin?: string | null
+  flareReachable: boolean
+  sourceId?: string | null; sourceName?: string | null; host?: string | null
+  ok: boolean; results: number; ms: number; error?: string | null
+}
+
 export const api = {
   sources: () => getJson<Source[]>('/api/sources'),
   sourcePrefs: (id: string) => getJson<SourcePref[]>(`/api/sources/${id}/preferences`),
@@ -212,7 +220,11 @@ export const api = {
 
   getSettings: () => getJson<SettingsInfo>('/api/settings'),
   flaresolverrTest: (url?: string) => getJson<FlareTest>(`/api/flaresolverr/test${url ? `?url=${encodeURIComponent(url)}` : ''}`),
+  // Self-test the MangaFire → solver pipeline (health + a real popular fetch). Slow (a real cold solve).
+  solverTest: () => getJson<SolverTest>('/api/dev/solver/test', 0, 120000),
   flaresolverrEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string; cookies: number }[] }>(`/api/flaresolverr/events${since != null ? `?since=${since}` : ''}`),
+  // MangaFire solver sidecar events — a fresh /@waf captcha solve.
+  solverEvents: (since?: number) => getJson<{ lastId: number; events: { id: number; host: string; phase: string }[] }>(`/api/solver/events${since != null ? `?since=${since}` : ''}`),
   backupPreview: async (data: ArrayBuffer) => {
     const r = await fetch('/api/backup/preview', { method: 'POST', body: data })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Preview failed')
@@ -255,7 +267,7 @@ export const api = {
     if (!r.ok) throw new Error('Export failed')
     return r.blob()
   },
-  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; autoBackupEnabled: boolean; autoBackupHour: number; autoBackupKeep: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean }>): Promise<SettingsInfo> => {
+  saveSettings: async (patch: Partial<{ downloadDir: string | null; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; autoBackupEnabled: boolean; autoBackupHour: number; autoBackupKeep: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean; webviewEngine: string }>): Promise<SettingsInfo> => {
     const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed')
     return r.json()
@@ -420,6 +432,7 @@ export const api = {
   healthSources: () => getJson<HealthReport>('/api/health/sources'),
   runHealthSweep: () => fetch('/api/health/sweep', { method: 'POST' }).then((r) => r.json() as Promise<SweepProgress>),
   sweepProgress: () => getJson<SweepProgress>('/api/health/sweep/progress'),
+  healthServices: () => getJson<ServicesHealth>('/api/health/services'),
   webhookPing: () => fetch('/api/webhooks/test/ping', { method: 'POST' }).then((r) => r.json() as Promise<WebhookResult>),
   webhookSample: (source: string, mangaUrl: string, kind: string) =>
     fetch('/api/webhooks/test/sample', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, mangaUrl, kind }) }).then((r) => r.json() as Promise<WebhookResult>),
@@ -446,6 +459,8 @@ export interface HealthSource {
 }
 export interface HealthReport { sources: HealthSource[]; healthy: number; degraded: number; down: number }
 export interface SweepProgress { done: number; total: number; running: boolean }
+export interface ServiceStatus { configured: boolean; reachable: boolean; url?: string | null; detail?: string | null; error?: string | null }
+export interface ServicesHealth { flareSolverr: ServiceStatus; solver: ServiceStatus }
 
 export interface BrokenSeries { title: string; broken: string[]; total: number }
 export interface BrokenReport { series: BrokenSeries[]; totalBroken: number }
@@ -507,7 +522,7 @@ export interface SourceDiag { id: string; name: string; baseUrl: string; host: s
 export interface RawResult { status: number; ms: number; contentType?: string | null; snippet: string; error?: string | null }
 export interface ExtAvailable { pkg: string; name: string; version: string; lang: string; nsfw: boolean; installed: boolean; hasUpdate: boolean; repo: string }
 
-export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; autoBackupEnabled: boolean; autoBackupHour: number; autoBackupKeep: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean }
+export interface SettingsInfo { downloadDir: string | null; effectiveDownloadDir: string; dataDir: string; downloadAsCbz: boolean; downloadConcurrency: number; parallelDownloads: number; perSourceParallel: boolean; perSourceLimit: number; visibleLanguages: string[]; cloudflareBypass: boolean; autoUpdate: boolean; autoUpdateHours: number; autoUpdateHour: number; autoDownloadNew: boolean; healthCheckEnabled: boolean; healthCheckHour: number; autoBackupEnabled: boolean; autoBackupHour: number; autoBackupKeep: number; flareSolverrEnabled: boolean; flareSolverrUrl: string; flareSolverrSession: string; flareSolverrSessionTtlMinutes: number; flareSolverrTimeoutMs: number; usbBackupDir: string; discordWebhookUrl: string; notify: NotifyConfig; verboseLogging: boolean; autoSolveCaptcha: boolean; webviewEngine: string }
 export interface BackupJob { running: boolean; state: string; phase: string; filesDone: number; filesTotal: number; bytesCopied: number; blobName: string; filesSkipped: number; error: string; target: string }
 export interface DiagResult { source: string; baseUrl: string; pingMs: number; speedMbps: number; sampleBytes: number; ok: boolean; error?: string | null }
 export interface DevStats {

@@ -73,17 +73,89 @@ object CefManager {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    private const val INIT_CEILING_MS = 45_000L // wait this long for CEF to reach INITIALIZED before declaring it wedged
+
+    /** Has the CEF runtime finished coming up? Cheap, non-blocking — the WebView-open route checks this so it
+     *  can return "starting" immediately instead of blocking a request thread on cold init. */
+    fun isReady(): Boolean = cefInitialized()
+
+    /** "ready" | "starting" | "failed" | "cold" — for the WebView UI so it can show a spinner / retry / error. */
+    fun state(): String =
+        when {
+            cefInitialized() -> "ready"
+            CefHelper.cefApp.value.isFailure -> "failed"
+            started.get() -> "starting"
+            else -> "cold"
+        }
+
+    /** Failure detail when [state] is "failed" (e.g. "restart the server to recover"). */
+    fun stateDetail(): String? = CefHelper.cefApp.value.exceptionOrNull()?.message
+
+    private fun cefInitialized(): Boolean =
+        CefHelper.isInitialized ||
+            (CefApp.getInstanceIfAny() != null && runCatching { CefApp.getState() == CefApp.CefAppState.INITIALIZED }.getOrDefault(false))
+
     fun ensureStarted() {
         if (!started.compareAndSet(false, true)) return
         Thread {
-            runCatching { initBlocking() }
-                .onFailure {
-                    logger.error(it) { "Failed to set up CEF" }
-                    CefHelper.cefApp.value = Result.failure(it)
-                    // Let a later attempt re-run init instead of being wedged on this failed one forever.
-                    started.set(false)
+            runCatching {
+                clearStaleLocks() // a prior hard crash (libcef SIGILL) can leave a lock that wedges init — clear it first
+                initBlocking()
+            }.onFailure {
+                logger.error(it) { "Failed to set up CEF" }
+                CefHelper.cefApp.value = Result.failure(it)
+                started.set(false) // a fresh attempt can re-run init (download failed / transient)
+                return@Thread
+            }
+            // initBlocking kicked CEF off; it reaches INITIALIZED asynchronously. Wait bounded for it: if the
+            // CefApp got created but never initializes (a stale profile lock from a prior crash), it's a
+            // JVM-wide singleton we can't re-init in-process — so fail CLEANLY and tell the user to restart,
+            // instead of leaving every WebView open to hang 30s forever with no self-heal.
+            val deadline = System.currentTimeMillis() + INIT_CEILING_MS
+            while (!cefInitialized() && CefHelper.cefApp.value.isSuccess && System.currentTimeMillis() < deadline) {
+                Thread.sleep(250)
+            }
+            if (cefInitialized()) {
+                logger.info { "CEF init confirmed — WebView is ready" }
+            } else if (CefHelper.cefApp.value.isSuccess) {
+                logger.error {
+                    "CEF was created but never reached INITIALIZED in ${INIT_CEILING_MS / 1000}s — likely a stale " +
+                        "profile lock from a prior crash. Restart the server to recover (locks are cleared on next start)."
                 }
+                CefHelper.cefApp.value = Result.failure(CefHelper.CefException("CEF stuck starting — restart the server to recover"))
+                runCatching { CefApp.getInstanceIfAny()?.dispose() }
+                // Leave `started` = true: re-running init would just reuse the wedged singleton; a restart is required.
+            }
         }.apply { isDaemon = true; name = "cef-bootstrap" }.start()
+    }
+
+    /** Kill a stray jcef_helper and delete Chromium's Singleton/cache lock files left by a prior hard crash.
+     *  Either one makes the next CefApp init hang below INITIALIZED. Safe on a clean start (all no-ops). */
+    private fun clearStaleLocks() {
+        runCatching {
+            val cmd =
+                if (Platform.current.os.isWindows) {
+                    listOf("taskkill", "/f", "/im", "jcef_helper.exe")
+                } else {
+                    listOf("pkill", "-f", "jcef_helper")
+                }
+            ProcessBuilder(cmd).redirectErrorStream(true).start().waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        // Always start CEF on an EMPTY cache. Empirically on this deploy (i5-1340P/Docker), CEF reaches
+        // INITIALIZED reliably ONLY with a fresh cache dir — a NON-EMPTY cache/jcef (even one a clean prior
+        // run wrote) makes the next init hang below INITIALIZED forever ("CEF stuck starting"). A libcef
+        // SIGILL half-writing the persistent cache is one way it goes bad, but a clean shutdown leaves it
+        // unstartable too, so wiping only on an unclean marker wasn't enough. The cache only holds Chromium's
+        // disk cache + cf_clearance, and cf_clearance's sole CEF consumer (JcefFetch) carries ~zero traffic
+        // here (MangaFire uses the solver sidecar) — so wiping every start costs nothing and guarantees the
+        // WebView starts. NOTE: only cache/jcef is wiped; the ~100MB native in bin/jcef is untouched.
+        runCatching {
+            if (cacheDir.exists()) {
+                logger.info { "CEF: wiping $cacheDir for a clean init (a populated cache wedges init on this box)" }
+                cacheDir.deleteRecursively()
+            }
+            cacheDir.createDirectories()
+        }
     }
 
     /** Best-effort CEF teardown on JVM exit — disposes CefApp so its helper subprocesses don't linger and

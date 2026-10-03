@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, pageUrl, Chapter } from '../api'
+import { api, pageUrl, coverUrl, Chapter } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings, IconJetBrains } from '../components/icons'
 import { WebviewModal } from '../components/WebviewModal'
 import { useNet } from '../components/NetStatus'
@@ -8,7 +8,7 @@ import { useNet } from '../components/NetStatus'
 type Sizing = 'clamp' | 'natural'
 type LoadMode = 'hybrid' | 'eager' | 'balanced' | 'lazy'
 const LOAD_MODES: { id: LoadMode; label: string; desc: string }[] = [
-  { id: 'hybrid', label: 'Eager-Hybrid', desc: 'Loads the first pages at high priority and the rest in the background — feels instant even on a slow or relayed link. Recommended.' },
+  { id: 'hybrid', label: 'Eager-Hybrid', desc: 'Loads the first pages first, the rest in the background. Instant even on a slow link; recommended.' },
   { id: 'eager', label: 'Eager', desc: 'Loads every page at once, all equal priority. Great on a strong connection; can choke a slow one.' },
   { id: 'balanced', label: 'Balanced', desc: 'Loads the first few pages, then the rest as you scroll.' },
   { id: 'lazy', label: 'Lazy', desc: 'Loads each page only as it scrolls into view. Lightest on data; pages may pop in.' },
@@ -166,6 +166,12 @@ export function Reader() {
   // saw settled=true and the PREVIOUS chapter's progress, and fired 366ms into a fresh chapter. Holding
   // the URL means a stale value can never read as settled for the chapter now on screen.
   const [settledFor, setSettledFor] = useState('')
+  // Option A "read on finish" (dev toggle app.readOnFinish): don't mark read on open. `readArmedFor`
+  // is the chapter that has been open long enough (~3s) that a pre-load height blip can't false-trip
+  // the ≥97% mark — same stale-proof URL-keyed pattern as settledFor. markedReadRef fires the mark once.
+  const [readOnFinish, setReadOnFinish] = useState(() => localStorage.getItem('app.readOnFinish') === '1')
+  const [readArmedFor, setReadArmedFor] = useState('')
+  const markedReadRef = useRef('')
   const prefetchedNext = useRef('') // the chapter we have already warmed; cleared on every chapter change
   // Windowing: only mount an <img> for pages up to here (0-based). Grows as you scroll, so opening a
   // chapter fires ~preload requests — not all 68 at once (which would pin every browser connection
@@ -174,6 +180,7 @@ export function Reader() {
   const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
   const [warnAck, setWarnAck] = useState(0) // banner dismissed at this failure count; reappears if more fail
   const [chapters, setChapters] = useState<Chapter[]>([])
+  const [coverSrc, setCoverSrc] = useState<string | null>(null) // series cover for the top reader bumper
   const [page, setPage] = useState(1)
   const [progress, setProgress] = useState(0)
   const [chrome, setChrome] = useState(true)
@@ -186,7 +193,6 @@ export function Reader() {
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
   const [preload, setPreload] = useState<number>(Number(lsGet('reader.preload', '3')))
   const [showPill, setShowPill] = useState<boolean>(lsGet('reader.pill', '1') === '1')
-  const [keepAwake, setKeepAwake] = useState<boolean>(lsGet('reader.awake', '0') === '1')
   const [loadMode, setLoadMode] = useState<LoadMode>((() => { const m = lsGet('reader.loadmode', 'hybrid'); return (m === 'blob' ? 'hybrid' : m) as LoadMode })())
   const [sheetDrag, setSheetDrag] = useState(0)
   const [dragging, setDragging] = useState(false)
@@ -220,21 +226,7 @@ export function Reader() {
   useEffect(() => { localStorage.setItem('reader.gap', String(gap)) }, [gap])
   useEffect(() => { localStorage.setItem('reader.preload', String(preload)) }, [preload])
   useEffect(() => { localStorage.setItem('reader.pill', showPill ? '1' : '0') }, [showPill])
-  useEffect(() => { localStorage.setItem('reader.awake', keepAwake ? '1' : '0') }, [keepAwake])
-  // Keep the screen awake while reading (Wake Lock). The lock drops when the tab is backgrounded, so
-  // re-acquire when it returns to the foreground.
-  useEffect(() => {
-    if (!keepAwake) return
-    let lock: WakeLockSentinel | null = null
-    let released = false
-    const acquire = async () => {
-      try { lock = (await navigator.wakeLock?.request('screen')) ?? null } catch { /* denied / unsupported */ }
-    }
-    acquire()
-    const onVis = () => { if (document.visibilityState === 'visible' && !released) acquire() }
-    document.addEventListener('visibilitychange', onVis)
-    return () => { released = true; document.removeEventListener('visibilitychange', onVis); lock?.release().catch(() => {}) }
-  }, [keepAwake])
+  useEffect(() => { localStorage.setItem('app.readOnFinish', readOnFinish ? '1' : '0') }, [readOnFinish])
   useEffect(() => { localStorage.setItem('reader.loadmode', loadMode) }, [loadMode])
   // Center the current chapter when the chapter list opens.
   useEffect(() => { if (showChapters) requestAnimationFrame(() => currentChapRef.current?.scrollIntoView({ block: 'center' })) }, [showChapters])
@@ -286,7 +278,9 @@ export function Reader() {
     setCount(null); setPage(1); setProgress(0); setRenderMax(0); setFailedPages(new Set()); setWarnAck(0); setShowChapters(false); setForce(false); setSettledFor('')
     window.scrollTo(0, 0)
     prefetchedNext.current = '' // stale from the chapter we just left; leaving it set blocks a real preload
+    setReadArmedFor('')
     const settle = setTimeout(() => setSettledFor(chapter), 500)
+    const arm = setTimeout(() => setReadArmedFor(chapter), 3000) // read-on-finish: only trust ≥97% after 3s
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => {
       setReadUrls(new Set(s.read)) // read markers for the chapter list
@@ -300,12 +294,14 @@ export function Reader() {
       }
     }).catch(() => {})
     // Mark read + record history (with the cover, once detail resolves) for "Continue reading".
-    api.setRead(sourceId, manga, chapter, true)
+    // read-on-finish ON: skip the open-time mark — the finish effect / Forward button does it instead.
+    if (!readOnFinish) api.setRead(sourceId, manga, chapter, true)
     api.detail(sourceId, manga)
-      .then((d) => { setChapters(d.chapters); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
+      .then((d) => { setChapters(d.chapters); setCoverSrc(coverUrl(sourceId, d.manga.thumbnailUrl, title) || null); api.recordHistory(sourceId, manga, chapter, title, name, d.manga.thumbnailUrl) })
       .catch(() => api.recordHistory(sourceId, manga, chapter, title, name))
     return () => {
       clearTimeout(settle)
+      clearTimeout(arm)
       // Local save keeps this device instant; the server copy is what lets another device pick it up.
       savePosition(key, progressRef.current)
       api.setPosition(sourceId, manga, chapter, Math.round(progressRef.current * 1000) / 1000).catch(() => {})
@@ -372,6 +368,24 @@ export function Reader() {
       for (let i = 0; i < n; i++) { const im = new Image(); im.src = pageUrl(sourceId, nextCh.url, i, title, nextCh.name) + '&pre=1' }
     }).catch(() => { prefetchedNext.current = '' })
   }, [progress, nextCh, sourceId, title, settledFor, chapter])
+
+  // read-on-finish: mark read once you've genuinely finished — armed (open ≥3s, so a pre-load height
+  // blip can't false-trip), reached the last page, and at the bottom. Ref-guarded to fire exactly once.
+  useEffect(() => {
+    if (!readOnFinish || readArmedFor !== chapter) return
+    if (!count || page < count || progress < 0.97) return
+    if (markedReadRef.current === chapter) return
+    markedReadRef.current = chapter
+    api.setRead(sourceId, manga, chapter, true)
+    setReadUrls((s) => new Set(s).add(chapter))
+  }, [readOnFinish, readArmedFor, chapter, count, page, progress, sourceId, manga])
+
+  // read-on-finish: pressing Forward is an explicit "done", so mark the chapter you're leaving read.
+  function markCurrentRead() {
+    if (markedReadRef.current === chapter) return
+    markedReadRef.current = chapter
+    api.setRead(sourceId, manga, chapter, true)
+  }
 
   function openChapter(c?: Chapter) {
     if (!c) return
@@ -551,17 +565,35 @@ export function Reader() {
           // slow/down source still can't pin every connection AND the next pages are always mounted ahead.
           const renderCeil = loadMode === 'eager' ? count - 1 : Math.max(renderMax, Math.max(preload, 3))
           return (
-            <div className="strip" style={{ gap: gap + 'px' }}>
-              {Array.from({ length: count }, (_, i) => {
-                if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
-                return (
-                  <React.Fragment key={i}>
-                    <ReaderPage index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
-                    {i === renderCeil && renderCeil < count - 1 && <div ref={setSentinel} className="reader-sentinel" aria-hidden />}
-                  </React.Fragment>
-                )
-              })}
-            </div>
+            <>
+              {/* Top bumper — cover-hero: the series cover fills the width and fades into the reader
+                  background, with the title + chapter set in the dark fade. Keeps page 1 clear of the top bar. */}
+              <div className="rbump-hero">
+                {coverSrc && <div className="rbump-art" style={{ backgroundImage: `url("${coverSrc}")` }} />}
+                <div className="rbump-scrim" />
+                <div className="rbump-herotext">
+                  <div className="rbump-series">{title}</div>
+                  <div className="rbump-chap">{name || `Chapter ${curNum}`}</div>
+                </div>
+              </div>
+              <div className="strip" style={{ gap: gap + 'px' }}>
+                {Array.from({ length: count }, (_, i) => {
+                  if (i > renderCeil) return <div key={i} className="page-slot" aria-hidden />
+                  return (
+                    <React.Fragment key={i}>
+                      <ReaderPage index={i} src={pageUrl(sourceId, chapter, i, title, name)} sizing={sizing} onStatus={reportStatus} />
+                      {i === renderCeil && renderCeil < count - 1 && <div ref={setSentinel} className="reader-sentinel" aria-hidden />}
+                    </React.Fragment>
+                  )
+                })}
+              </div>
+              {/* Bottom bumper — "end of chapter" + manga-utils mark, clear of the bottom controls. */}
+              <div className="rbump rbump-bot">
+                <div className="rbump-end"><span>End of chapter</span></div>
+                <div className="rbump-word">manga<span className="u">-utils</span></div>
+                <div className="rbump-flourish">✦ ✦ ✦</div>
+              </div>
+            </>
           )
         })()}
       </div>
@@ -611,7 +643,7 @@ export function Reader() {
           <div className="reader-navrow">
             <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
             <button className="reader-chip" onClick={() => setShowChapters(true)} title="Chapter list">{name || `Chapter ${curNum}`}</button>
-            <button className="r-icon" disabled={!nextCh} onClick={() => openChapter(nextCh)} aria-label="Next chapter"><IconChevronRight /></button>
+            <button className="r-icon" disabled={!nextCh} onClick={() => { if (readOnFinish) markCurrentRead(); openChapter(nextCh) }} aria-label="Next chapter"><IconChevronRight /></button>
           </div>
         </div>
 
@@ -644,7 +676,7 @@ export function Reader() {
             <div className="sheet-drag" onPointerDown={sheetDown} onPointerMove={sheetMove} onPointerUp={sheetUp} onPointerCancel={sheetUp}>
               <div className="sheet-handle" />
               <div className="sheet-headrow">
-                <span className="sheet-title">Chapters · {chapters.length}</span>
+                <span className="sheet-title">Chapters · {chapterGroups.length}</span>
                 <button className="sheet-close" onClick={closeSheet} aria-label="Close">✕</button>
               </div>
             </div>
@@ -708,9 +740,9 @@ export function Reader() {
               <span className={'switch' + (showPill ? ' on' : '')}><span className="knob" /></span>
             </button>
 
-            <button className="sheet-toggle" onClick={() => setKeepAwake((v) => !v)}>
-              <span>Keep screen on</span>
-              <span className={'switch' + (keepAwake ? ' on' : '')}><span className="knob" /></span>
+            <button className="sheet-toggle" onClick={() => setReadOnFinish((v) => !v)}>
+              <span>Mark read on finish<span className="sheet-sub">Only when you reach the end or tap next — not on open</span></span>
+              <span className={'switch' + (readOnFinish ? ' on' : '')}><span className="knob" /></span>
             </button>
           </div>
         </div>

@@ -482,12 +482,37 @@ private data class SettingsDto(
     val notify: mangautils.core.config.NotifyConfig,
     val verboseLogging: Boolean,
     val autoSolveCaptcha: Boolean,
+    val webviewEngine: String,
 )
 
 @Serializable
 private data class WebViewInfoDto(val width: Int, val height: Int, val url: String)
+
+// WebView open result. status: "ready" (width/height valid, start streaming frames) | "starting" (CEF is
+// coming up — show a spinner and retry) | "failed"/"cold" (detail says why, e.g. "restart the server").
+@Serializable
+private data class WebViewOpenDto(
+    val status: String,
+    val width: Int = 0,
+    val height: Int = 0,
+    val url: String = "",
+    val detail: String? = null,
+)
 @Serializable
 private data class WebViewStatusDto(val cookies: Int)
+
+// True when the WebView should route to the out-of-process Chrome sidecar instead of in-process JCEF:
+// the dev setting is "chrome" AND MU_BROWSER_SIDECAR_URL is configured. Otherwise JCEF (unchanged).
+private fun useChromeEngine(): Boolean =
+    runCatching { SettingsStore.get().webviewEngine == "chrome" }.getOrDefault(false) && ChromeEngine.configured
+
+// Pull "status" / "detail" out of the sidecar's /webview/open JSON (its w/h are the fixed 440x780 OSR size).
+private fun chromeStatus(body: String?): Pair<String, String?> {
+    if (body == null) return "failed" to "browser sidecar unreachable"
+    val status = Regex(""""status"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1) ?: "starting"
+    val detail = Regex(""""detail"\s*:\s*"([^"]*)"""").find(body)?.groupValues?.get(1)?.ifBlank { null }
+    return status to detail
+}
 // MangaFire /@waf/generate response — snake_case field names match the JSON so no @SerialName needed.
 @Serializable
 private data class WafGenResp(val captcha_id: String = "", val count: Int = 0, val image_base64: String = "", val thumb_base64: String = "")
@@ -571,6 +596,7 @@ private data class SettingsPatch(
     val notify: mangautils.core.config.NotifyConfig? = null,
     val verboseLogging: Boolean? = null,
     val autoSolveCaptcha: Boolean? = null,
+    val webviewEngine: String? = null,
 )
 
 @Serializable
@@ -587,6 +613,20 @@ private fun mangautils.core.source.SourcePref.toDto() =
 
 @Serializable
 private data class FlareTestDto(val ok: Boolean, val version: String? = null, val error: String? = null, val url: String? = null)
+
+// One bypass service's live state for the Health dashboard. `configured` false → neutral chip (never set
+// up), not a red alarm; `reachable` only meaningful when configured.
+@Serializable
+private data class ServiceStatusDto(
+    val configured: Boolean,
+    val reachable: Boolean,
+    val url: String? = null,
+    val detail: String? = null, // "v3.3.21" / "parked on https://mangafire.to"
+    val error: String? = null,
+)
+
+@Serializable
+private data class ServicesHealthDto(val flareSolverr: ServiceStatusDto, val solver: ServiceStatusDto)
 
 @Serializable
 private data class FlareEventDto(val id: Long, val host: String, val phase: String, val cookies: Int)
@@ -644,7 +684,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.healthCheckEnabled, s.healthCheckHour,
     s.autoBackupEnabled, s.autoBackupHour, s.autoBackupKeep,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
-    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha,
+    s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha, s.webviewEngine,
 )
 
 @Serializable
@@ -999,6 +1039,14 @@ fun main() {
         }
         log.info("library badges prewarmed in {} ms ({} series)", System.currentTimeMillis() - t0, entries.size)
     }.apply { isDaemon = true; name = "lib-warm" }.start()
+    // CEF is NOT prewarmed. libcef's background native threads intermittently SIGILL deep inside Chromium
+    // (a CEF memory-lifetime bug — freed/unmapped code, NOT a CPU-instruction gap; the i5-1340P has AVX2
+    // etc.), and because JCEF runs in-process that crash kills the whole server (pid=1). Prewarming kept
+    // those threads alive during normal browsing, so the server would die at random. MangaFire now routes
+    // through the curl_cffi solver, so the JCEF WebView is only a rarely-used manual fallback — start it
+    // lazily on the first WebView open (JcefRemoteView.open → CefHelper.createClient → ensureStarted) so a
+    // libcef crash can only happen during deliberate WebView use, not while browsing. Tradeoff: the first
+    // WebView open pays the cold-init delay again. See memory manga-utils-vm-cpu-host.md.
     // Restore + resume the download queue from disk (survives a crash/restart).
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     NetMonitor.start() // watch server internet reachability so the app can degrade gracefully offline
@@ -1045,6 +1093,40 @@ private fun initiateRestart(restart: Boolean) {
         runCatching { xyz.nulldev.androidcompat.webkit.CefManager.shutdown() }
         kotlin.system.exitProcess(0)
     }.apply { isDaemon = false; name = "restart" }.start()
+}
+
+// A WebView drag fires one /api/webview/scroll per pointer-move (dozens/sec). Instead of an access-log
+// line each (suppressed in CallLogging), collapse a gesture into two lines: "scroll start" on the first
+// move, "scroll end (N moves)" once it's been idle for IDLE_MS. Idle-debounced on a daemon scheduler.
+private object WebviewScrollLog {
+    private val log = org.slf4j.LoggerFactory.getLogger("server")
+    private val sched = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "wv-scroll-log").apply { isDaemon = true }
+    }
+    private const val IDLE_MS = 500L
+    private var moves = 0
+    private var lastAt = 0L
+    private var stopTask: java.util.concurrent.ScheduledFuture<*>? = null
+
+    @Synchronized
+    fun onScroll() {
+        lastAt = System.currentTimeMillis()
+        if (moves == 0) log.info("WEBVIEW  scroll start")
+        moves++
+        stopTask?.cancel(false)
+        stopTask = sched.schedule({ flush() }, IDLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    @Synchronized
+    private fun flush() {
+        if (moves == 0) return
+        if (System.currentTimeMillis() - lastAt < IDLE_MS - 50) { // a move snuck in past the cancel — re-arm
+            stopTask = sched.schedule({ flush() }, IDLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            return
+        }
+        log.info("WEBVIEW  scroll end ({} moves)", moves)
+        moves = 0
+    }
 }
 
 // ---------------- Live MangaFire shape-captcha auto-solver (drives the streamed JcefRemoteView) ----------
@@ -1221,11 +1303,14 @@ fun Application.module() {
         // Don't log the high-frequency poll + static-asset traffic (the Downloads screen hits
         // /api/downloads every second, images stream constantly) — it floods the console.
         filter { call ->
+            // Verbose logging on → log EVERYTHING (incl. the /api/version healthcheck + poll traffic), to
+            // match the okhttp/interceptor DEBUG traces verbose also turns on. Off → suppress the noise below.
+            if (runCatching { SettingsStore.get().verboseLogging }.getOrDefault(false)) return@filter true
             val p = call.request.path()
             // Reader triad (/api/chapter/pages, /api/read) is replaced by the semantic READ/PRELOAD lines.
             // NB: p == "/api/sources" is the EXACT source-health poll list only — the meaningful
             // sub-paths (/api/sources/{id}/search, /popular, /manga, …) still log.
-            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events")
+            !(p == "/api/downloads" || p == "/api/sources" || p == "/api/logs" || p == "/api/notify/status" || p == "/api/version" || p.startsWith("/img/") || p.startsWith("/assets/") || p == "/api/history" || p == "/api/dev/stats" || p == "/api/library/update/progress" || p == "/api/downloads/manifest/progress" || p == "/api/downloads/scan/corrupt/progress" || p == "/api/dyno/backup/progress" || p.startsWith("/api/net") || p == "/api/chapter/pages" || p == "/api/read" || p == "/api/flaresolverr/events" || p == "/api/solver/events" || p == "/api/webview/pending" || p == "/api/webview/frame" || p == "/api/webview/status" || p == "/api/webview/autosolve/events" || p == "/api/webview/scroll" || p == "/api/webview/input")
         }
     }
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
@@ -1293,6 +1378,33 @@ fun Application.module() {
         }
         post("/api/health/sweep") { HealthSweep.start(); call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
         get("/api/health/sweep/progress") { call.respond(SweepProgressDto(HealthSweep.done, HealthSweep.total, HealthSweep.running)) }
+
+        // Live reachability of the two Cloudflare-bypass services (FlareSolverr for weeb-central-style
+        // hosts, the solver sidecar for MangaFire). Separate from /sources so the source list still
+        // renders instantly — these do real network pings (~5s worst case).
+        get("/api/health/services") {
+            val dto = withContext(Dispatchers.IO) {
+                val fsConfigured = SettingsStore.get().flareSolverrEnabled
+                val fs = if (fsConfigured) runCatching { discoverFlare(null) }.getOrNull() else null
+                val flare = ServiceStatusDto(
+                    configured = fsConfigured,
+                    reachable = fs?.ok ?: false,
+                    url = fs?.url ?: eu.kanade.tachiyomi.network.interceptor.FlareSolverrConfig.url.ifBlank { null },
+                    detail = fs?.version?.let { "v$it" },
+                    error = if (fsConfigured && fs?.ok == false) fs.error else null,
+                )
+                val solverCfg = eu.kanade.tachiyomi.network.interceptor.SolverConfig
+                val (sHealthy, sOrigin) = runCatching { SolverTest.ping() }.getOrDefault(false to null)
+                val solver = ServiceStatusDto(
+                    configured = solverCfg.enabled,
+                    reachable = sHealthy,
+                    url = solverCfg.url,
+                    detail = sOrigin?.let { "parked on $it" },
+                )
+                ServicesHealthDto(flare, solver)
+            }
+            call.respond(dto)
+        }
 
         // ---- Discord webhook tester (no event wiring yet — just iterate on the embed format) ----
         post("/api/webhooks/test/ping") {
@@ -2045,6 +2157,7 @@ fun Application.module() {
             body.notify?.let { s = s.copy(notify = it) }
             body.verboseLogging?.let { s = s.copy(verboseLogging = it) }
             body.autoSolveCaptcha?.let { s = s.copy(autoSolveCaptcha = it) }
+            body.webviewEngine?.let { e -> s = s.copy(webviewEngine = if (e == "chrome") "chrome" else "jcef") }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config
@@ -2080,11 +2193,37 @@ fun Application.module() {
                         ?: (src.baseUrl.trimEnd('/') + "/" + path.trimStart('/'))
                 }
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("a http(s) url or valid source id is required"))
+            // Chrome sidecar engine: proxy to the out-of-process browser. It returns {status: ready|starting
+            // |failed}; map to the same DTO the client already handles (its w/h are the fixed 440x780).
+            if (useChromeEngine()) {
+                val body = withContext(Dispatchers.IO) { ChromeEngine.open(url) }
+                val (st, detail) = chromeStatus(body)
+                log.info("webview: chrome sidecar {} — {}", st, url)
+                return@post call.respond(
+                    if (st == "ready") HttpStatusCode.OK else HttpStatusCode.Accepted,
+                    WebViewOpenDto(st, xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url, detail),
+                )
+            }
+            // Non-blocking: kick off CEF (lazy — no startup prewarm) and, if it isn't up yet, return "starting"
+            // immediately so the client can show "Starting Chromium…" + auto-retry, instead of the request
+            // hanging on the 30s cold-init and surfacing as "unable to reach server".
+            xyz.nulldev.androidcompat.webkit.CefManager.ensureStarted()
+            if (!xyz.nulldev.androidcompat.webkit.CefManager.isReady()) {
+                val st = xyz.nulldev.androidcompat.webkit.CefManager.state()
+                log.info("webview: CEF {} — deferring open of {}", st, url)
+                return@post call.respond(
+                    HttpStatusCode.Accepted,
+                    WebViewOpenDto(st, url = url, detail = xyz.nulldev.androidcompat.webkit.CefManager.stateDetail()),
+                )
+            }
+            // CEF is ready → the open is fast (no cold-init wait).
             withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.open(url) }
-            call.respond(WebViewInfoDto(xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url))
+            call.respond(WebViewOpenDto("ready", xyz.nulldev.androidcompat.webkit.JcefRemoteView.WIDTH, xyz.nulldev.androidcompat.webkit.JcefRemoteView.HEIGHT, url))
         }
         get("/api/webview/frame") {
-            val jpg = withContext(Dispatchers.IO) { xyz.nulldev.androidcompat.webkit.JcefRemoteView.frameJpeg() }
+            val jpg = withContext(Dispatchers.IO) {
+                if (useChromeEngine()) ChromeEngine.frameJpeg() else xyz.nulldev.androidcompat.webkit.JcefRemoteView.frameJpeg()
+            }
             if (jpg == null) call.respond(HttpStatusCode.NoContent)
             else call.respondBytes(jpg, ContentType.Image.JPEG)
         }
@@ -2092,22 +2231,34 @@ fun Application.module() {
             val x = call.request.queryParameters["x"]?.toIntOrNull()
             val y = call.request.queryParameters["y"]?.toIntOrNull()
             if (x == null || y == null) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("x and y required"))
-            xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
+            if (useChromeEngine()) ChromeEngine.input(x, y) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.click(x, y)
+            log.info("WEBVIEW  tap {},{}", x, y)
             call.respond(HttpStatusCode.OK)
         }
         // Forward a scroll gesture to the offscreen WebView (OSR has no native input). x,y = OSR pixel under
-        // the pointer; dy = scroll delta (>0 = down). Without this a scroll just moves the page behind it.
+        // the pointer; dy = vertical delta (>0 = down), dx = horizontal delta (>0 = right). Without this a
+        // scroll just moves the page behind it.
         post("/api/webview/scroll") {
             val x = call.request.queryParameters["x"]?.toIntOrNull() ?: 0
             val y = call.request.queryParameters["y"]?.toIntOrNull() ?: 0
-            val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dy required"))
-            xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dy)
+            val dx = call.request.queryParameters["dx"]?.toIntOrNull() ?: 0
+            val dy = call.request.queryParameters["dy"]?.toIntOrNull() ?: 0
+            if (dx == 0 && dy == 0) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("dx or dy required"))
+            if (useChromeEngine()) ChromeEngine.scroll(x, y, dx, dy) else xyz.nulldev.androidcompat.webkit.JcefRemoteView.scroll(x, y, dx, dy)
+            WebviewScrollLog.onScroll()
             call.respond(HttpStatusCode.OK)
         }
         // Auto-solve the shape-captcha currently shown in the streamed WebView (detect→match→click→refresh
         // →verify loop). host= drives which host gets cleared on success (defaults to mangafire.to).
         post("/api/webview/autosolve") {
             val host = call.request.queryParameters["host"]?.takeIf { it.isNotBlank() } ?: "mangafire.to"
+            // Chrome engine: the challenge is in the sidecar's browser — run the YOLO solve THERE (it reads
+            // the DOM, detects, and clicks via CDP) and pass its {solved,…,message} JSON straight through.
+            if (useChromeEngine()) {
+                val body = withContext(Dispatchers.IO) { ChromeEngine.autosolve() }
+                    ?: return@post call.respond(AutoSolveDto(false, 0, 0, 0, "browser sidecar unreachable"))
+                return@post call.respondText(body, ContentType.Application.Json)
+            }
             val res = withContext(Dispatchers.IO) {
                 runCatching { autoSolveLiveCaptcha(host) }.onFailure { log.warn("autosolve error: {}", it.message) }.getOrNull()
             } ?: return@post call.respond(HttpStatusCode.InternalServerError, ErrorDto("auto-solve error — see log"))
@@ -2137,6 +2288,9 @@ fun Application.module() {
                 mangautils.core.source.SourceCircuits.resetAll()
                 eu.kanade.tachiyomi.network.interceptor.JcefFetchInterceptor.resetManagedFails()
                 eu.kanade.tachiyomi.network.interceptor.FlareSolverrInterceptor.resetWarmSessions()
+                // The solver holds MangaFire's whole IP-bound session (cf_clearance + WAF cookie) — flush it
+                // too so a new exit node re-solves fresh instead of replaying the old IP's clearance.
+                runCatching { eu.kanade.tachiyomi.network.interceptor.SolverClient.reset() }
                 runCatching { xyz.nulldev.androidcompat.webkit.JcefFetch.clearCookies(null) }.getOrDefault(0)
             }
             log.info("egress reset: flushed cookies + evicted connections + un-stuck sources (JCEF {} cookie(s))", jcefCookies)
@@ -2152,6 +2306,8 @@ fun Application.module() {
             call.respond(WebViewStatusDto(cookies))
         }
         post("/api/webview/close") {
+            // Close whichever engine is active (and JCEF regardless, in case the setting flipped mid-session).
+            if (useChromeEngine()) ChromeEngine.close()
             xyz.nulldev.androidcompat.webkit.JcefRemoteView.close()
             call.respond(HttpStatusCode.OK)
         }
@@ -2327,12 +2483,35 @@ fun Application.module() {
             val evs = cfg.eventsSince(since).map { FlareEventDto(it.id, it.host, it.phase, it.cookies) }
             call.respond(FlareEventsDto(cfg.lastEventId(), evs))
         }
+        // MangaFire solver sidecar events — a fresh /@waf captcha solve, for the "MF solver" toast.
+        get("/api/solver/events") {
+            val cfg = eu.kanade.tachiyomi.network.interceptor.SolverConfig
+            val since = call.queryParam("since")?.toLongOrNull() ?: cfg.lastEventId()
+            val evs = cfg.eventsSince(since).map { FlareEventDto(it.id, it.host, it.phase, 0) }
+            call.respond(FlareEventsDto(cfg.lastEventId(), evs))
+        }
         get("/api/diag") {
             val id = call.querySourceId() ?: return@get call.respond(HttpStatusCode.BadRequest)
             val r = withContext(Dispatchers.IO) { Diagnostics.run(id) }
             call.respond(DiagDto(r.source, r.baseUrl, r.pingMs, r.speedMbps, r.sampleBytes, r.ok, r.error))
         }
         get("/api/dev/stats") { call.respond(devStats()) }
+        // Solver self-test: pings the sidecar's health + runs a REAL popular fetch through the full
+        // chain (→ solver) and reports whether MangaFire data actually came back.
+        get("/api/dev/solver/test") { call.respond(SolverTest.run(call.queryParam("id")?.toLongOrNull())) }
+        // Dev: fetch a raw MangaFire URL through the full solver path (okhttp → FS clearance → curl_cffi).
+        // Used to inspect e.g. /@waf/challenge so we can wire the shapes-captcha solve into curl_cffi.
+        get("/api/dev/solver/raw") {
+            val url = call.queryParam("url") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("?url= required"))
+            val src = SolverTest.hardHostSource() ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("no MangaFire source installed"))
+            val body = withContext(Dispatchers.IO) {
+                runCatching {
+                    val req = okhttp3.Request.Builder().url(url).headers(src.headers).build()
+                    src.client.newCall(req).execute().use { "HTTP ${it.code}\n" + (it.body?.string() ?: "") }
+                }.getOrElse { "ERROR: ${it.message}" }
+            }
+            call.respondText(body)
+        }
         // Backfill .series.json into download folders that lack one (library → queue → history). Preview
         // writes nothing; POST does it. Safe: only ever writes a missing sidecar, never overwrites/renames/deletes.
         get("/api/dev/series-backfill/preview") { call.respond(withContext(Dispatchers.IO) { SeriesBackfill.run(dryRun = true) }) }
