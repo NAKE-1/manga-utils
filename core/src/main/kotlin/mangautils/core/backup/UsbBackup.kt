@@ -18,7 +18,8 @@ import java.time.format.DateTimeFormatter
  *
  * Writes two things to [run]'s target directory (a host-mounted, bind-mounted USB path):
  *  1. `Backups/backup-<ts>.tachibk.gz` — the full gz-protobuf metadata backup ([BackupImport.export]),
- *     carrying library entries + read marks + bookmarks (NOT history/resume — no such model yet).
+ *     carrying library entries, read marks, bookmarks, continue-reading history, resume positions,
+ *     the saved list, settings, repo URLs, and the extensions list.
  *  2. `Library/<series>/<chapter>.cbz` + `cover.<ext>` — a mirror of [AppConfig.downloadsDir].
  *
  * Design (per DYNO-IMPLEMENTATION-SPEC §9/§13):
