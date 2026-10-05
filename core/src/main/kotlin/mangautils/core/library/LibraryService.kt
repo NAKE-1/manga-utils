@@ -23,6 +23,9 @@ data class UpdateResult(
     val newVersions: List<ChapterRef> = emptyList(),
     /** The check errored (source down, or a human-check 403). Eligible for a retry-after-clear pass. */
     val failed: Boolean = false,
+    /** Chapters that were locked (future-dated) at the last check and have now unlocked since. Downloaded
+     *  on this check like new chapters, but they were already "known" so they are not a new-chapter badge. */
+    val newlyUnlocked: List<ChapterRef> = emptyList(),
 )
 
 /** Follow/unfollow series and detect new chapters (the tracker core). */
@@ -188,17 +191,23 @@ object LibraryService {
         val fresh = current.filter { it.url !in knownUrls }.map { it.toRef() }
         val newChapters = fresh.filter { it.number !in knownNumbers } // -> "!" badge + count
         val newVersions = fresh.filter { it.number in knownNumbers }  // another scan; list marker only
-        entry.knownChapters = current.map { it.toRef() }.toMutableList()
+        // Chapters that were known AND locked (unlock date after our last check) and have since unlocked.
+        // Sources like Tapas list a scheduled/paywalled chapter with a FUTURE date_upload; once that date
+        // passes the chapter becomes readable, so we auto-download it on the first check after it unlocks.
+        val now = System.currentTimeMillis()
+        val currentRefs = current.map { it.toRef() }
+        val newlyUnlocked = computeNewlyUnlocked(entry.knownChapters, currentRefs, entry.lastCheckedAt, now)
+        entry.knownChapters = currentRefs.toMutableList()
         // Accumulate unseen urls (only after the first snapshot exists, so a first sync isn't all "new").
         if (knownUrls.isNotEmpty()) {
             newChapters.forEach { if (it.url !in entry.newChapters) entry.newChapters.add(it.url) }
             newVersions.forEach { if (it.url !in entry.newVersions) entry.newVersions.add(it.url) }
         }
-        entry.lastCheckedAt = System.currentTimeMillis()
+        entry.lastCheckedAt = now
         LibraryStore.upsert(entry)
         // Both are returned so auto-download still pulls every version - the split is for the badge, not
-        // for what gets fetched.
-        return UpdateResult(entry, newChapters, newVersions)
+        // for what gets fetched. newlyUnlocked rides along so just-unlocked chapters download too.
+        return UpdateResult(entry, newChapters, newVersions, newlyUnlocked = newlyUnlocked)
     }
 
     /** Clear the "new chapters" flag for a series (called when the user opens it). */
@@ -216,6 +225,23 @@ object LibraryService {
         val entry = LibraryStore.find(sourceId, mangaUrl) ?: return
         // A read chapter clears from whichever list held it - new-number or new-scan.
         if (entry.newChapters.remove(chapterUrl) or entry.newVersions.remove(chapterUrl)) LibraryStore.upsert(entry)
+    }
+
+    /**
+     * Chapters that were locked at the previous check and have unlocked since. A source like Tapas lists a
+     * scheduled/paywalled chapter with a FUTURE date_upload; it is "known" while locked, so it never shows up
+     * as a new chapter. Here we catch the moment it crosses from future to past: its date is later than our
+     * last check (it was still locked then) and is now at or before [now]. Empty on the first-ever check.
+     */
+    internal fun computeNewlyUnlocked(
+        prev: List<ChapterRef>, current: List<ChapterRef>, prevChecked: Long, now: Long,
+    ): List<ChapterRef> {
+        if (prevChecked <= 0) return emptyList()
+        val prevByUrl = prev.associateBy { it.url }
+        return current.filter { c ->
+            val p = prevByUrl[c.url]
+            p != null && p.dateUpload > prevChecked && c.dateUpload in 1..now
+        }
     }
 
     private fun SChapter.toRef() =

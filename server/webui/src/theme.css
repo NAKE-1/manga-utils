@@ -1263,6 +1263,17 @@ main > * { animation: fade-up .22s ease backwards; }
 .chapter-dlbtn.broken { color: #e0715c; opacity: 1; }
 @media (hover: hover) { .chapter-dlbtn.broken:hover { filter: brightness(1.15); } }
 
+/* Locked: a scheduled/paywalled chapter not yet free. Muted, with a padlock; it downloads itself on unlock. */
+.chapter-locked {
+  display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; color: #fff;
+  background: #7a6cc4; padding: 2px 5px 2px 4px; border-radius: 5px; margin-right: 7px;
+  vertical-align: middle; letter-spacing: .04em;
+}
+.chapter-locked .chapter-locki { width: 10px; height: 10px; }
+.chapter-row.locked .chapter-name { color: var(--muted); }
+.chapter-row.locked { opacity: .82; }
+.chapter-dlbtn.locked { color: #9a8fd6; opacity: 1; cursor: default; }
+
 /* Reader: a chapter that wouldn't load, offering the other scanlations of the same number. */
 /* A centred modal, not inline text - inline it collided with the floating back/home buttons and the
    title chip, and a chapter that cannot be read is a decision to make, not a body of page content. */

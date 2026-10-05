@@ -53,6 +53,11 @@ export const IconClock = ({ className }: P) => (
     <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
   </svg>
 )
+export const IconLock = ({ className }: P) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  </svg>
+)
 export const IconBook = S('M4 4h11a3 3 0 013 3v13a2 2 0 00-2-2H4z M7 8h8 M7 12h6')
 export const IconPen = S('M14 4l6 6 M3 21l1-5L16 4l4 4L8 20z')
 export const IconCalendar = S('M7 3v3 M17 3v3 M4 8h16 M5 6h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1z')
