@@ -21,6 +21,7 @@ export function DownloadsManager() {
   const [scanning, setScanning] = useState(false)
   const [repairingCorrupt, setRepairingCorrupt] = useState(false)
   const [loadErr, setLoadErr] = useState(false)
+  const [warming, setWarming] = useState(false)
   const [sortBy, setSortBy] = useState<SortKey>(() => (localStorage.getItem('dm.sort') as SortKey) || 'name')
   useEffect(() => { localStorage.setItem('dm.sort', sortBy) }, [sortBy])
   // Source is best-effort (resolved via the library); '' shows as Unknown and sorts last.
@@ -38,10 +39,16 @@ export function DownloadsManager() {
   const load = () => {
     // On failure keep series null + flag the error, so a timeout shows "Couldn't load" rather than
     // masquerading as an empty library ("Nothing downloaded yet").
-    api.manageDownloads().then((s) => { setSeries(s); setLoadErr(false) }).catch(() => setLoadErr(true))
+    api.manageDownloads().then((r) => { setSeries(r.series); setWarming(r.warming); setLoadErr(false) }).catch(() => setLoadErr(true))
     api.brokenDownloads().then(setBroken).catch(() => setBroken(null))
   }
   useEffect(() => { load() }, [])
+  // First-ever run builds the on-disk cache in the background; poll until it's ready instead of showing empty.
+  useEffect(() => {
+    if (!warming) return
+    const t = setTimeout(load, 2000)
+    return () => clearTimeout(t)
+  }, [warming])
 
   async function repairAll() {
     if (!broken?.series.length) return
@@ -160,7 +167,9 @@ export function DownloadsManager() {
           ? <div className="center-msg">Couldn’t load downloads — <button onClick={() => { setLoadErr(false); load() }} style={{ background: 'none', border: 0, color: 'var(--accent)', font: 'inherit', cursor: 'pointer', padding: 0 }}>retry</button></div>
           : <div className="spinner" />
       ) : series.length === 0 ? (
-        <div className="center-msg">Nothing downloaded yet.</div>
+        warming
+          ? <div className="center-msg"><div className="spinner" />Scanning your downloads…</div>
+          : <div className="center-msg">Nothing downloaded yet.</div>
       ) : (
         <>
           {(() => {

@@ -81,7 +81,9 @@ object ScanVersions {
         entry: LibraryEntry,
         detail: Boolean,
     ): SeriesPlan {
-        val onDiskUrls = ChapterIdentity.versionsOf(entry.title).filter { it.complete }.mapNotNull { it.url }.toSet()
+        // One (cached) identity read per series, reused for both the url set and the on-disk count below.
+        val onDiskVersions = ChapterIdentity.versionsOf(entry.title).filter { it.complete }
+        val onDiskUrls = onDiskVersions.mapNotNull { it.url }.toSet()
         // Three states per listed scan: on disk (have), known-broken (skip, don't re-queue guaranteed
         // failures), or genuinely fetchable (missing). Broken is split out so it isn't fetched AND isn't
         // dishonestly shown as "have".
@@ -102,18 +104,19 @@ object ScanVersions {
             }
         val missingCount = chapters.sumOf { it.missing.size }
         val brokenCount = chapters.sumOf { it.broken.size }
-        val onDisk = ChapterIdentity.versionsOf(entry.title).filter { it.complete }
         return SeriesPlan(
             sourceId = entry.sourceId,
             sourceName = sourceName(entry.sourceId),
             mangaUrl = entry.mangaUrl,
             title = entry.title,
             numbers = byNumber.size,
-            versionsOnDisk = onDisk.size,
+            versionsOnDisk = onDiskVersions.size,
             versionsAtSource = entry.knownChapters.size,
             missing = missingCount,
             broken = brokenCount,
-            estBytes = averageChapterBytes(entry.title) * missingCount,
+            // Only sample the disk for a size estimate when there IS something missing. For a whole-library
+            // scan most series have nothing missing, so this skips the bulk of the per-series disk IO.
+            estBytes = if (missingCount > 0) averageChapterBytes(entry.title) * missingCount else 0,
             // The per-chapter breakdown is only useful for a single series; skip it library-wide. Include
             // broken-only rows so you can see which scans are being skipped and why.
             chapters = if (detail) chapters.filter { it.missing.isNotEmpty() || it.broken.isNotEmpty() } else emptyList(),
@@ -129,20 +132,26 @@ object ScanVersions {
     private fun sourceName(id: Long): String =
         runCatching { mangautils.core.source.SourceManager.loadSource(id)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: id.toString()
 
+    // Average chapter size per series. It is only an estimate and barely drifts, so memoize it rather than
+    // re-sampling the disk on every plan() call (a whole-library scan can touch this for many series).
+    private val avgBytesMemo = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private fun averageChapterBytes(title: String): Long =
-        runCatching {
-            val dir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))
-            val sample =
-                Files.list(dir).use { s ->
-                    s.filter { Files.isDirectory(it) }.limit(5).toList()
-                }
-            if (sample.isEmpty()) return 0
-            val total =
-                sample.sumOf { d ->
-                    Files.list(d).use { f -> f.mapToLong { runCatching { Files.size(it) }.getOrDefault(0L) }.sum() }
-                }
-            total / sample.size
-        }.getOrDefault(0L)
+        avgBytesMemo.getOrPut(title) {
+            runCatching {
+                val dir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))
+                val sample =
+                    Files.list(dir).use { s ->
+                        s.filter { Files.isDirectory(it) }.limit(5).toList()
+                    }
+                if (sample.isEmpty()) return@getOrPut 0L
+                val total =
+                    sample.sumOf { d ->
+                        Files.list(d).use { f -> f.mapToLong { runCatching { Files.size(it) }.getOrDefault(0L) }.sum() }
+                    }
+                total / sample.size
+            }.getOrDefault(0L)
+        }
 
     /**
      * Queue everything the plan says is missing, for one series. Returns how many were queued.
