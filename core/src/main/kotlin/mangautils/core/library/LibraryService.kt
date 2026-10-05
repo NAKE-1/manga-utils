@@ -188,13 +188,15 @@ object LibraryService {
         // Group by chapter number so a new URL can be told apart: a number we've never had (a real new
         // chapter) vs another scan of one we already track. Same number-keying the download counts use.
         val knownNumbers = entry.knownChapters.map { it.number }.toSet()
-        val fresh = current.filter { it.url !in knownUrls }.map { it.toRef() }
-        val newChapters = fresh.filter { it.number !in knownNumbers } // -> "!" badge + count
-        val newVersions = fresh.filter { it.number in knownNumbers }  // another scan; list marker only
-        // Chapters that were known AND locked (unlock date after our last check) and have since unlocked.
-        // Sources like Tapas list a scheduled/paywalled chapter with a FUTURE date_upload; once that date
-        // passes the chapter becomes readable, so we auto-download it on the first check after it unlocks.
         val now = System.currentTimeMillis()
+        val fresh = current.filter { it.url !in knownUrls }.map { it.toRef() }
+        // A locked/scheduled chapter arrives with a placeholder number (Tapas gives 0), which would wrongly
+        // match an already-known number and get tagged "new version". A future-dated chapter is a genuinely
+        // new chapter, so classify it as one regardless of its placeholder number.
+        val newChapters = fresh.filter { it.number !in knownNumbers || it.dateUpload > now } // -> "!" badge + count
+        val newVersions = fresh.filter { it.number in knownNumbers && it.dateUpload <= now } // another scan; list marker only
+        // newlyUnlocked: chapters known AND locked at the last check that have since unlocked. Sources like
+        // Tapas list a scheduled chapter with a FUTURE date_upload; once it passes we auto-download it.
         val currentRefs = current.map { it.toRef() }
         val newlyUnlocked = computeNewlyUnlocked(entry.knownChapters, currentRefs, entry.lastCheckedAt, now)
         entry.knownChapters = currentRefs.toMutableList()

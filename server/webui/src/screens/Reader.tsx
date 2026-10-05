@@ -326,7 +326,8 @@ export function Reader() {
   // breaker and drags down the chapter you switch to. So ask first, and don't touch the network unless
   // you say to.
   const gated = !!cur?.unavailable && !force
-  const navList = dedupChapters(cur, chapters, preferredScan)
+  // Drop locked (not-yet-released) chapters so prev/next never step onto one you can't read.
+  const navList = dedupChapters(cur, chapters.filter((c) => !c.locked), preferredScan)
   const idx = navList.findIndex((c) => c.url === chapter)
   const nextCh = idx > 0 ? navList[idx - 1] : undefined // newer
   const prevCh = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : undefined // older
