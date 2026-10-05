@@ -440,6 +440,8 @@ private fun validateVrf(json: String): Pair<Boolean, String> = runCatching {
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 @Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean, val sourceName: String = "")
 @Serializable private data class ManagedChapterDto(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean, val complete: Boolean)
+/** Manage-downloads list plus a [warming] flag: true only on the first-ever build of the on-disk cache. */
+@Serializable private data class ManageDto(val series: List<ManagedSeriesDto>, val warming: Boolean = false)
 
 @Serializable
 private data class HistoryDto(
@@ -1782,19 +1784,20 @@ fun Application.module() {
         }
 
         get("/api/downloads/manage") {
-            val list = withContext(Dispatchers.IO) {
+            val resp = withContext(Dispatchers.IO) {
                 // Downloads are stored by title only (no source on disk), so resolve each series' source
                 // best-effort by matching its folder (a sanitized title) against the library. A title that
                 // maps to two different sources, or isn't in the library, resolves to "" (shown as Unknown).
                 val byTitle = mangautils.core.library.LibraryStore.list()
                     .groupBy { mangautils.core.download.DownloadManager.sanitize(it.title) }
                     .mapValues { (_, es) -> es.map { DownloadQueue.sourceName(it.sourceId) }.distinct().singleOrNull() ?: "" }
-                DownloadStore.listSeries().map {
+                val list = DownloadStore.listSeries().map {
                     // Sidecar (.series.json) is exact; fall back to library title-match only when absent.
                     ManagedSeriesDto(it.title, it.chapters, it.incomplete, it.bytes, it.hasCover, it.sourceName.ifBlank { byTitle[it.title] ?: "" })
                 }
+                ManageDto(list, DownloadStore.isWarming())
             }
-            call.respond(list)
+            call.respond(resp)
         }
         get("/api/downloads/manage/chapters") {
             val title = call.queryParam("title") ?: return@get call.respond(HttpStatusCode.BadRequest)

@@ -489,9 +489,21 @@ Then in **Settings → FlareSolverr URL = `http://localhost:8191`**.
   `tailscale serve` return (if serve doesn't persist, add a `@reboot` root cron running `tailscale serve --bg 8080`).
 - **Backups:** Proxmox VM snapshot/backup; plus periodic copy of `/mnt/library` and `~/manga/data`
   (especially `library.db` + `data/cache/jcef` cookies).
-- **Update app:** `git -C src pull && docker compose build server && docker compose up -d server`. JCEF
-  native persists (no re-download). To bump Chromium: change `JCEF_VERSION`/`JBR_RELEASE` in code +
-  `rm -rf data/bin/jcef` so it re-fetches.
+- **Update app (AS-BUILT on the LattePanda box):** the source clone is `~/manga-src`, the compose file
+  lives at `~/manga/docker-compose.yml`, the server runs as the `manga-utils` service off a locally-built
+  image tagged `manga-utils:local`. So the real update procedure is:
+  ```bash
+  cd ~/manga-src && git checkout main && git pull
+  docker build -f deploy/Dockerfile -t manga-utils:local .          # ~2 min compile (Gradle + Vite)
+  cd ~/manga && docker compose up -d --force-recreate manga-utils   # or: compose -f ~/manga/docker-compose.yml ...
+  ```
+  The web UI is bundled into that image, so this one build covers both server and frontend changes.
+  Only `manga-utils` rebuilds; leave `browser`, `solver`, `flaresolverr` running. The sidecars update the
+  same way with their own contexts, e.g. `docker build -t manga-browser:local deploy/browser` then
+  `docker compose up -d --force-recreate browser`. JCEF native persists (no re-download). To bump Chromium:
+  change `JCEF_VERSION`/`JBR_RELEASE` in code + `rm -rf data/bin/jcef` so it re-fetches.
+  (The `docker compose build server` form earlier in this doc is the idealized single-compose layout, NOT
+  how this box is wired; use the commands above.)
 
 ### Phase 9 — VM firewall (optional hardening)
 ```bash

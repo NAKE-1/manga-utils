@@ -159,7 +159,8 @@ export const api = {
   languages: () => getJson<string[]>('/api/languages'),
   library: () => getJson<LibraryEntry[]>('/api/library'),
   /** Dry run: which scanlations of chapters you hold are missing. No title = whole-library report. */
-  scanverPlan: (title?: string) => getJson<ScanPlan>('/api/scanver/plan' + (title ? `?title=${encodeURIComponent(title)}` : '')),
+  // Whole-library plan can take a few seconds on the first (uncached) call, so allow more than the 15s default.
+  scanverPlan: (title?: string) => getJson<ScanPlan>('/api/scanver/plan' + (title ? `?title=${encodeURIComponent(title)}` : ''), 2, 40000),
   /** Queue the missing versions for ONE series. The server refuses library-wide on purpose. */
   scanverStart: async (title: string) => {
     const r = await fetch(`/api/scanver/start?title=${encodeURIComponent(title)}`, { method: 'POST' })
@@ -406,7 +407,7 @@ export const api = {
     fetch('/api/downloads/mass/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then((r) => r.json() as Promise<{ count: number }>),
 
   // Download manager (on-disk content)
-  manageDownloads: () => getJson<ManagedSeries[]>('/api/downloads/manage'),
+  manageDownloads: () => getJson<ManageResult>('/api/downloads/manage'),
   manageChapters: (title: string) => getJson<ManagedChapter[]>(`/api/downloads/manage/chapters?title=${encodeURIComponent(title)}`),
   deleteDownloadChapter: (title: string, chapter: string) => fetch(`/api/downloads/chapter?title=${encodeURIComponent(title)}&chapter=${encodeURIComponent(chapter)}`, { method: 'DELETE' }),
   markSeriesUnread: (title: string) => fetch(`/api/downloads/manage/mark-unread?title=${encodeURIComponent(title)}`, { method: 'POST' }).then((r) => r.json() as Promise<{ count: number }>),
@@ -485,6 +486,8 @@ export interface MassPlanItem { sourceId: string; mangaUrl: string; title: strin
 export interface MassPlan { items: MassPlanItem[]; totalMissing: number; seriesWithMissing: number }
 
 export interface ManagedSeries { title: string; chapters: number; incomplete: number; bytes: number; hasCover: boolean; sourceName: string }
+/** Manage-downloads response. `warming` is true only while the on-disk cache is being built the first time. */
+export interface ManageResult { series: ManagedSeries[]; warming: boolean }
 export interface ManagedChapter { name: string; pages: number; bytes: number; cbz: boolean; complete: boolean }
 
 export interface MigItem { key: string; label: string; files: number; bytes: number; detail: string }

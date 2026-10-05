@@ -6,13 +6,18 @@
 package mangautils.core.download
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import mangautils.core.config.AppConfig
 import mangautils.core.convert.ImageFormat
+import mangautils.core.util.SafeFile
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.Comparator
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
@@ -22,6 +27,7 @@ import kotlin.io.path.name
  * Downloads live at `<downloadsDir>/<title>/<chapter>/…` (folder of pages) or `<chapter>.cbz`.
  */
 object DownloadStore {
+    @Serializable
     data class Series(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean, val sourceName: String = "")
     /** [complete] = the chapter finished writing (has ComicInfo.xml). Missing it ⇒ interrupted/partial. */
     data class Chapter(val name: String, val pages: Int, val bytes: Long, val cbz: Boolean, val complete: Boolean)
@@ -37,12 +43,46 @@ object DownloadStore {
     @Volatile private var seriesCache: List<Series>? = null
     @Volatile private var cachedAt = 0L
     @Volatile private var seriesDirty = false
+    @Volatile private var warming = false
+    @Volatile private var loaded = false
     private val cacheLock = Any()
-    private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val refreshing = AtomicBoolean(false)
     private val refreshExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "dl-series-refresh").apply { isDaemon = true }
     }
     private const val CACHE_TTL_MS = 60_000L
+
+    // Per-chapter stats keyed by the chapter path's last-modified time. computeSeries re-stats only the
+    // chapters whose folder actually changed (a page added, ComicInfo written) instead of stat-ing every
+    // page file every time. Persisted to disk so a restart loads the snapshot instead of re-walking the
+    // whole library (which was ~2 min on a big one -> the "connection failed" on /downloads/manage).
+    private val chapterCache = ConcurrentHashMap<String, CachedStat>()
+    private val json = Json { ignoreUnknownKeys = true }
+    private val cacheFile: Path get() = AppConfig.dataDir.resolve("download-series-cache.json")
+
+    @Serializable private data class CachedStat(val mtime: Long, val pages: Int, val bytes: Long, val complete: Boolean)
+    @Serializable private data class PersistedCache(val chapters: Map<String, CachedStat> = emptyMap(), val series: List<Series> = emptyList())
+
+    /** True while the first-ever snapshot is still being built (no persisted cache yet). The manage UI shows
+     *  "scanning" and polls instead of an empty "no downloads". After the first walk this stays false. */
+    fun isWarming(): Boolean = warming
+
+    /** Load the persisted snapshot once, so the first request after a restart is instant, not a full walk. */
+    private fun ensureLoaded() {
+        if (loaded) return
+        synchronized(cacheLock) {
+            if (loaded) return
+            runCatching {
+                SafeFile.read(cacheFile) { json.decodeFromString<PersistedCache>(it) }?.let { pc ->
+                    chapterCache.putAll(pc.chapters)
+                    if (pc.series.isNotEmpty()) {
+                        seriesCache = pc.series; cachedAt = System.currentTimeMillis(); seriesDirty = true // validate soon
+                    }
+                }
+            }
+            loaded = true
+        }
+    }
 
     /** Mark the cached series list stale — the next [listSeries] serves the old snapshot and refreshes in
      *  the background. (Marking, not dropping, so a burst of finished downloads can't force blocking walks.) */
@@ -52,15 +92,17 @@ object DownloadStore {
 
     /** Every downloaded series (a sub-folder of the downloads dir), title-sorted. Cached (see above). */
     fun listSeries(): List<Series> {
+        ensureLoaded()
         val hit = seriesCache
         if (hit != null) {
             if (seriesDirty || System.currentTimeMillis() - cachedAt >= CACHE_TTL_MS) refreshSeriesAsync()
             return hit // instant — never block a request on the full walk once we have any snapshot
         }
-        // Cold: nothing cached yet (first call / boot warmer) — compute once, guarded so only one thread walks.
-        return synchronized(cacheLock) {
-            seriesCache ?: computeSeries().also { seriesCache = it; cachedAt = System.currentTimeMillis(); seriesDirty = false }
-        }
+        // First ever run (no persisted snapshot): do NOT block the request on the ~2-min walk. Warm in the
+        // background and return empty + a warming flag the UI can show, then it populates on a later poll.
+        warming = true
+        refreshSeriesAsync()
+        return emptyList()
     }
 
     /** Single-flight background recompute that swaps in a fresh snapshot without blocking callers. */
@@ -68,22 +110,50 @@ object DownloadStore {
         if (!refreshing.compareAndSet(false, true)) return
         refreshExec.submit {
             seriesDirty = false // clear first — a change during the walk re-marks it → another refresh follows
-            try { computeSeries().also { seriesCache = it; cachedAt = System.currentTimeMillis() } }
-            catch (_: Throwable) { /* keep serving the previous snapshot */ }
+            try {
+                val fresh = computeSeries()
+                seriesCache = fresh; cachedAt = System.currentTimeMillis(); warming = false
+                persist(fresh)
+            } catch (_: Throwable) { /* keep serving the previous snapshot */ }
             finally { refreshing.set(false) }
         }
     }
 
+    /** Incremental: re-stat only chapters whose mtime changed; everything else comes from [chapterCache]. */
     private fun computeSeries(): List<Series> {
         if (!Files.isDirectory(root)) return emptyList()
-        return Files.list(root).use { st ->
+        val seen = HashSet<String>()
+        val list = Files.list(root).use { st ->
             st.filter { it.isDirectory() }.map { dir ->
-                val stats = chapterEntries(dir).map { statChapter(it) }
-                val hasCover = runCatching { Files.list(dir).use { s -> s.anyMatch { it.name.startsWith("cover.") } } }.getOrDefault(false)
+                var chapters = 0; var incomplete = 0; var bytes = 0L; var hasCover = false
+                runCatching {
+                    Files.list(dir).use { kids ->
+                        kids.forEach { child ->
+                            val nm = child.name
+                            if (nm.startsWith("cover.")) { hasCover = true; return@forEach }
+                            val isCbz = nm.endsWith(".cbz")
+                            if (!isCbz && !Files.isDirectory(child)) return@forEach // stray file, not a chapter
+                            chapters++
+                            val key = child.toString(); seen += key
+                            val mt = runCatching { Files.getLastModifiedTime(child).toMillis() }.getOrDefault(0L)
+                            val cached = chapterCache[key]
+                            val stat = if (cached != null && cached.mtime == mt) cached
+                                else statChapter(child).let { CachedStat(mt, it.pages, it.bytes, it.complete) }.also { chapterCache[key] = it }
+                            if (!stat.complete) incomplete++
+                            bytes += stat.bytes
+                        }
+                    }
+                }
                 val sourceName = SeriesMeta.read(dir)?.sourceName ?: ""
-                Series(dir.name, stats.size, stats.count { !it.complete }, stats.sumOf { it.bytes }, hasCover, sourceName)
+                Series(dir.name, chapters, incomplete, bytes, hasCover, sourceName)
             }.toList()
         }.sortedBy { it.title.lowercase() }
+        chapterCache.keys.retainAll(seen) // drop entries for chapters that no longer exist
+        return list
+    }
+
+    private fun persist(series: List<Series>) {
+        runCatching { SafeFile.writeAtomic(cacheFile, json.encodeToString(PersistedCache(HashMap(chapterCache), series))) }
     }
 
     /** The downloaded chapters of one series (folder name = sanitized title). */
