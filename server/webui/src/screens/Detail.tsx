@@ -15,11 +15,13 @@ import noPoster from '../assets/no-poster.png'
 // into a no-op and makes "first unread" the NEWEST chapter. So fall back to reversing the source
 // order (Tachiyomi sources list newest-first) when numbers aren't usable.
 function readingOrder(chapters: DetailT['chapters']): DetailT['chapters'] {
-  const positives = chapters.filter((c) => c.number > 0)
-  const usable = positives.length >= chapters.length * 0.6 && new Set(positives.map((c) => c.number)).size > 1
+  // Locked chapters (future release, no number yet) aren't readable - never resume/continue into one.
+  const readable = chapters.filter((c) => !c.locked)
+  const positives = readable.filter((c) => c.number > 0)
+  const usable = positives.length >= readable.length * 0.6 && new Set(positives.map((c) => c.number)).size > 1
   return usable
-    ? [...chapters].sort((a, b) => (a.number || 0) - (b.number || 0))
-    : [...chapters].slice().reverse()
+    ? [...readable].sort((a, b) => (a.number || 0) - (b.number || 0))
+    : [...readable].slice().reverse()
 }
 
 // Read-state is tracked per chapter URL, but a chapter can exist under several scanlators (each a
@@ -327,7 +329,14 @@ export function Detail() {
   else if (tab === 'read') chaps = chaps.filter((c) => chapterRead(c, readSet, readNums))
   if (dlFilter === 'dl') chaps = chaps.filter((c) => c.downloaded)
   else if (dlFilter === 'undl') chaps = chaps.filter((c) => !c.downloaded)
-  chaps = [...chaps].sort((a, b) => (asc ? a.number - b.number : b.number - a.number))
+  chaps = [...chaps].sort((a, b) => {
+    // A locked chapter is the newest release (the source gives it no number yet, often 0, which would
+    // otherwise sink it to the bottom). Float it to the newest end: top in desc view, bottom in asc.
+    const al = !!a.locked, bl = !!b.locked
+    if (al !== bl) return asc ? (al ? 1 : -1) : (al ? -1 : 1)
+    if (al && bl) return asc ? (a.unlockAt ?? 0) - (b.unlockAt ?? 0) : (b.unlockAt ?? 0) - (a.unlockAt ?? 0)
+    return asc ? a.number - b.number : b.number - a.number
+  })
 
   // Group adjacent same-number chapters (duplicate chapters from different scanlators) → "CH. N" card.
   const groups: { number: number; items: typeof chaps }[] = []
