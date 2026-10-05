@@ -85,18 +85,23 @@ object UpdateScheduler {
     /** If autoDownloadNew is on, enqueue every newly-found chapter for download. */
     fun autoDownloadNew(results: List<UpdateResult>) {
         if (!runCatching { SettingsStore.get().autoDownloadNew }.getOrDefault(false)) return
-        results.filter { it.newChapters.isNotEmpty() || it.newVersions.isNotEmpty() }.forEach { r ->
+        results.filter { it.newChapters.isNotEmpty() || it.newVersions.isNotEmpty() || it.newlyUnlocked.isNotEmpty() }.forEach { r ->
             // Never auto-queue a chapter the source can't serve; it would fail on every update.
             val unavailable = runCatching { mangautils.core.download.UnavailableChapters.urls() }.getOrDefault(emptySet())
+            val now = System.currentTimeMillis()
             // Pull new numbers AND new scans of numbers we already have - keeping every version is the
             // point. The new-chapter vs new-version split is only about the badge, not what gets fetched.
-            val fresh = (r.newChapters + r.newVersions).filterNot { it.url in unavailable }
-            val chapters = fresh.map { DownloadQueue.Chapter(it.url, it.name) }
+            // Skip anything still LOCKED (future date_upload) - it would just fail; newlyUnlocked carries
+            // the ones that have since become readable, so those download now.
+            val fresh = (r.newChapters + r.newVersions).filterNot { it.url in unavailable || it.dateUpload > now } +
+                r.newlyUnlocked.filterNot { it.url in unavailable }
+            val chapters = fresh.distinctBy { it.url }.map { DownloadQueue.Chapter(it.url, it.name) }
             if (chapters.isNotEmpty()) {
                 log.info(
-                    "auto-downloading {} new chapter(s) + {} new version(s) of '{}'",
-                    r.newChapters.count { it.url !in unavailable },
-                    r.newVersions.count { it.url !in unavailable },
+                    "auto-downloading {} new + {} new-version + {} just-unlocked chapter(s) of '{}'",
+                    r.newChapters.count { it.url !in unavailable && it.dateUpload <= now },
+                    r.newVersions.count { it.url !in unavailable && it.dateUpload <= now },
+                    r.newlyUnlocked.count { it.url !in unavailable },
                     r.entry.title,
                 )
                 DownloadQueue.enqueue(r.entry.sourceId, r.entry.mangaUrl, r.entry.title, chapters)

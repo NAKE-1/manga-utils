@@ -36,6 +36,10 @@ export interface Chapter {
   downloaded: boolean
   /** Set when the source can't serve this chapter; the text explains why. */
   unavailable?: string | null
+  /** Locked/not-yet-free (source lists it with a future release date, e.g. Tapas scheduled/paywalled). */
+  locked?: boolean
+  /** When a locked chapter unlocks (epoch ms); 0 when not locked. */
+  unlockAt?: number
 }
 
 export interface Detail { manga: Manga; chapters: Chapter[]; newChapters: string[]; newVersions?: string[] }

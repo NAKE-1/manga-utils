@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
 import { clearPositions } from './Reader'
-import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots, IconJetBrains } from '../components/icons'
+import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots, IconJetBrains, IconLock } from '../components/icons'
 import { ProgressRing } from '../components/ProgressRing'
 import { ConfirmDialog, ConfirmSpec } from '../components/ConfirmDialog'
 import { DetailSkeleton } from '../components/Skeleton'
@@ -52,6 +52,16 @@ function relative(ms: number): string {
   return `${Math.floor(d / 365)} yr ago`
 }
 const dateFmt = (ms: number) => (ms > 0 ? new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' }) : '')
+// "in 24d" / "in 6h" / "in 12m" until a locked chapter's unlock time.
+function untilUnlock(ms: number): string {
+  const diff = ms - Date.now()
+  if (diff <= 0) return 'now'
+  const d = Math.floor(diff / 86400000)
+  if (d >= 1) return `in ${d}d`
+  const h = Math.floor(diff / 3600000)
+  if (h >= 1) return `in ${h}h`
+  return `in ${Math.max(1, Math.floor(diff / 60000))}m`
+}
 
 type Tab = 'all' | 'unread' | 'read'
 type DlFilter = 'all' | 'dl' | 'undl'
@@ -264,7 +274,8 @@ export function Detail() {
     toast(chs.length === 1 ? 'Chapter queued for download' : `${chs.length} chapters queued — see Downloads`)
   }
   function downloadMissing() {
-    const missing = data!.chapters.filter((c) => !c.downloaded).map((c) => ({ url: c.url, name: c.name }))
+    // Locked chapters are not "missing" - they download themselves once they unlock.
+    const missing = data!.chapters.filter((c) => !c.downloaded && !c.locked).map((c) => ({ url: c.url, name: c.name }))
     if (missing.length === 0) { toast('All chapters already downloaded'); return }
     downloadChapters(missing)
   }
@@ -331,20 +342,31 @@ export function Detail() {
     // A chapter the source can't serve. Worth saying so on the row — otherwise it looks like any
     // other undownloaded chapter and you find out only after waiting for it to fail.
     const broken = !c.downloaded && !!c.unavailable
-    const meta = [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
+    // Locked = source lists it with a future release date (Tapas scheduled/paywalled). It downloads itself
+    // once it unlocks (the library check picks it up), so the row is informational, not actionable.
+    const locked = !c.downloaded && !!c.locked && (c.unlockAt ?? 0) > Date.now()
+    const meta = locked
+      ? `Unlocks ${untilUnlock(c.unlockAt ?? 0)}  ·  ${dateFmt(c.unlockAt ?? 0)}`
+      : [c.scanlator, dateFmt(c.dateUpload)].filter(Boolean).join('  ·  ')
     const prog = dlProg[c.url]
     const downloading = prog && (prog.state === 'running' || prog.state === 'queued')
     const sel = selected.has(c.url)
-    const onRow = () => { if (selecting) toggleSelect(c.url); else openChapter(c.url, c.name) }
+    const onRow = () => {
+      if (selecting) { toggleSelect(c.url); return }
+      if (locked) { toast(`Locked. Unlocks ${untilUnlock(c.unlockAt ?? 0)}; it downloads automatically once free.`); return }
+      openChapter(c.url, c.name)
+    }
     return (
-      <div key={c.url} className={'chapter-row' + (read ? ' read' : '') + (c.url === resumeUrl ? ' resume' : '') + (sel ? ' sel' : '') + (broken ? ' broken' : '')} onClick={onRow}>
+      <div key={c.url} className={'chapter-row' + (read ? ' read' : '') + (c.url === resumeUrl ? ' resume' : '') + (sel ? ' sel' : '') + (broken ? ' broken' : '') + (locked ? ' locked' : '')} onClick={onRow}>
         {selecting && <span className={'ch-check' + (sel ? ' on' : '')} />}
         <div className="chapter-text">
-          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{!newSet.has(c.url) && newVerSet.has(c.url) && <span className="chapter-newver">NEW VER</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{broken && <span className="chapter-broken">UNAVAILABLE</span>}{c.name}</div>
+          <div className="chapter-name">{newSet.has(c.url) && <span className="chapter-new">NEW</span>}{!newSet.has(c.url) && newVerSet.has(c.url) && <span className="chapter-newver">NEW VER</span>}{c.url === resumeUrl && !read && <span className="chapter-resume">RESUME</span>}{broken && <span className="chapter-broken">UNAVAILABLE</span>}{locked && <span className="chapter-locked"><IconLock className="chapter-locki" />LOCKED</span>}{c.name}</div>
           {meta && <div className="chapter-meta">{meta}</div>}
         </div>
         {!selecting && (downloading
           ? <span className="chapter-dlbtn"><ProgressRing pct={prog.total > 0 ? (prog.done / prog.total) * 100 : 0} size={26} /></span>
+          : locked
+          ? <span className="chapter-dlbtn locked" title={`Locked. Unlocks ${untilUnlock(c.unlockAt ?? 0)}`} aria-label="Locked"><IconLock /></span>
           : <button
               className={'chapter-dlbtn' + (c.downloaded ? ' done' : '') + (broken ? ' broken' : '')}
               onClick={(e) => { e.stopPropagation(); if (c.downloaded) return; if (broken) askForce(c); else downloadChapters([{ url: c.url, name: c.name }]) }}

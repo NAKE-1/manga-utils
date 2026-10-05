@@ -227,6 +227,10 @@ private data class ChapterDto(
     val downloaded: Boolean = false,
     /** Why the source can't serve this chapter, when it can't. Null means it's fine. */
     val unavailable: String? = null,
+    /** Locked/not-yet-free: the source lists it with a future release date (e.g. Tapas scheduled/paywalled). */
+    val locked: Boolean = false,
+    /** When a locked chapter unlocks (epoch ms) - the source's future date_upload. 0 when not locked. */
+    val unlockAt: Long = 0,
 )
 
 @Serializable
@@ -862,6 +866,7 @@ private fun disambiguateScanlators(chapters: List<ChapterDto>): List<ChapterDto>
 private fun cachedDetail(e: LibraryEntry): DetailDto {
     // Looked up once for the whole list, not per chapter.
     val unavailableBy = runCatching { UnavailableChapters.list().associate { u -> u.url to u.reason } }.getOrDefault(emptyMap())
+    val now = System.currentTimeMillis()
     return DetailDto(
     MangaDto(e.sourceId.toString(), e.mangaUrl, e.title, e.thumbnailUrl, e.author, e.artist, e.description, e.genre, e.status),
     disambiguateScanlators(e.knownChapters.map {
@@ -872,6 +877,8 @@ private fun cachedDetail(e: LibraryEntry): DetailDto {
             it.url, it.name, it.scanlator, it.dateUpload, it.number,
             runCatching { ChapterIdentity.hasVersion(e.title, it.url) }.getOrDefault(false),
             unavailableBy[it.url],
+            locked = it.dateUpload > now,
+            unlockAt = if (it.dateUpload > now) it.dateUpload else 0,
         )
     }),
         e.newChapters.toList(),
@@ -1548,17 +1555,21 @@ fun Application.module() {
                     if (refresh && LibraryService.isFollowed(id, url)) {
                         runCatching { LibraryService.addKnown(id, url, mangaTitle, d.manga, d.chapters) }
                     }
+                    val now = System.currentTimeMillis()
                     DetailDto(
                         d.manga.toDto(id),
                         disambiguateScanlators(d.chapters.map { ch ->
                             val chName = runCatching { ch.name }.getOrDefault("")
+                            val du = runCatching { ch.date_upload }.getOrDefault(0)
                             ChapterDto(
                                 url = runCatching { ch.url }.getOrDefault(""),
                                 name = chName,
                                 scanlator = runCatching { ch.scanlator }.getOrNull(),
-                                dateUpload = runCatching { ch.date_upload }.getOrDefault(0),
+                                dateUpload = du,
                                 number = runCatching { mangautils.core.util.ChapterNumber.of(ch, mangaTitle) }.getOrDefault(-1f),
                                 downloaded = runCatching { DownloadManager.isDownloaded(mangaTitle, chName) }.getOrDefault(false),
+                                locked = du > now,
+                                unlockAt = if (du > now) du else 0,
                             )
                         }),
                         LibraryStore.find(id, url)?.newChapters?.toList() ?: emptyList(),
@@ -1962,10 +1973,13 @@ fun Application.module() {
                     val groups = e.knownChapters.groupBy { c -> if (c.number > 0) "n${c.number}" else "t${c.name.trim().lowercase()}" }
                     // Chapters the source can't serve are not "missing" in any actionable sense -
                     // queueing them just fails again. Force-download from the chapter row to override.
+                    // Locked chapters (future date) are skipped too; they auto-download once they unlock.
                     val unavailable = runCatching { UnavailableChapters.urls() }.getOrDefault(emptySet())
+                    val now = System.currentTimeMillis()
                     val missing = groups
                         .filterNot { (_, vs) -> vs.any { it.url in have || it.number in haveNums } }
                         .filterNot { (_, vs) -> vs.all { it.url in unavailable } }
+                        .filterNot { (_, vs) -> vs.all { it.dateUpload > now } }
                         .map { (_, vs) -> vs.first() }
                         .map { DownloadQueue.Chapter(it.url, it.name) }
                     if (missing.isNotEmpty()) { DownloadQueue.enqueue(e.sourceId, e.mangaUrl, e.title, missing); n += missing.size }
