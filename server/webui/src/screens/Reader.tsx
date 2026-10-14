@@ -729,17 +729,12 @@ export function Reader() {
             <input className="slider" type="range" min={0} max={40} value={gap} onChange={(e) => setGap(Number(e.target.value))} />
 
             <div className="sheet-label">Loading mode</div>
-            <div className="load-opts">
+            <select className="load-select" value={loadMode} onChange={(e) => setLoadMode(e.target.value as LoadMode)}>
               {LOAD_MODES.map((m) => (
-                <button key={m.id} className={'load-opt' + (loadMode === m.id ? ' on' : '')} onClick={() => setLoadMode(m.id)}>
-                  <div className="load-opt-text">
-                    <div className="load-opt-title">{m.label}</div>
-                    <div className="load-opt-desc">{m.desc}</div>
-                  </div>
-                  <span className="radio" />
-                </button>
+                <option key={m.id} value={m.id}>{m.label}</option>
               ))}
-            </div>
+            </select>
+            <div className="load-select-desc">{LOAD_MODES.find((m) => m.id === loadMode)?.desc}</div>
 
             {(loadMode === 'balanced' || loadMode === 'hybrid') && (
               <>
@@ -758,12 +753,10 @@ export function Reader() {
               <span className={'switch' + (readOnFinish ? ' on' : '')}><span className="knob" /></span>
             </button>
 
-            {hasRedundantParts && (
-              <button className="sheet-toggle" onClick={toggleSkipParts}>
-                <span>Skip duplicate chapter parts<span className="sheet-sub">When a chapter exists whole and as split parts (5, 5.1..), next skips the parts</span></span>
-                <span className={'switch' + (skipParts ? ' on' : '')}><span className="knob" /></span>
-              </button>
-            )}
+            <button className="sheet-toggle" disabled={!hasRedundantParts} onClick={toggleSkipParts}>
+              <span>Skip duplicate chapter parts<span className="sheet-sub">{hasRedundantParts ? 'When a chapter exists whole and as split parts (5, 5.1..), next skips the parts' : 'No duplicate whole+split chapters in this series'}</span></span>
+              <span className={'switch' + (skipParts ? ' on' : '')}><span className="knob" /></span>
+            </button>
           </div>
         </div>
       )}
