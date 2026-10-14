@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, pageUrl, coverUrl, Chapter } from '../api'
+import { api, pageUrl, coverUrl, Chapter, isRedundantPart } from '../api'
 import { IconArrowLeft, IconHome, IconChevronLeft, IconChevronRight, IconArrowUp, IconSettings, IconJetBrains } from '../components/icons'
 import { WebviewModal } from '../components/WebviewModal'
 import { useNet } from '../components/NetStatus'
@@ -188,6 +188,7 @@ export function Reader() {
   const [showChapters, setShowChapters] = useState(false)
   const [showWv, setShowWv] = useState(false) // open the current chapter's page in the in-app browser (JCEF)
   const [readUrls, setReadUrls] = useState<Set<string>>(new Set())
+  const [skipParts, setSkipParts] = useState(false) // per-series: skip redundant split parts in prev/next
   const currentChapRef = useRef<HTMLButtonElement>(null)
   const [sizing, setSizing] = useState<Sizing>(lsGet('reader.sizing', 'clamp') as Sizing)
   const [gap, setGap] = useState<number>(Number(lsGet('reader.gap', '0')))
@@ -284,6 +285,7 @@ export function Reader() {
     api.pages(sourceId, chapter, title, name).then((r) => setCount(r.count)).catch(() => setCount(0))
     api.mangaState(sourceId, manga).then((s) => {
       setReadUrls(new Set(s.read)) // read markers for the chapter list
+      setSkipParts(!!s.skipRedundantParts)
       // The server's position wins over this device's - it is the one another device could have moved.
       // Guarded on you not having scrolled yet: this reply is async, and re-pinning after you have
       // started reading would yank you away from where you are.
@@ -327,7 +329,10 @@ export function Reader() {
   // you say to.
   const gated = !!cur?.unavailable && !force
   // Drop locked (not-yet-released) chapters so prev/next never step onto one you can't read.
-  const navList = dedupChapters(cur, chapters.filter((c) => !c.locked), preferredScan)
+  let navList = dedupChapters(cur, chapters.filter((c) => !c.locked), preferredScan)
+  // Skip redundant split parts (X.1.. when a whole X.0 exists), but always keep the chapter you're on so
+  // prev/next still resolve if you opened a part by hand.
+  if (skipParts) navList = navList.filter((c) => c.url === chapter || !isRedundantPart(c, chapters))
   const idx = navList.findIndex((c) => c.url === chapter)
   const nextCh = idx > 0 ? navList[idx - 1] : undefined // newer
   const prevCh = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : undefined // older

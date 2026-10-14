@@ -57,6 +57,10 @@ data class LibraryEntry(
     var genre: String? = null,
     var status: Int = 0,
     var readingMode: ReadingMode = ReadingMode.RTL,
+    /** Per-series: when a chapter exists both whole (X.0) and as split parts (X.1..), skip the redundant
+     *  parts in reader prev/next navigation. Off by default; decimals mean "parts" in some series and a
+     *  real bonus chapter in others, so this is opt-in per series. */
+    var skipRedundantParts: Boolean = false,
     val addedAt: Long = System.currentTimeMillis(),
     var lastCheckedAt: Long = 0,
     var knownChapters: MutableList<ChapterRef> = mutableListOf(),

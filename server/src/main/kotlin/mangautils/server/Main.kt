@@ -721,6 +721,8 @@ private data class MangaStateDto(
     val bookmarks: List<String>,
     /** chapterUrl -> how far through you got (0..1), so any device resumes where the last one stopped. */
     val positions: Map<String, Float> = emptyMap(),
+    /** Per-series: skip redundant split parts (X.1.. when a whole X.0 exists) in reader prev/next nav. */
+    val skipRedundantParts: Boolean = false,
 )
 
 @Serializable
@@ -1700,6 +1702,7 @@ fun Application.module() {
                     ReadStore.readUrls(id, url).toList(),
                     BookmarkStore.bookmarks(id, url).toList(),
                     PositionStore.positions(id, url),
+                    mangautils.core.library.LibraryStore.find(id, url)?.skipRedundantParts ?: false,
                 )
             }
             call.respond(st)
@@ -1710,6 +1713,19 @@ fun Application.module() {
             val url = call.queryParam("url") ?: return@post call.respond(HttpStatusCode.BadRequest)
             val on = call.queryParam("on")?.toBoolean() ?: true
             withContext(Dispatchers.IO) { MangaBookmarkStore.set(id, url, on) }
+            call.respond(HttpStatusCode.OK)
+        }
+
+        // Per-series: skip redundant split parts (X.1.. when a whole X.0 exists) in reader navigation.
+        post("/api/manga/skip-parts") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val url = call.queryParam("url") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val on = call.queryParam("on")?.toBoolean() ?: true
+            withContext(Dispatchers.IO) {
+                mangautils.core.library.LibraryStore.find(id, url)?.let {
+                    mangautils.core.library.LibraryStore.upsert(it.copy(skipRedundantParts = on))
+                }
+            }
             call.respond(HttpStatusCode.OK)
         }
 
