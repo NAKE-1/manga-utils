@@ -336,6 +336,13 @@ export function Reader() {
   const idx = navList.findIndex((c) => c.url === chapter)
   const nextCh = idx > 0 ? navList[idx - 1] : undefined // newer
   const prevCh = idx >= 0 && idx < navList.length - 1 ? navList[idx + 1] : undefined // older
+  // Only offer the skip toggle when this series actually has whole+part overlap.
+  const hasRedundantParts = chapters.some((c) => isRedundantPart(c, chapters))
+  const toggleSkipParts = () => {
+    const on = !skipParts
+    setSkipParts(on) // optimistic, per series
+    api.setSkipParts(sourceId, manga, on).catch(() => setSkipParts(!on))
+  }
 
   // Pill shows current-chapter / total-chapters (highest chapter number), like Atsumaru.
   const curNum = cur && cur.number > 0 ? cur.number : idx >= 0 ? navList.length - idx : 0
@@ -750,6 +757,13 @@ export function Reader() {
               <span>Mark read on finish<span className="sheet-sub">Only when you reach the end or tap next — not on open</span></span>
               <span className={'switch' + (readOnFinish ? ' on' : '')}><span className="knob" /></span>
             </button>
+
+            {hasRedundantParts && (
+              <button className="sheet-toggle" onClick={toggleSkipParts}>
+                <span>Skip duplicate chapter parts<span className="sheet-sub">When a chapter exists whole and as split parts (5, 5.1..), next skips the parts</span></span>
+                <span className={'switch' + (skipParts ? ' on' : '')}><span className="knob" /></span>
+              </button>
+            )}
           </div>
         </div>
       )}

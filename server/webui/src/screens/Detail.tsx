@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source, isRedundantPart } from '../api'
+import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
 import { clearPositions } from './Reader'
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots, IconJetBrains, IconLock } from '../components/icons'
 import { ProgressRing } from '../components/ProgressRing'
@@ -190,11 +190,6 @@ export function Detail() {
     close(); setBusy(true)
     try { await api.removeLibrary(sourceId, url); setState((s) => ({ ...s, inLibrary: false })) } finally { setBusy(false) }
   }
-  async function toggleSkipParts() {
-    const on = !state.skipRedundantParts
-    setState((s) => ({ ...s, skipRedundantParts: on })); setMenuOpen(false) // optimistic
-    await api.setSkipParts(sourceId, url, on).catch(() => setState((s) => ({ ...s, skipRedundantParts: !on })))
-  }
   function askRemove() {
     setConfirm({ title: 'Remove from library?', message: `Remove “${title()}” from your library?`, confirmLabel: 'Remove', danger: true, onConfirm: doRemove, onCancel: close })
   }
@@ -329,8 +324,6 @@ export function Detail() {
     return (ordered.find((c) => !chapterRead(c, readSet, readNums)) || ordered[ordered.length - 1])?.url
   })()
 
-  // Only offer the "skip duplicate parts" toggle when this series actually has whole+part overlap.
-  const hasRedundantParts = data.chapters.some((c) => isRedundantPart(c, data.chapters))
   let chaps = data.chapters
   if (tab === 'unread') chaps = chaps.filter((c) => !chapterRead(c, readSet, readNums))
   else if (tab === 'read') chaps = chaps.filter((c) => chapterRead(c, readSet, readNums))
@@ -477,10 +470,6 @@ export function Detail() {
             <button className={dlFilter === 'all' ? 'on' : ''} onClick={() => { setDlFilter('all'); setMenuOpen(false) }}>All chapters</button>
             <button className={dlFilter === 'dl' ? 'on' : ''} onClick={() => { setDlFilter('dl'); setMenuOpen(false) }}>Downloaded only</button>
             <button className={dlFilter === 'undl' ? 'on' : ''} onClick={() => { setDlFilter('undl'); setMenuOpen(false) }}>Not downloaded only</button>
-            {hasRedundantParts && <>
-              <div className="ch-menu-sep" />
-              <button className={state.skipRedundantParts ? 'on' : ''} onClick={toggleSkipParts}>Skip duplicate chapter parts</button>
-            </>}
             <div className="ch-menu-sep" />
             <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), true); setMenuOpen(false) }}>Mark all read</button>
             <button onClick={() => { bulkSetRead(data.chapters.map((c) => c.url), false); setMenuOpen(false) }}>Mark all unread</button>
