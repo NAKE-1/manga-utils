@@ -56,6 +56,17 @@ export interface MangaState {
   inLibrary: boolean; bookmarked: boolean; read: string[]; bookmarks: string[]
   /** chapterUrl -> how far through you got (0..1). Server-side so devices resume each other's reads. */
   positions?: Record<string, number>
+  /** Per-series: skip redundant split parts (X.1.. when a whole X.0 exists) in reader prev/next nav. */
+  skipRedundantParts?: boolean
+}
+
+const isWholeNum = (n: number) => Math.abs(n - Math.round(n)) < 1e-6
+/** A decimal chapter X.n whose whole parent X.0 also exists is a redundant "part" of it (e.g. 5.1 when 5
+ *  exists). Decimal chapters with no whole parent are real chapters and are NOT redundant. */
+export function isRedundantPart(c: { number: number }, all: { number: number }[]): boolean {
+  if (c.number <= 0 || isWholeNum(c.number)) return false
+  const parent = Math.floor(c.number)
+  return all.some((o) => isWholeNum(o.number) && Math.abs(o.number - parent) < 1e-6)
 }
 
 export interface LibraryEntry {
@@ -205,6 +216,8 @@ export const api = {
     fetch(`/api/library?source=${id}&url=${encodeURIComponent(url)}`, { method: 'DELETE' }),
   setMangaBookmark: (id: string, url: string, on: boolean) =>
     fetch(`/api/manga/bookmark?source=${id}&url=${encodeURIComponent(url)}&on=${on}`, { method: 'POST' }),
+  setSkipParts: (id: string, url: string, on: boolean) =>
+    fetch(`/api/manga/skip-parts?source=${id}&url=${encodeURIComponent(url)}&on=${on}`, { method: 'POST' }),
   downloadCount: (title: string) => getJson<{ count: number }>(`/api/downloads/count?title=${encodeURIComponent(title)}`),
   deleteDownloads: (title: string) => fetch(`/api/downloads?title=${encodeURIComponent(title)}`, { method: 'DELETE' }),
   pages: (id: string, chapter: string, title?: string, name?: string) => {
