@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source } from '../api'
+import { api, coverUrl, pageUrl, mediaType, STATUS_LABELS, Detail as DetailT, MangaState, Source, isRedundantPart } from '../api'
 import { clearPositions } from './Reader'
 import { IconArrowLeft, IconBookmarkSm, IconClock, IconBook, IconPen, IconCalendar, IconBookOpen, IconSort, IconDownload, IconDots, IconJetBrains, IconLock } from '../components/icons'
 import { ProgressRing } from '../components/ProgressRing'
@@ -14,9 +14,11 @@ import noPoster from '../assets/no-poster.png'
 // the source actually parses numbers; some (e.g. aquamanga) leave them at -1, which turns the sort
 // into a no-op and makes "first unread" the NEWEST chapter. So fall back to reversing the source
 // order (Tachiyomi sources list newest-first) when numbers aren't usable.
-function readingOrder(chapters: DetailT['chapters']): DetailT['chapters'] {
+function readingOrder(chapters: DetailT['chapters'], skipParts = false): DetailT['chapters'] {
   // Locked chapters (future release, no number yet) aren't readable - never resume/continue into one.
-  const readable = chapters.filter((c) => !c.locked)
+  // When skip-parts is on, redundant split parts (5.1.. under a whole 5) aren't in the reading flow
+  // either, so they must not become the "first unread" the reader resumes onto after skipping them.
+  const readable = chapters.filter((c) => !c.locked && !(skipParts && isRedundantPart(c, chapters)))
   const positives = readable.filter((c) => c.number > 0)
   const usable = positives.length >= readable.length * 0.6 && new Set(positives.map((c) => c.number)).size > 1
   return usable
@@ -162,7 +164,7 @@ export function Detail() {
     const key = sourceId + '|' + url
     if (prefetchedCont.current === key) return
     prefetchedCont.current = key
-    const ordered = readingOrder(data.chapters)
+    const ordered = readingOrder(data.chapters, state?.skipRedundantParts)
     const cont = ordered.find((c) => !chapterRead(c, readSet, readKeySet(data.chapters, readSet))) || ordered[ordered.length - 1] || data.chapters[0]
     if (cont) {
       api.pages(sourceId, cont.url, data.manga.title, cont.name)
@@ -233,7 +235,7 @@ export function Detail() {
 
   function openContinue() {
     if (!data) return
-    const ordered = readingOrder(data.chapters)
+    const ordered = readingOrder(data.chapters, state?.skipRedundantParts)
     const c = ordered.find((c) => !chapterRead(c, readSet, readKeySet(data.chapters, readSet))) || ordered[ordered.length - 1] || data.chapters[0]
     if (c) openChapter(c.url, c.name)
   }
@@ -320,7 +322,7 @@ export function Detail() {
   // The chapter you'd resume on (first unread ascending, else the latest) — gets a "Resume" marker.
   const readNums = readKeySet(data.chapters, readSet)
   const resumeUrl = (() => {
-    const ordered = readingOrder(data.chapters)
+    const ordered = readingOrder(data.chapters, state?.skipRedundantParts)
     return (ordered.find((c) => !chapterRead(c, readSet, readNums)) || ordered[ordered.length - 1])?.url
   })()
 
