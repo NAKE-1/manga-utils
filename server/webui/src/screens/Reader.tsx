@@ -400,6 +400,17 @@ export function Reader() {
     api.setRead(sourceId, manga, chapter, true)
   }
 
+  // skip-parts: advancing forward jumps over the redundant split parts between here and `to`. You've
+  // effectively read them (they're the same content as the whole chapter), so mark them read too -
+  // otherwise they linger as unread and resume lands back on one.
+  function markSkippedParts(to?: Chapter) {
+    if (!skipParts || !to || !cur || !(to.number > cur.number)) return
+    const skipped = chapters.filter((c) => isRedundantPart(c, chapters) && c.number > cur.number && c.number < to.number && !readUrls.has(c.url))
+    if (!skipped.length) return
+    setReadUrls((s) => { const n = new Set(s); for (const c of skipped) n.add(c.url); return n })
+    for (const c of skipped) api.setRead(sourceId, manga, c.url, true)
+  }
+
   function openChapter(c?: Chapter) {
     if (!c) return
     // replace: don't pile chapter views onto history, so Back always returns to the manga screen.
@@ -656,7 +667,7 @@ export function Reader() {
           <div className="reader-navrow">
             <button className="r-icon" disabled={!prevCh} onClick={() => openChapter(prevCh)} aria-label="Previous chapter"><IconChevronLeft /></button>
             <button className="reader-chip" onClick={() => setShowChapters(true)} title="Chapter list">{name || `Chapter ${curNum}`}</button>
-            <button className="r-icon" disabled={!nextCh} onClick={() => { if (readOnFinish) markCurrentRead(); openChapter(nextCh) }} aria-label="Next chapter"><IconChevronRight /></button>
+            <button className="r-icon" disabled={!nextCh} onClick={() => { if (readOnFinish) markCurrentRead(); markSkippedParts(nextCh); openChapter(nextCh) }} aria-label="Next chapter"><IconChevronRight /></button>
           </div>
         </div>
 
