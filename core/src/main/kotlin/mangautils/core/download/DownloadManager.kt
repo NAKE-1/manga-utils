@@ -95,6 +95,11 @@ class DownloadManager(
         primary: SourceRef,
         mirrors: List<SourceRef> = emptyList(),
         select: ChapterSelect,
+        // The canonical title the rest of the app stores a series under (library/detail/manage key off
+        // it). Sources rename series, and the source's *live* title drives the destination folder - so
+        // without pinning this, a renamed series downloads into a second folder the UI never reads, the
+        // chapters look un-downloaded, and re-downloads skip. Pass the stored title to keep one folder.
+        titleOverride: String? = null,
     ): Job {
         val job =
             Job(
@@ -112,7 +117,9 @@ class DownloadManager(
                 runBlocking {
                     val d = primarySource.getMangaDetails(seed)
                     if (runCatching { d.url }.getOrNull().isNullOrBlank()) d.url = primary.mangaUrl
-                    val t = runCatching { d.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: titleFromUrl(primary.mangaUrl)
+                    val t = titleOverride?.takeIf { it.isNotBlank() }
+                        ?: runCatching { d.title }.getOrNull()?.takeIf { it.isNotBlank() }
+                        ?: titleFromUrl(primary.mangaUrl)
                     Triple(t, d, primarySource.getChapterList(seed))
                 }
 

@@ -183,7 +183,7 @@ object DownloadQueue {
                 },
             )
             val allUrls = task.chapters.map { it.url }.toSet()
-            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls))
+            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls), titleOverride = task.mangaTitle)
             // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
             // Reconcile by URL, not by chapter name: several scanlations of a chapter share a name, so
             // grouping attempts by name merges them and undercounts a versioned download.
