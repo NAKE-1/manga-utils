@@ -1560,18 +1560,26 @@ fun Application.module() {
                         runCatching { LibraryService.addKnown(id, url, mangaTitle, d.manga, d.chapters) }
                     }
                     val now = System.currentTimeMillis()
+                    // "Downloaded" must be tested by chapter URL against on-disk versions (the same check
+                    // cachedDetail uses), NOT by name: per-scanlator/versioned folders ("... [Atsumaru]")
+                    // share a chapter name, so a name match finds nothing and every chapter reads as
+                    // undownloaded - the 0/N flash you see after a status-check until you reload. Resolve
+                    // the on-disk title from the library entry too: folders are pinned to the stored title,
+                    // which can differ from the source's live title.
+                    val diskTitle = LibraryStore.find(id, url)?.title?.takeIf { it.isNotBlank() } ?: mangaTitle
                     DetailDto(
                         d.manga.toDto(id),
                         disambiguateScanlators(d.chapters.map { ch ->
                             val chName = runCatching { ch.name }.getOrDefault("")
+                            val chUrl = runCatching { ch.url }.getOrDefault("")
                             val du = runCatching { ch.date_upload }.getOrDefault(0)
                             ChapterDto(
-                                url = runCatching { ch.url }.getOrDefault(""),
+                                url = chUrl,
                                 name = chName,
                                 scanlator = runCatching { ch.scanlator }.getOrNull(),
                                 dateUpload = du,
                                 number = runCatching { mangautils.core.util.ChapterNumber.of(ch, mangaTitle) }.getOrDefault(-1f),
-                                downloaded = runCatching { DownloadManager.isDownloaded(mangaTitle, chName) }.getOrDefault(false),
+                                downloaded = runCatching { ChapterIdentity.hasVersion(diskTitle, chUrl) }.getOrDefault(false),
                                 locked = du > now,
                                 unlockAt = if (du > now) du else 0,
                             )
