@@ -255,7 +255,10 @@ class DownloadManager(
                         if (pages.isEmpty()) error("source returned 0 pages")
                         downloadPages(cand.source, pages, chapter.name, chapter.url, cand.sourceId)
                     }
-                val dest = destFor(title, chapter)
+                // Reuse the `dest` resolved above: it may carry an extraDisc tie-breaker when another
+                // upload already owns the plain name. Recomputing here dropped that suffix and overwrote
+                // the sibling, so two uploads sharing a (number, scanlator) could never coexist - one was
+                // forever "missing" and got re-queued on every scan-versions run.
                 if (downloadAsCbz) {
                     CbzWriter.write(dest, images, comicInfo(title, details, chapter, images.size))
                 } else {
