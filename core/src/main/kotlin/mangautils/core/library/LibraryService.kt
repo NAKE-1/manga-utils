@@ -81,7 +81,12 @@ object LibraryService {
         val existing = LibraryStore.find(sourceId, mangaUrl)
         val entry =
             (existing ?: LibraryEntry(sourceId = sourceId, mangaUrl = mangaUrl, title = title)).apply {
-                this.title = title.ifBlank { runCatching { manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: SlugTitle.fromUrl(mangaUrl) }
+                // Never rename an existing entry: its title is the stable identity that download folders are
+                // pinned to (see the title-pinning fix). A source that later changes its displayed title must
+                // not orphan everything on disk under the old name. Only set a title when first adding, or
+                // when the stored one is blank.
+                this.title = existing?.title?.takeIf { it.isNotBlank() }
+                    ?: title.ifBlank { runCatching { manga.title }.getOrNull()?.takeIf { it.isNotBlank() } ?: SlugTitle.fromUrl(mangaUrl) }
                 author = runCatching { manga.author }.getOrNull() ?: author
                 artist = runCatching { manga.artist }.getOrNull() ?: artist
                 description = runCatching { manga.description }.getOrNull() ?: description

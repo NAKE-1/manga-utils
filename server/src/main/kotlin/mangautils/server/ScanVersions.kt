@@ -88,11 +88,16 @@ object ScanVersions {
         // failures), or genuinely fetchable (missing). Broken is split out so it isn't fetched AND isn't
         // dishonestly shown as "have".
         val brokenUrls = UnavailableChapters.urls()
+        // A locked/scheduled chapter (Tapas lists these with a FUTURE date_upload) isn't downloadable yet,
+        // so it must not count as "missing" - queuing it just fails until it unlocks. The scheduled update's
+        // newlyUnlocked path auto-downloads it once its date passes.
+        val now = System.currentTimeMillis()
+        fun locked(c: mangautils.core.library.ChapterRef) = c.dateUpload > now
         // Group the source's chapters by number so the report reads per chapter, not per URL.
         val byNumber = entry.knownChapters.groupBy { it.number }
         val chapters =
             byNumber.entries.sortedBy { it.key }.map { (number, versions) ->
-                val missing = versions.filter { it.url !in onDiskUrls && it.url !in brokenUrls }
+                val missing = versions.filter { it.url !in onDiskUrls && it.url !in brokenUrls && !locked(it) }
                 ChapterPlan(
                     number = number,
                     name = versions.firstOrNull()?.name.orEmpty(),
