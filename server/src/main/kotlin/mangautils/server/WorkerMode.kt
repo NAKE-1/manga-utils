@@ -253,6 +253,17 @@ object WorkerMode {
     @Serializable private class TsStatus(val Peer: Map<String, TsPeer> = emptyMap())
     private val tsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
+    // Mullvad exit nodes we allow: Florida + nearby southeast states + New York. Matched against the node's
+    // Tailscale hostname/DNS, which carries Mullvad's city code (e.g. "us-mia-wg-001"), so both codes and
+    // full city names are listed. Only ones Mullvad actually offers appear; the rest are hidden.
+    private val MULLVAD_ALLOW = listOf(
+        "mia", "miami", "tpa", "tampa", "jax", "jacksonville",   // Florida
+        "atl", "atlanta",                                         // Georgia
+        "clt", "charlotte", "rdu", "ral", "raleigh",              // North Carolina
+        "cae", "columbia", "chs", "charleston",                   // South Carolina
+        "nyc", "new york", "newyork", "ewr", "secaucus", "buf", "buffalo", // New York
+    )
+
     private fun runCmd(vararg cmd: String): Pair<Int, String> = runCatching {
         val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText()
@@ -265,10 +276,18 @@ object WorkerMode {
         if (code != 0) return ExitNodesDto(available = false, current = "", nodes = emptyList(), error = out.trim().take(200).ifBlank { "tailscale unavailable" })
         val st = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()
             ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status")
-        val nodes = st.Peer.values.filter { it.ExitNodeOption }.map { p ->
-            val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
-            ExitNode(name = name, ip = p.TailscaleIPs.firstOrNull().orEmpty(), online = p.Online, current = p.ExitNode)
-        }.sortedBy { it.name.lowercase() }
+        val nodes = st.Peer.values.filter { it.ExitNodeOption }
+            // Mullvad exit nodes are limited to Florida + nearby SE states + New York (only those Mullvad
+            // actually has show up). Your own (non-Mullvad) exit nodes are never filtered.
+            .filter { p ->
+                val id = (p.HostName + " " + p.DNSName).lowercase()
+                val isMullvad = "mullvad" in id
+                !isMullvad || MULLVAD_ALLOW.any { it in id }
+            }
+            .map { p ->
+                val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
+                ExitNode(name = name, ip = p.TailscaleIPs.firstOrNull().orEmpty(), online = p.Online, current = p.ExitNode)
+            }.sortedBy { it.name.lowercase() }
         return ExitNodesDto(available = true, current = nodes.firstOrNull { it.current }?.name.orEmpty(), nodes = nodes)
     }
 
