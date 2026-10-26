@@ -52,6 +52,15 @@ services:
       - flaresolverr
       - solver
     restart: unless-stopped
+    # The image's built-in HEALTHCHECK probes $MANGA_WEB_PORT (8080 default). This node serves on 8790,
+    # so pin the check to 8790 here too. Without it the check hits 8080, reports unhealthy, and autoheal
+    # restarts the node every ~2 min — which wipes in-flight delegated jobs mid-download.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8790/api/version >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest

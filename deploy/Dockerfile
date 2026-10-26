@@ -78,6 +78,6 @@ VOLUME ["/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD wget -qO- "http://localhost:8080/api/version" >/dev/null 2>&1 || exit 1
+  CMD wget -qO- "http://localhost:${MANGA_WEB_PORT:-8080}/api/version" >/dev/null 2>&1 || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
