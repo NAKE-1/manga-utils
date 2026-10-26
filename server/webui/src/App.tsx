@@ -16,6 +16,7 @@ import Stats from './screens/Stats'
 import Logs from './screens/Logs'
 import Health from './screens/Health'
 import Webhooks from './screens/Webhooks'
+import Workers from './screens/Workers'
 import Migrate from './screens/Migrate'
 import Relocate from './screens/Relocate'
 import ScanVersions from './screens/ScanVersions'
@@ -64,6 +65,7 @@ export function App() {
               <Route path="/logs" element={<Logs />} />
               <Route path="/health" element={<Health />} />
               <Route path="/webhooks" element={<Webhooks />} />
+              <Route path="/workers" element={<Workers />} />
               <Route path="/migrate" element={<Migrate />} />
               <Route path="/relocate" element={<Relocate />} />
               <Route path="/scan-versions" element={<ScanVersions />} />

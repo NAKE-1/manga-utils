@@ -67,6 +67,8 @@ import mangautils.core.library.LibraryService
 import mangautils.core.library.LibraryStore
 import mangautils.core.library.MangaBookmarkStore
 import mangautils.core.library.PositionStore
+import mangautils.core.worker.WorkerNode
+import mangautils.core.worker.WorkerStore
 import mangautils.core.library.ReadStore
 import mangautils.core.source.CloudflareState
 import mangautils.core.source.Diagnostics
@@ -1799,6 +1801,28 @@ fun Application.module() {
         post("/api/downloads/force-retry") {
             val id = call.queryParam("id") ?: return@post call.respond(HttpStatusCode.BadRequest)
             DownloadQueue.forceRetry(id); call.respond(downloadsSnapshot())
+        }
+
+        // ---- Worker pool (distributed IP-pool fetch nodes) ----
+        get("/api/workers") { call.respond(Workers.statuses(WorkerStore.list())) }
+        post("/api/workers") {
+            val b = call.receive<Workers.AddReq>()
+            if (b.name.isBlank() || b.url.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("name and url required"))
+            val saved = WorkerStore.add(WorkerNode(b.name, b.url, b.token))
+            call.respond(Workers.statuses(listOf(saved)).first())
+        }
+        delete("/api/workers") {
+            val name = call.queryParam("name") ?: return@delete call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            if (WorkerStore.remove(name)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+        }
+        post("/api/workers/enable") {
+            val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            val on = call.queryParam("on")?.toBoolean() ?: true
+            if (WorkerStore.setEnabled(name, on)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+        }
+        post("/api/workers/test") {
+            val b = call.receive<Workers.TestReq>()
+            call.respond(Workers.test(b.url, b.token))
         }
 
         // ---- Download manager (browse / delete on-disk content) ----

@@ -13,6 +13,7 @@ const ITEMS: { label: string; to: string }[] = [
   { label: 'Downloads', to: '/downloads' },
   { label: 'Manage downloads', to: '/downloads/manage' },
   { label: 'Extensions & repos', to: '/extensions' },
+  { label: 'Worker nodes', to: '/workers' },
   { label: 'Settings', to: '/settings' },
 ]
 

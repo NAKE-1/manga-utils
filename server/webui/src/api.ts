@@ -460,7 +460,23 @@ export const api = {
   migrateStart: (body: { fromSource: string; fromUrl: string; toSource: string; toUrl: string; deleteOldDownloads: boolean; reDownload: boolean }) =>
     fetch('/api/migrate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json() as Promise<MigrateProgress>),
   migrateProgress: () => getJson<MigrateProgress>('/api/migrate/progress'),
+  // ---- Worker pool (distributed IP-pool fetch nodes) ----
+  workers: () => getJson<WorkerStatus[]>('/api/workers', 1, 12000),
+  addWorker: async (name: string, url: string, token: string) => {
+    const r = await fetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url, token }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not add worker')
+    return r.json() as Promise<WorkerStatus>
+  },
+  removeWorker: (name: string) => fetch(`/api/workers?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  enableWorker: (name: string, on: boolean) => fetch(`/api/workers/enable?name=${encodeURIComponent(name)}&on=${on}`, { method: 'POST' }),
+  testWorker: async (url: string, token: string) => {
+    const r = await fetch('/api/workers/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token }) })
+    return r.json() as Promise<WorkerStatus>
+  },
 }
+
+export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; tempC: number | null; diskFreeGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
+export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null }
 
 export interface MigrateSide { sourceName: string; title: string; cover?: string | null; total: number; readCount: number; readUpTo: string; bookmarks: number; downloaded: number }
 export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryRead: number; unmatchedRead: number; willCarryBookmarks: number; unmatchedBookmarks: number; chapterDiff: number; unnumbered: number }
