@@ -927,7 +927,7 @@ private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
             it.sourceId.toString(), DownloadQueue.sourceName(it.sourceId),
             if (it.state == "queued") DownloadQueue.sourceRestUntil(it.sourceId) else 0,
             it.vfHost,
-            if (it.assignedWorker.isNotBlank()) "W-%04d".format(WorkerStore.find(it.assignedWorker)?.num ?: 0) else "",
+            if (it.assignedWorker.isNotBlank()) "W-${WorkerStore.find(it.assignedWorker)?.num ?: 0}" else "",
         )
     },
     DownloadQueue.activeCount(),
