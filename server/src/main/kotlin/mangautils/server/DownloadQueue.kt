@@ -444,10 +444,27 @@ object DownloadQueue {
         persist()
     }
     // Clears done/failed/stopped rows — but NOT interrupted ones (those wait for a manual Resume).
-    fun clearFinished() { tasks.entries.removeIf { it.value.state == "done" || it.value.state == "failed" || it.value.state == "stopped" }; persist() }
+    fun clearFinished() {
+        val gone = tasks.values.filter { it.state == "done" || it.state == "failed" || it.state == "stopped" }
+        tasks.entries.removeIf { it.value.state == "done" || it.value.state == "failed" || it.value.state == "stopped" }
+        // done = complete, nothing to clean. failed/stopped may have left partial chapters: discard them.
+        gone.filter { it.state != "done" }.forEach { runCatching { repairFor(it) } }
+        if (gone.any { it.state != "done" }) runCatching { WorkerDelegate.cleanStaging() }
+        persist()
+    }
 
-    /** Remove ONE finished/failed/stopped task row (no-op while it's still active). */
-    fun remove(id: String) { tasks[id]?.let { if (!it.active) tasks.remove(id) }; persist() }
+    /** Remove ONE finished/failed/stopped task row (no-op while it's still active). A removed download is
+     *  not restartable, so discard its leftover junk: main's partial/incomplete chapters + any abandoned
+     *  worker-harvest staging. (The worker already stopped + purged its own copy when the task was stopped.) */
+    fun remove(id: String) {
+        tasks[id]?.let {
+            if (!it.active) {
+                tasks.remove(id)
+                if (it.state != "done") { runCatching { repairFor(it) }; runCatching { WorkerDelegate.cleanStaging() } }
+            }
+        }
+        persist()
+    }
 
     /** Host of a source's base URL (e.g. "mangafire.to"), for matching against HumanCheckState. */
     private fun sourceHost(sourceId: Long): String? = runCatching {

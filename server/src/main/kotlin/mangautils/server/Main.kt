@@ -1086,6 +1086,7 @@ fun main() {
         BackupScheduler.reschedule() // start the daily local data backup if enabled in settings
     } else {
         log.info("WORKER role: autonomous schedulers off; serving delegated downloads via /worker/*")
+        WorkerMode.cleanDownloadsAtBoot() // drop orphaned partials left by a crash/restart (no library here)
     }
     if (WorkerMode.enabled()) WorkerMode.startReaper()
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080

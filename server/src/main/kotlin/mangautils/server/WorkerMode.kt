@@ -168,11 +168,14 @@ object WorkerMode {
             val ready = job.chapters.count { it.folder != null }
             log.info("worker job {} DONE: {}/{} chapter(s) ready for main to pull", job.id, ready, job.chapters.size)
         } catch (e: Exception) {
-            log.warn("worker job {} FAILED: {}", job.id, e.message)
-            runCatching { resolveFolders(job) }
+            if (job.cancelled) log.info("worker job {} cancelled by main - stopping", job.id)
+            else { log.warn("worker job {} FAILED: {}", job.id, e.message); runCatching { resolveFolders(job) } }
             job.state = "failed"
         } finally {
             resolver.interrupt()
+            // Main dropped this job (Stop/Remove/abandon): discard its leftover download data so partial
+            // chapters don't pile up on the node. On a clean finish everything was acked + deleted already.
+            if (job.cancelled) runCatching { purgeJob(job) }
         }
     }
 
@@ -192,6 +195,32 @@ object WorkerMode {
                 }
             if (v?.folder != null) { c.folder = v.folder; claimed.add(v.folder!!) } else c.error = c.error ?: "not downloaded"
         }
+    }
+
+    private fun deleteDir(dir: Path) {
+        if (!Files.exists(dir)) return
+        runCatching { Files.walk(dir).use { it.sorted(Comparator.reverseOrder()).forEach { p -> Files.deleteIfExists(p) } } }
+    }
+
+    /** Discard a dropped job's leftover download data (un-acked + partial chapters). Acked chapters were
+     *  already deleted on ship-back. Wipes the whole series dir when no other running job shares the title
+     *  (a node holds only transient download data, never a library); otherwise just this job's own folders. */
+    private fun purgeJob(job: DlJob) {
+        val base = seriesDir(job.title)
+        val sharedByOther = jobs.values.any { it !== job && it.title == job.title && it.state == "running" }
+        if (!sharedByOther) deleteDir(base)
+        else job.chapters.mapNotNull { it.folder }.distinct().forEach { f ->
+            val d = runCatching { base.resolve(f).normalize() }.getOrNull()
+            if (d != null && d.startsWith(base)) deleteDir(d)
+        }
+    }
+
+    /** A worker holds only transient delegated-download data (no library). After a crash/restart its
+     *  in-memory jobs are gone, so any files left under the downloads dir are orphaned partials: wipe them
+     *  at boot so a crashed job can't leak disk or feed a stale half-chapter into a later harvest. */
+    fun cleanDownloadsAtBoot() {
+        val root = AppConfig.downloadsDir
+        runCatching { if (Files.isDirectory(root)) Files.list(root).use { s -> s.forEach { deleteDir(it) } } }
     }
 
     // ---- disk access (title + folder resolved to a safe absolute path under the downloads dir) ----

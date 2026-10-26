@@ -115,10 +115,13 @@ object WorkerDelegate {
         }
         return Result(harvested, workerGone = false)
         } finally {
-            // Always tell the worker to drop AND stop this job - even on a stall/abandon, not just a clean
-            // finish - so it never orphan-runs the whole series after main has moved on (double work, and
-            // it'd keep shipping chapters main no longer tracks).
+            // Always tell the worker to drop AND stop this job - even on a stall/abandon or a hard Stop
+            // (stop() calls future.cancel(true), which interrupts this thread) - so it never orphan-runs the
+            // series after main has moved on. Clear the interrupt around the call so the Stop interrupt can't
+            // abort the notify itself, then restore it for the caller.
+            val wasInterrupted = Thread.interrupted()
             runCatching { client.newCall(req(node, Request.Builder().url("${base(node)}/worker/download/$jobId/done").post(ByteArray(0).toRequestBody()))).execute().close() }
+            if (wasInterrupted) Thread.currentThread().interrupt()
         }
     }
 
