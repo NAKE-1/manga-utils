@@ -1,7 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type WorkerStatus, type ExitNodesDto } from '../api'
+import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt } from '../api'
 import { IconArrowLeft } from '../components/icons'
+
+// View a worker's installed extensions (name, version, BETA for sideloads).
+function ExtList({ name }: { name: string }) {
+  const [open, setOpen] = useState(false)
+  const [list, setList] = useState<WorkerExt[] | null>(null)
+  async function toggle() {
+    const n = !open; setOpen(n)
+    if (n && !list) { try { setList(await api.workerExtensions(name)) } catch { setList([]) } }
+  }
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button className="btn" onClick={toggle}>{open ? 'Hide' : 'View'} extensions{list ? ` (${list.length})` : ''}</button>
+      {open && list && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 240, overflowY: 'auto' }}>
+          {list.length === 0 && <span className="set-hint">None, or node unreachable.</span>}
+          {list.map((e) => (
+            <div key={e.pkg} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+              {e.beta && <span className="dlc-w" style={{ background: '#e8a06e' }}>BETA</span>}
+              <span className="set-hint" style={{ fontVariantNumeric: 'tabular-nums' }}>v{e.version}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Push main's extension jars (incl. beta/custom sideloads) to a worker so it can download the same sources.
 function SyncButton({ name }: { name: string }) {
@@ -200,6 +227,7 @@ export default function Workers() {
           )}
 
           {w.online && <ExitNodeControl name={w.name} />}
+          {w.online && <ExtList name={w.name} />}
 
           <div className="set-actions" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             {w.online && <SyncButton name={w.name} />}

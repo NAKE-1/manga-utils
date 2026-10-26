@@ -10,6 +10,7 @@ import io.ktor.server.response.respond
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mangautils.core.extension.ExtensionInstaller
+import mangautils.core.extension.InstalledStore
 import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -85,6 +86,7 @@ object WorkerMode {
     @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null)
     @Serializable data class SetExitReq(val node: String = "") // ip or MagicDNS name; "" = none (normal egress)
     @Serializable data class OkDto(val ok: Boolean, val error: String? = null)
+    @Serializable data class ExtInfo(val pkg: String, val name: String, val version: String, val beta: Boolean, val sources: Int)
 
     // ---- job model ----
     private class ChapterRec(val url: String, val name: String) {
@@ -237,6 +239,13 @@ object WorkerMode {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             jobs.remove(call.parameters["id"])
             call.respond(HttpStatusCode.OK)
+        }
+        // List the extensions installed on this node (pkg, name, version, beta) so main can show them.
+        get("/worker/extensions") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val list = runCatching { InstalledStore.list() }.getOrDefault(emptyList())
+                .map { ExtInfo(it.pkg, it.name, it.versionName, it.beta, it.sources.size) }.sortedBy { it.name.lowercase() }
+            call.respond(list)
         }
         // Receive and install one extension jar pushed from main (so a worker gets main's EXACT set,
         // including sideloaded beta/custom jars that aren't in any public repo). Reuses installLocalJar.

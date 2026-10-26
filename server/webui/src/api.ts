@@ -477,6 +477,7 @@ export const api = {
     const r = await fetch(`/api/workers/sync-extensions?name=${encodeURIComponent(name)}`, { method: 'POST' })
     return r.json() as Promise<{ synced: number; failed: number; total: number; errors: string[] }>
   },
+  workerExtensions: (name: string) => getJson<WorkerExt[]>(`/api/workers/extensions?name=${encodeURIComponent(name)}`, 1, 20000),
   workerExitNodes: (name: string) => getJson<ExitNodesDto>(`/api/workers/exit-nodes?name=${encodeURIComponent(name)}`, 1, 20000),
   workerSetExit: async (name: string, node: string) => {
     const r = await fetch(`/api/workers/exit-node?name=${encodeURIComponent(name)}&node=${encodeURIComponent(node)}`, { method: 'POST' })
@@ -484,6 +485,7 @@ export const api = {
   },
 }
 
+export interface WorkerExt { pkg: string; name: string; version: string; beta: boolean; sources: number }
 export interface ExitNode { name: string; ip: string; online: boolean; current: boolean }
 export interface ExitNodesDto { available: boolean; current: string; nodes: ExitNode[]; error?: string }
 

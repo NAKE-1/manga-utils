@@ -1834,6 +1834,12 @@ fun Application.module() {
             val node = WorkerStore.find(name) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
             call.respond(withContext(Dispatchers.IO) { Workers.syncExtensions(node) })
         }
+        get("/api/workers/extensions") {
+            val name = call.queryParam("name") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            val node = WorkerStore.find(name) ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+            val body = withContext(Dispatchers.IO) { Workers.extensions(node) } ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
+            call.respondText(body, io.ktor.http.ContentType.Application.Json)
+        }
         delete("/api/workers") {
             val name = call.queryParam("name") ?: return@delete call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
             if (WorkerStore.remove(name)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
@@ -2934,7 +2940,7 @@ fun Application.module() {
             availCache = null // a fresh install/update should re-read repos next browse
             val r = withContext(Dispatchers.IO) { runCatching { ExtensionInstaller().install(pkg) } }
             r.fold(
-                onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
+                onSuccess = { Workers.propagateToWorkers(it.jarPath); call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
                 onFailure = {
                     log.warn("extension install/update failed for {}: {}", pkg, it.message, it) // log the real cause
                     // Truthful status: the old .jar being locked by the running JVM is a local conflict
@@ -2964,7 +2970,7 @@ fun Application.module() {
                 }
             }
             r.fold(
-                onSuccess = { call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
+                onSuccess = { Workers.propagateToWorkers(it.jarPath); call.respond(InstallResultDto(it.pkg, it.name, it.sources.size)) },
                 onFailure = {
                     log.warn("local extension sideload failed: {}", it.message, it)
                     call.respond(HttpStatusCode.InternalServerError, ErrorDto(it.message ?: "Sideload failed"))

@@ -9,6 +9,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import mangautils.core.worker.WorkerNode
+import mangautils.core.worker.WorkerStore
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -115,5 +116,30 @@ object Workers {
             if (sent) ok++ else { bad++; errs.add(jar.fileName.toString()) }
         }
         return SyncResult(ok, bad, jars.size, errs.take(10))
+    }
+
+    /** The extensions installed on a worker (proxied through from its /worker/extensions). */
+    fun extensions(node: WorkerNode): String? = runCatching {
+        val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions")
+        if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+        exitClient.newCall(rb.build()).execute().use { it.body?.string() }
+    }.getOrNull()
+
+    /** After main installs/updates one extension, push that jar to every enabled worker (background,
+     *  best-effort) so the whole pool stays in lockstep with main. */
+    fun propagateToWorkers(jarPath: String) {
+        val file = java.nio.file.Path.of(jarPath)
+        if (!java.nio.file.Files.exists(file)) return
+        val workers = runCatching { WorkerStore.list().filter { it.enabled } }.getOrDefault(emptyList())
+        if (workers.isEmpty()) return
+        Thread {
+            val bytes = runCatching { java.nio.file.Files.readAllBytes(file) }.getOrNull() ?: return@Thread
+            for (node in workers) runCatching {
+                if (!onlineNow(node)) return@runCatching
+                val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions").post(bytes.toRequestBody(jarMedia))
+                if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+                syncClient.newCall(rb.build()).execute().use { it.isSuccessful }
+            }
+        }.apply { isDaemon = true; name = "ext-propagate" }.start()
     }
 }
