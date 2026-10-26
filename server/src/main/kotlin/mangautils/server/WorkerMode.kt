@@ -347,6 +347,7 @@ object WorkerMode {
                 else ExtensionInstaller.ProvidedMeta(
                     pkg = pkg,
                     nsfw = call.request.headers["X-Ext-Nsfw"] == "1",
+                    beta = call.request.headers["X-Ext-Beta"] == "1",
                     versionName = call.request.headers["X-Ext-Version"].orEmpty(),
                     versionCode = call.request.headers["X-Ext-Code"]?.toLongOrNull() ?: 0L,
                     classNames = classes,

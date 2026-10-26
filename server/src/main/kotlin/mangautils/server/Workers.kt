@@ -121,6 +121,7 @@ object Workers {
                 fun hdr(k: String, v: String) { rb.header(k, v.filter { it.code in 0x20..0x7e }) }
                 hdr("X-Ext-Pkg", m.pkg)
                 hdr("X-Ext-Nsfw", if (m.nsfw) "1" else "0")
+                hdr("X-Ext-Beta", if (m.beta) "1" else "0")
                 hdr("X-Ext-Version", m.versionName)
                 hdr("X-Ext-Code", m.versionCode.toString())
                 hdr("X-Ext-Classes", m.classNames.joinToString(";"))

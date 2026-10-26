@@ -121,6 +121,7 @@ class ExtensionInstaller(
     data class ProvidedMeta(
         val pkg: String,
         val nsfw: Boolean,
+        val beta: Boolean,
         val versionName: String,
         val versionCode: Long,
         val classNames: List<String>,
@@ -174,7 +175,9 @@ class ExtensionInstaller(
             pkg = pkg,
             versionFallback = pkg.versionName ?: "",
             codeFallback = pkg.versionCode,
-            beta = true,
+            // A plain local sideload is genuinely beta; a worker sync carries main's real beta flag so the
+            // node doesn't badge every extension BETA when only the actual sideloads are.
+            beta = provided?.beta ?: true,
         )
     }
 
