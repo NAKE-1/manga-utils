@@ -1001,6 +1001,14 @@ fun main() {
     // with "ConnectException: Permission denied: getsockopt". Forcing v4 fixes it and also prevents v6 leaks.
     // Must be set before the net stack initializes, i.e. before any socket use. (Sources use okhttp/v4 already.)
     System.setProperty("java.net.preferIPv4Stack", "true")
+    // WORKER=1: boot this same image as a headless IP-pool fetch node (just /worker/* behind a bearer
+    // token), NOT the full web server. Skips the library/extension/queue init below - a worker holds none
+    // of that. Everything after this branch is main-server-only.
+    if (System.getenv("WORKER").orEmpty().let { it == "1" || it.equals("true", ignoreCase = true) }) {
+        LogBuffer.install()
+        WorkerMode.run()
+        return
+    }
     // Disable the JVM's JAR URL cache. Without this, closing an extension's URLClassLoader still leaves a
     // cached JarFile open, which keeps the .jar LOCKED on Windows — so Unload → Update fails. Must run
     // before any extension jar is opened. (No-op-ish on Linux, which never had the lock.)
