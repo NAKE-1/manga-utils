@@ -20,6 +20,7 @@ import mangautils.core.config.SettingsStore
 import mangautils.core.config.AppConfig
 import mangautils.core.download.ChapterIdentity
 import mangautils.core.download.ChapterSelect
+import mangautils.core.download.DownloadListener
 import mangautils.core.download.DownloadManager
 import mangautils.core.download.ExistingPolicy
 import mangautils.core.download.SourceRef
@@ -69,7 +70,7 @@ object WorkerMode {
     // ---- DTOs ----
     @Serializable data class ChReq(val url: String, val name: String)
     @Serializable data class DownloadReqDto(val source: String, val manga: String, val title: String, val chapters: List<ChReq>, val clientTaskId: String = "")
-    @Serializable data class ChapterStatusDto(val url: String, val name: String, val state: String, val folder: String? = null, val files: Int = 0, val error: String? = null)
+    @Serializable data class ChapterStatusDto(val url: String, val name: String, val state: String, val folder: String? = null, val files: Int = 0, val error: String? = null, val pagesDone: Int = 0, val pagesTotal: Int = 0)
     @Serializable data class JobStatusDto(val id: String, val clientTaskId: String, val state: String, val title: String, val chapters: List<ChapterStatusDto>)
     @Serializable data class FileEntry(val path: String, val size: Long, val sha: String)
     @Serializable data class ManifestDto(val chapter: String, val files: List<FileEntry>)
@@ -92,6 +93,8 @@ object WorkerMode {
     private class ChapterRec(val url: String, val name: String) {
         @Volatile var folder: String? = null
         @Volatile var error: String? = null
+        @Volatile var pagesDone: Int = 0
+        @Volatile var pagesTotal: Int = 0
     }
     private class DlJob(val id: String, val clientTaskId: String, val sourceId: Long, val mangaUrl: String, val title: String, reqs: List<ChReq>) {
         val chapters = reqs.map { ChapterRec(it.url, it.name) }
@@ -114,16 +117,28 @@ object WorkerMode {
             val urls = job.chapters.map { it.url }.toSet()
             // Numbers let DownloadManager recover a chapter the source re-slugged (url changed since enqueue).
             val nums = job.chapters.mapNotNull { numFromName(it.name) }.toSet()
+            val byUrl = job.chapters.associateBy { it.url }
+            // Live progress: record each chapter's page count as it downloads, and resolve finished chapters'
+            // folders during the run (throttled) so main harvests them incrementally and the done-count
+            // climbs live, instead of everything landing in one jump at the very end.
+            var lastResolve = 0L
+            val listener = DownloadListener { p ->
+                byUrl[p.chapterUrl]?.let { it.pagesDone = p.pagesDone; it.pagesTotal = p.pagesTotal }
+                val now = System.currentTimeMillis()
+                if (now - lastResolve > 1500L) synchronized(job) {
+                    if (now - lastResolve > 1500L) { lastResolve = now; runCatching { resolveFolders(job) } }
+                }
+            }
             val dm = DownloadManager(
                 concurrency = s.downloadConcurrency,
                 retries = s.downloadRetries,
+                listener = listener,
                 existingPolicy = ExistingPolicy.SKIP,
                 downloadAsCbz = false, // folders, so the main harvests per page file + ComicInfo
             )
             dm.download(SourceRef(job.sourceId, job.mangaUrl), select = ChapterSelect.Urls(urls, nums), titleOverride = job.title)
-            // Resolve each requested chapter to its on-disk folder (or mark failed). This also catches a
-            // re-slugged chapter by its unique number when the url no longer matches.
-            resolveFolders(job)
+            // Final resolve: catch the last chapter(s) and any re-slugged one (unique-number fallback).
+            synchronized(job) { resolveFolders(job) }
             job.state = "done"
         } catch (e: Exception) {
             log.warn("worker download job {} failed: {}", job.id, e.message)
@@ -187,7 +202,7 @@ object WorkerMode {
                 job.state == "running" -> "pending"
                 else -> "failed"
             }
-            ChapterStatusDto(c.url, c.name, state, c.folder, 0, c.error)
+            ChapterStatusDto(c.url, c.name, state, c.folder, 0, c.error, c.pagesDone, c.pagesTotal)
         },
     )
 

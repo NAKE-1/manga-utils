@@ -74,6 +74,12 @@ object WorkerDelegate {
                 Thread.sleep(POLL_MS); null
             } ?: continue
 
+            // Live page progress: surface the chapter the worker is currently pulling (if any) so the task's
+            // bar moves like a local download instead of sitting still until a whole chapter harvests.
+            st.chapters.firstOrNull { it.state != "done" && it.pagesTotal > 0 }?.let { act ->
+                task.currentChapter = act.name; task.currentChapterUrl = act.url
+                task.pagesDone = act.pagesDone; task.pagesTotal = act.pagesTotal
+            }
             for (ch in st.chapters) {
                 if (isStopped()) break
                 if (ch.state != "done" || ch.folder == null) continue
