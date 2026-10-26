@@ -3,6 +3,12 @@ import { api, DlTask, Downloads as DownloadsT } from '../api'
 import { WebviewModal } from '../components/WebviewModal'
 
 const fmtSpeed = (kbps: number) => (kbps >= 1024 ? `${(kbps / 1024).toFixed(1)} MB/s` : `${Math.round(kbps)} KB/s`)
+// Each worker gets its own stable badge colour, keyed by its number (W-1, W-2, …).
+const WORKER_COLORS = ['#8b7cf6', '#5fce8f', '#e8a06e', '#5fb4ce', '#e86e8f', '#d6b84a', '#b07ce0', '#6ece9e']
+function workerColor(label: string): string {
+  const n = parseInt(label.replace(/\D/g, ''), 10) || 1
+  return WORKER_COLORS[(n - 1) % WORKER_COLORS.length]
+}
 function fmtEta(s: number): string {
   if (!isFinite(s) || s <= 0) return ''
   s = Math.round(s)
@@ -204,7 +210,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
   return (
     <div className="dlc">
       <div className="dlc-top">
-        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.worker && <span className="dlc-w" title={`Downloading on worker ${t.worker}`}>{t.worker}</span>}{t.mangaTitle}{running && (t.reArms ?? 0) > 0 && <span className="dlc-retry" title="Re-running chapters the source was too busy for">retry {t.reArms}</span>}</div>
+        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.worker && <span className="dlc-w" style={{ background: workerColor(t.worker) }} title={`Downloading on worker ${t.worker}`}>{t.worker}</span>}{t.mangaTitle}{running && (t.reArms ?? 0) > 0 && <span className="dlc-retry" title="Re-running chapters the source was too busy for">retry {t.reArms}</span>}</div>
         <div className="dlc-actions">
           {queued && (
             <span className="dlc-reorder">
