@@ -17,7 +17,7 @@ function Metric({ label, value, warn }: { label: string; value: string; warn?: b
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <span style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</span>
-      <span style={{ fontSize: 15, fontWeight: 600, color: warn ? 'var(--danger, #e5484d)' : 'var(--text)' }}>{value}</span>
+      <span style={{ fontSize: 15, fontWeight: 600, color: warn ? 'var(--danger, #e5484d)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
     </div>
   )
 }
@@ -110,16 +110,22 @@ export default function Workers() {
           </div>
 
           {w.online ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 12, marginTop: 12 }}>
-              <Metric label="Egress IP" value={w.egressIp || '-'} />
-              <Metric label="CPU" value={pct(w.metrics?.cpuPct)} warn={(w.metrics?.cpuPct ?? 0) > 90} />
-              <Metric label="RAM" value={pct(w.metrics?.memPct)} warn={(w.metrics?.memPct ?? 0) > 90} />
-              <Metric label="Temp" value={temp(w.metrics?.tempC)} warn={(w.metrics?.tempC ?? 0) > 80} />
-              <Metric label="Disk free" value={gb(w.metrics?.diskFreeGb)} />
-              <Metric label="In-flight" value={w.inflight == null ? '-' : String(w.inflight)} />
-              <Metric label="Load" value={w.metrics?.load1 == null ? '-' : String(w.metrics.load1)} />
-              <Metric label="Up" value={uptime(w.uptimeS) || '-'} />
-            </div>
+            <>
+              {/* Egress IP is a full IPv4 - give it its own line so it can't overflow a narrow metric cell. */}
+              <div style={{ marginTop: 12, fontSize: 13 }}>
+                <span style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontSize: 11 }}>Egress IP </span>
+                <b style={{ fontVariantNumeric: 'tabular-nums' }}>{w.egressIp || '-'}</b>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(68px, 1fr))', gap: 12, marginTop: 10 }}>
+                <Metric label="CPU" value={pct(w.metrics?.cpuPct)} warn={(w.metrics?.cpuPct ?? 0) > 90} />
+                <Metric label="RAM" value={pct(w.metrics?.memPct)} warn={(w.metrics?.memPct ?? 0) > 90} />
+                <Metric label="Temp" value={temp(w.metrics?.tempC)} warn={(w.metrics?.tempC ?? 0) > 80} />
+                <Metric label="Disk free" value={gb(w.metrics?.diskFreeGb)} />
+                <Metric label="In-flight" value={w.inflight == null ? '-' : String(w.inflight)} />
+                <Metric label="Load" value={w.metrics?.load1 == null ? '-' : String(w.metrics.load1)} />
+                <Metric label="Up" value={uptime(w.uptimeS) || '-'} />
+              </div>
+            </>
           ) : (
             <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>Offline · {w.error || 'unreachable'}</div>
           )}
