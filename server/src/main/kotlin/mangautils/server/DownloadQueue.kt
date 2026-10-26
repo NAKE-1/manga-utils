@@ -370,6 +370,12 @@ object DownloadQueue {
 
     fun tasks(): List<Task> = tasks.values.sortedBy { it.order }
 
+    // ---- dev/demo only: inject display-only fake tasks (never persisted, never run) to preview badges ----
+    fun devInjectFake(fakes: List<Task>) { fakes.forEach { tasks[it.id] = it } }
+    fun devClearFake() { tasks.keys.filter { it.startsWith("fake-") }.forEach { tasks.remove(it) } }
+    fun newFakeTask(id: String, title: String, chapters: Int): Task =
+        Task(id, 0L, "/demo/$id", title, (1..chapters).map { Chapter("/demo/$id/c$it", "Chapter $it") })
+
     /** Move a QUEUED task one place earlier/later by swapping its order with the adjacent queued task.
      *  No-op on running/finished tasks (their position is fixed). */
     @Synchronized

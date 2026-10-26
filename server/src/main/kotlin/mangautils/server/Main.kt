@@ -1852,6 +1852,26 @@ fun Application.module() {
             val body = withContext(Dispatchers.IO) { Workers.setExit(node, exit) } ?: return@post call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
             call.respondText(body, io.ktor.http.ContentType.Application.Json)
         }
+        // Dev/demo: inject display-only fake download tasks to preview the badges/states. Not persisted,
+        // never executed. Clear removes them (and the two demo workers).
+        post("/api/dev/fake-downloads") {
+            if (WorkerStore.find("demo-pi-1") == null) WorkerStore.add(WorkerNode("demo-pi-1", "http://127.0.0.1:1", ""))
+            if (WorkerStore.find("demo-pi-2") == null) WorkerStore.add(WorkerNode("demo-pi-2", "http://127.0.0.1:2", ""))
+            DownloadQueue.devInjectFake(listOf(
+                DownloadQueue.newFakeTask("fake-1", "One Piece", 40).apply { state = "running"; doneCount = 12; currentChapter = "Chapter 13"; pagesDone = 6; pagesTotal = 18; bytesPerSec = 430 * 1024.0; assignedWorker = "demo-pi-1" },
+                DownloadQueue.newFakeTask("fake-2", "Berserk", 30).apply { state = "running"; doneCount = 8; currentChapter = "Chapter 9"; pagesDone = 3; pagesTotal = 24; bytesPerSec = 260 * 1024.0; assignedWorker = "demo-pi-2" },
+                DownloadQueue.newFakeTask("fake-3", "Naruto", 25).apply { state = "running"; doneCount = 20; currentChapter = "Chapter 21"; pagesDone = 11; pagesTotal = 15; bytesPerSec = 900 * 1024.0 },
+                DownloadQueue.newFakeTask("fake-4", "Bleach", 15).apply { state = "running"; doneCount = 3; currentChapter = "Chapter 4"; pagesDone = 2; pagesTotal = 20; tag = "migration" },
+                DownloadQueue.newFakeTask("fake-5", "Chainsaw Man", 10).apply { state = "failed"; doneCount = 6; failedCount = 4; failClass = "gone"; error = "4 chapter(s) couldn't be downloaded" },
+                DownloadQueue.newFakeTask("fake-6", "Vinland Saga", 12).apply { state = "retrywait"; doneCount = 9; failedCount = 3; failClass = "transient"; reArms = 1; retryAt = System.currentTimeMillis() + 8 * 60_000 },
+            ))
+            call.respond(downloadsSnapshot())
+        }
+        post("/api/dev/fake-downloads/clear") {
+            DownloadQueue.devClearFake()
+            WorkerStore.remove("demo-pi-1"); WorkerStore.remove("demo-pi-2")
+            call.respond(downloadsSnapshot())
+        }
 
         // ---- Download manager (browse / delete on-disk content) ----
         // Broken-download detection: every series with interrupted/incomplete chapters (missing the
