@@ -69,6 +69,9 @@ object DownloadQueue {
         // main restart can re-adopt the in-flight job (or reclaim it if the worker/job is gone). "" = local.
         @Volatile var assignedWorker = ""
         @Volatile var remoteJobId = ""
+        // Pinned by pump() at dispatch time: false = run on main (the first same-source download), true =
+        // overflow to a free worker node. Main-first, so a lone download always runs locally.
+        @Volatile var preferWorker = false
         // Chapters that failed (for the Retry button); URLs of finished chapters (live progress).
         // Keyed by URL, not name: several scanlations of one chapter share a name, so a name-keyed
         // set would mark every version done as soon as any one of them finished.
@@ -178,7 +181,8 @@ object DownloadQueue {
         // worker's own session, so it doesn't consume main's budget (assignedWorker is set while delegated).
         val localPerSource = running.filter { it.assignedWorker.isBlank() }
             .groupingBy { it.sourceId }.eachCount().toMutableMap()
-        // Each free worker can take one task (any source); dispatch prefers a worker, overflow runs local.
+        // Each free worker can take one task (any source). Dispatch is MAIN-FIRST: the first download of a
+        // source runs locally on main; only additional same-source downloads overflow to a free worker.
         var workerBudget = freeWorkerCount()
         val now = System.currentTimeMillis()
         for (task in tasks.values.sortedBy { it.order }) {
@@ -187,20 +191,24 @@ object DownloadQueue {
             // A source that just rate-limited us is resting: don't start the next manga from it and cascade
             // the same failure down the whole queue. Other sources keep running; this one waits out its cooldown.
             if ((sourceCooldownUntil[task.sourceId] ?: 0) > now) continue
-            // Startable if a free worker can take it (separate session), else if main has same-source headroom.
             when {
-                workerBudget > 0 -> workerBudget--
-                (localPerSource[task.sourceId] ?: 0) < perSourceCap ->
+                // A task mid-flight on a worker before a restart reconnects to its job on a worker.
+                task.remoteJobId.isNotBlank() && workerBudget > 0 -> { workerBudget--; task.preferWorker = true }
+                // Main first: run locally while this source has headroom on main (perSourceCap, 1 by default).
+                (localPerSource[task.sourceId] ?: 0) < perSourceCap -> {
                     localPerSource[task.sourceId] = (localPerSource[task.sourceId] ?: 0) + 1
-                else -> continue // every node is at its per-source cap; wait for one to free up
+                    task.preferWorker = false
+                }
+                // Main is at its per-source cap: overflow this same-source download to a free worker.
+                workerBudget > 0 -> { workerBudget--; task.preferWorker = true }
+                else -> continue // main full for this source and no free worker; wait for a slot
             }
             task.state = "running"
             slots--
             futures[task.id] = pool.submit { run(task) }
         }
-        // ponytail: worker-vs-local is finalized in run()/reserveWorker, so a lost race (worker goes offline
-        // between here and there) can transiently put one extra same-source task on main. Self-corrects next
-        // pump; pin the node here if that ever matters.
+        // ponytail: the worker-vs-local choice is pinned on the task above; reserveWorker can still come back
+        // empty (a node went offline between here and there), in which case run() just downloads locally.
     }
 
     private fun run(task: Task) {
@@ -212,7 +220,8 @@ object DownloadQueue {
             // Worker pre-harvest: if a node is free, let it download what it can with its OWN cf_clearance
             // (true parallelism - other tasks keep running locally). Whatever it commits to main's disk is
             // then skipped by the local pass below. Best-effort: anything it misses falls through to local.
-            val worker = reserveWorker(task)
+            // Main-first: only reach for a worker when pump() flagged this task as an overflow (or a re-adopt).
+            val worker = if (task.preferWorker) reserveWorker(task) else null
             if (worker != null) {
                 task.assignedWorker = worker.name
                 try {

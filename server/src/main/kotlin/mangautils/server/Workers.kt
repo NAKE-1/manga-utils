@@ -105,6 +105,10 @@ object Workers {
         val jars = runCatching {
             java.nio.file.Files.list(dir).use { s -> s.filter { it.toString().endsWith(".jar") }.toList() }
         }.getOrDefault(emptyList())
+        // Metadata main already enumerated for each jar, keyed by jar filename, so the worker can install
+        // even a jar with no bundled manifest (APK-translated sources: mangahere, mangakatana, natsu, ...).
+        val byJar = runCatching { mangautils.core.extension.InstalledStore.list() }.getOrDefault(emptyList())
+            .associateBy { java.nio.file.Path.of(it.jarPath).fileName.toString() }
         var ok = 0; var bad = 0; val errs = ArrayList<String>()
         for (jar in jars) {
             // null = installed OK; else the worker's error message (or a transport failure) so the caller
@@ -113,6 +117,16 @@ object Workers {
                 val body = java.nio.file.Files.readAllBytes(jar).toRequestBody(jarMedia)
                 val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions").post(body)
                 if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+                byJar[jar.fileName.toString()]?.let { m ->
+                    // Header values are ASCII (package/class/version); strip just in case so one odd char
+                    // can't throw and fail a jar that would otherwise install fine.
+                    fun hdr(k: String, v: String) { rb.header(k, v.filter { it.code in 0x20..0x7e }) }
+                    hdr("X-Ext-Pkg", m.pkg)
+                    hdr("X-Ext-Nsfw", if (m.nsfw) "1" else "0")
+                    hdr("X-Ext-Version", m.versionName)
+                    hdr("X-Ext-Code", m.versionCode.toString())
+                    hdr("X-Ext-Classes", m.classNames.joinToString(";"))
+                }
                 syncClient.newCall(rb.build()).execute().use { r ->
                     if (r.isSuccessful) null else (r.body?.string()?.take(200)?.ifBlank { null } ?: "HTTP ${r.code}")
                 }

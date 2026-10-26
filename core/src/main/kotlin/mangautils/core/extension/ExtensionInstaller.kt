@@ -114,18 +114,36 @@ class ExtensionInstaller(
     }
 
     /**
+     * Metadata main already enumerated for a jar it installed, handed to a worker so it can install an
+     * APK-translated jar that carries no bundled AndroidManifest.xml (the manifest-based sideload path
+     * can't re-derive the source class from such a jar). Absent for a plain local sideload.
+     */
+    data class ProvidedMeta(
+        val pkg: String,
+        val nsfw: Boolean,
+        val versionName: String,
+        val versionCode: Long,
+        val classNames: List<String>,
+    )
+
+    /**
      * Sideload a locally-built jar (e.g. a custom beta build straight off your machine). Same tail as
      * a repo install — verify, enumerate, record — but no download and no signature check (it's a
      * local file you built, not something a repo served). Always flagged [beta].
+     *
+     * [provided] is main's own metadata for this jar (worker sync): used only to fill what the jar's
+     * manifest can't supply, so an APK-translated jar with no bundled manifest still installs. A jar
+     * that DOES carry a manifest is read from it exactly as before, untouched.
      */
-    fun installLocalJar(file: java.nio.file.Path): InstalledExtension {
+    fun installLocalJar(file: java.nio.file.Path, provided: ProvidedMeta? = null): InstalledExtension {
         ExtensionRuntime.ensureStarted()
         AppConfig.ensureLayout()
         require(java.nio.file.Files.exists(file)) { "No such file: $file" }
 
         val srcManifest = ExtensionLoader.readJarManifest(file.toString())
-            ?: error("$file is not an extension jar (no bundled AndroidManifest.xml).")
-        val pkgId = srcManifest.packageName.ifEmpty { file.fileName.toString().removeSuffix(".jar") }
+        val pkgId = srcManifest?.packageName?.ifEmpty { null }
+            ?: provided?.pkg
+            ?: file.fileName.toString().removeSuffix(".jar")
 
         val jarPath = AppConfig.extensionsDir.resolve("$pkgId.jar")
         ExtensionLoader.releaseJar(jarPath.toString())
@@ -133,14 +151,18 @@ class ExtensionInstaller(
         java.nio.file.Files.copy(file, jarPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
 
         val manifest = ExtensionLoader.readJarManifest(jarPath.toString())
-            ?: error("Copied jar has no readable manifest.")
+        // Source class: prefer the jar's own manifest meta; fall back to what main enumerated. (This is
+        // the whole fix - an APK-translated jar has no manifest, so without this the sideload threw
+        // "not an extension jar" / "no tachiyomi.extension.class metadata" on the worker.)
+        val sourceClass = manifest?.meta?.get(ExtensionLoader.METADATA_SOURCE_CLASS)
+            ?: provided?.classNames?.takeIf { it.isNotEmpty() }?.joinToString(";")
         val pkg =
             Pkg(
                 packageName = pkgId,
-                versionName = manifest.versionName,
-                versionCode = manifest.versionCode,
-                sourceClass = manifest.meta[ExtensionLoader.METADATA_SOURCE_CLASS],
-                nsfwMeta = manifest.meta[ExtensionLoader.METADATA_NSFW] == "1",
+                versionName = manifest?.versionName ?: provided?.versionName,
+                versionCode = (manifest?.versionCode ?: 0L).takeIf { it > 0 } ?: (provided?.versionCode ?: 0L),
+                sourceClass = sourceClass,
+                nsfwMeta = manifest?.meta?.get(ExtensionLoader.METADATA_NSFW) == "1" || provided?.nsfw == true,
             )
         val name = pkgId.substringAfterLast('.').replaceFirstChar { it.uppercaseChar() }
         return record(
@@ -150,8 +172,8 @@ class ExtensionInstaller(
             nsfw = pkg.nsfwMeta,
             jarPath = jarPath.toString(),
             pkg = pkg,
-            versionFallback = manifest.versionName ?: "",
-            codeFallback = manifest.versionCode,
+            versionFallback = pkg.versionName ?: "",
+            codeFallback = pkg.versionCode,
             beta = true,
         )
     }

@@ -34,21 +34,33 @@ function ExtList({ name }: { name: string }) {
 function SyncButton({ name }: { name: string }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [errs, setErrs] = useState<string[]>([])
   async function go() {
-    setBusy(true); setMsg('')
-    try { const r = await api.syncWorkerExtensions(name); setMsg(`Synced ${r.synced}/${r.total}${r.failed ? ` (${r.failed} failed)` : ''}`) }
-    catch { setMsg('Sync failed') } finally { setBusy(false) }
+    setBusy(true); setMsg(''); setErrs([])
+    try {
+      const r = await api.syncWorkerExtensions(name)
+      setMsg(`Synced ${r.synced}/${r.total}${r.failed ? ` (${r.failed} failed)` : ''}`)
+      setErrs(r.errors || [])
+    } catch { setMsg('Sync failed') } finally { setBusy(false) }
   }
   return (
     <>
       <button className="btn" disabled={busy} onClick={go}>{busy ? 'Syncing…' : 'Sync extensions'}</button>
       {msg && <span className="set-hint" style={{ marginLeft: 8, alignSelf: 'center' }}>{msg}</span>}
+      {/* Show WHICH jars failed and why ("name.jar: reason"), not just a count. */}
+      {errs.length > 0 && (
+        <div style={{ flexBasis: '100%', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {errs.map((e, i) => (
+            <div key={i} className="set-hint" style={{ color: 'var(--danger, #e5484d)', fontSize: 12, wordBreak: 'break-word' }}>{e}</div>
+          ))}
+        </div>
+      )}
     </>
   )
 }
 
 // Per-worker Tailscale exit-node switch: None (normal egress) or a chosen exit node.
-function ExitNodeControl({ name }: { name: string }) {
+function ExitNodeControl({ name, onChanged }: { name: string; onChanged?: () => void }) {
   const [data, setData] = useState<ExitNodesDto | null>(null)
   const [busy, setBusy] = useState(false)
   const load = () => api.workerExitNodes(name).then(setData).catch(() => setData({ available: false, current: '', nodes: [], error: 'unreachable' }))
@@ -58,7 +70,9 @@ function ExitNodeControl({ name }: { name: string }) {
   const currentIp = data.nodes.find((n) => n.current)?.ip ?? ''
   async function choose(ip: string) {
     setBusy(true)
-    try { await api.workerSetExit(name, ip); await load() } finally { setBusy(false) }
+    // workerSetExit returns only after the node has switched + re-probed egress, so refresh both the
+    // exit-node list and the parent worker card (new egress IP) right away - no page reload needed.
+    try { await api.workerSetExit(name, ip); await load(); onChanged?.() } finally { setBusy(false) }
   }
   return (
     <div style={{ marginTop: 10 }}>
@@ -226,7 +240,7 @@ export default function Workers() {
             <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>Offline · {w.error || 'unreachable'}</div>
           )}
 
-          {w.online && <ExitNodeControl name={w.name} />}
+          {w.online && <ExitNodeControl name={w.name} onChanged={load} />}
           {w.online && <ExtList name={w.name} />}
 
           <div className="set-actions" style={{ marginTop: 10, flexWrap: 'wrap' }}>

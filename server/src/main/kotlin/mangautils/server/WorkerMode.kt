@@ -300,9 +300,22 @@ object WorkerMode {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
             if (bytes.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, Err("empty jar"))
+            // Optional metadata main sends with the jar so a worker can install even an APK-translated jar
+            // that has no bundled manifest. Absent (older main) -> null -> install derives from the jar.
+            val provided = call.request.headers["X-Ext-Pkg"]?.let { pkg ->
+                val classes = call.request.headers["X-Ext-Classes"]?.split(";")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+                if (classes.isEmpty()) null
+                else ExtensionInstaller.ProvidedMeta(
+                    pkg = pkg,
+                    nsfw = call.request.headers["X-Ext-Nsfw"] == "1",
+                    versionName = call.request.headers["X-Ext-Version"].orEmpty(),
+                    versionCode = call.request.headers["X-Ext-Code"]?.toLongOrNull() ?: 0L,
+                    classNames = classes,
+                )
+            }
             val r = withContext(Dispatchers.IO) {
                 val tmp = Files.createTempFile("wsync-", ".jar")
-                try { Files.write(tmp, bytes); runCatching { ExtensionInstaller().installLocalJar(tmp) } }
+                try { Files.write(tmp, bytes); runCatching { ExtensionInstaller().installLocalJar(tmp, provided) } }
                 finally { Files.deleteIfExists(tmp) }
             }
             r.fold(onSuccess = { call.respond(OkDto(true)) }, onFailure = { call.respond(HttpStatusCode.InternalServerError, Err(it.message ?: "install failed")) })
