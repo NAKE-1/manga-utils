@@ -1,0 +1,6 @@
+# Files that run inside Linux containers must keep LF endings, even when checked
+# out on Windows (core.autocrlf=true). Without this, a Windows build CRLF-poisons
+# the Dockerfile's inlined entrypoint heredoc -> "exec /entrypoint.sh: no such file".
+Dockerfile   text eol=lf
+*.Dockerfile text eol=lf
+*.sh         text eol=lf
