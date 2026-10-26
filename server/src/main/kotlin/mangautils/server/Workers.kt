@@ -107,13 +107,17 @@ object Workers {
         }.getOrDefault(emptyList())
         var ok = 0; var bad = 0; val errs = ArrayList<String>()
         for (jar in jars) {
-            val sent = runCatching {
+            // null = installed OK; else the worker's error message (or a transport failure) so the caller
+            // sees WHY a jar was rejected, not just its name.
+            val err = runCatching {
                 val body = java.nio.file.Files.readAllBytes(jar).toRequestBody(jarMedia)
                 val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions").post(body)
                 if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
-                syncClient.newCall(rb.build()).execute().use { it.isSuccessful }
-            }.getOrDefault(false)
-            if (sent) ok++ else { bad++; errs.add(jar.fileName.toString()) }
+                syncClient.newCall(rb.build()).execute().use { r ->
+                    if (r.isSuccessful) null else (r.body?.string()?.take(200)?.ifBlank { null } ?: "HTTP ${r.code}")
+                }
+            }.getOrElse { it.message ?: "push failed" }
+            if (err == null) ok++ else { bad++; errs.add("${jar.fileName}: $err") }
         }
         return SyncResult(ok, bad, jars.size, errs.take(10))
     }
