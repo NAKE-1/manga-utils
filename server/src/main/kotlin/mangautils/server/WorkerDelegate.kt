@@ -66,6 +66,7 @@ object WorkerDelegate {
 
         val harvested = HashSet<String>()
         var lastProgress = System.currentTimeMillis()
+        try {
         while (true) {
             if (isStopped()) break
             val st = pollJob(node, jobId) ?: run {
@@ -112,9 +113,13 @@ object WorkerDelegate {
             if (System.currentTimeMillis() - lastProgress > STALL_MS) { log.warn("worker {} stalled on job {}", node.name, jobId); return Result(harvested, workerGone = true) }
             Thread.sleep(POLL_MS)
         }
-        // Done with this job: tell the worker to drop it (best effort).
-        runCatching { client.newCall(req(node, Request.Builder().url("${base(node)}/worker/download/$jobId/done").post(ByteArray(0).toRequestBody()))).execute().close() }
         return Result(harvested, workerGone = false)
+        } finally {
+            // Always tell the worker to drop AND stop this job - even on a stall/abandon, not just a clean
+            // finish - so it never orphan-runs the whole series after main has moved on (double work, and
+            // it'd keep shipping chapters main no longer tracks).
+            runCatching { client.newCall(req(node, Request.Builder().url("${base(node)}/worker/download/$jobId/done").post(ByteArray(0).toRequestBody()))).execute().close() }
+        }
     }
 
     private fun startJob(node: WorkerNode, task: DownloadQueue.Task): String? {

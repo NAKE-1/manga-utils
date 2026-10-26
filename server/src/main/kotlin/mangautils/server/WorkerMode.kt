@@ -99,6 +99,7 @@ object WorkerMode {
     private class DlJob(val id: String, val clientTaskId: String, val sourceId: Long, val mangaUrl: String, val title: String, reqs: List<ChReq>) {
         val chapters = reqs.map { ChapterRec(it.url, it.name) }
         @Volatile var state = "running" // running | done | failed
+        @Volatile var cancelled = false // main abandoned/stopped this job -> stop downloading (don't orphan-run)
         val createdAt = System.currentTimeMillis()
         // Job-level live progress (the chapter the worker is pulling right now + its speed). Main surfaces
         // these onto the task, exactly like a local download, so the card shows pages + KB/s.
@@ -157,6 +158,7 @@ object WorkerMode {
                 listener = listener,
                 existingPolicy = ExistingPolicy.SKIP,
                 downloadAsCbz = false, // folders, so the main harvests per page file + ComicInfo
+                cancelled = { job.cancelled }, // main dropped the job (/done) -> abort, don't orphan-run it
             )
             log.info("worker job {} START: {} chapter(s) of '{}'", job.id, job.chapters.size, job.title)
             dm.download(SourceRef(job.sourceId, job.mangaUrl), select = ChapterSelect.Urls(urls, nums), titleOverride = job.title)
@@ -290,7 +292,9 @@ object WorkerMode {
         }
         post("/worker/download/{id}/done") {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
-            jobs.remove(call.parameters["id"])
+            // Cancel the download too (not just drop the record), so a job main abandoned stops instead of
+            // orphan-running the whole series on this node.
+            call.parameters["id"]?.let { id -> jobs[id]?.let { it.cancelled = true }; jobs.remove(id) }
             call.respond(HttpStatusCode.OK)
         }
         // List the extensions installed on this node (pkg, name, version, beta) so main can show them.
