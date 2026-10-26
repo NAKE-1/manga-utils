@@ -17,6 +17,8 @@ data class WorkerNode(
     val url: String,
     val token: String = "",
     val enabled: Boolean = true,
+    /** Stable small id for the UI badge ("W-0001"). Assigned once on add; never reused. */
+    val num: Int = 0,
 )
 
 /**
@@ -33,10 +35,13 @@ object WorkerStore {
 
     fun find(name: String): WorkerNode? = list().firstOrNull { it.name == name }
 
-    /** Add (or replace by name). URL is normalized without a trailing slash. Returns the saved node. */
+    /** Add (or replace by name). URL is normalized; a new node gets the next badge number (kept on replace). */
     fun add(node: WorkerNode): WorkerNode {
-        val clean = node.copy(name = node.name.trim(), url = node.url.trim().trimEnd('/'))
-        save(list().filter { it.name != clean.name } + clean)
+        val cur = list()
+        val name = node.name.trim()
+        val num = cur.firstOrNull { it.name == name }?.num?.takeIf { it > 0 } ?: ((cur.maxOfOrNull { it.num } ?: 0) + 1)
+        val clean = node.copy(name = name, url = node.url.trim().trimEnd('/'), num = num)
+        save(cur.filter { it.name != clean.name } + clean)
         return clean
     }
 

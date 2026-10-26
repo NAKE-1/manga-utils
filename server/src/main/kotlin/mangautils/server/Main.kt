@@ -438,6 +438,8 @@ private fun validateVrf(json: String): Pair<Boolean, String> = runCatching {
     val sourceRestUntil: Long = 0,
     /** When state=="waitvf": the host whose human-check must be solved (drives the "Solve" button). */
     val vfHost: String = "",
+    /** Badge "W-0001" when this task is running on a worker node; "" = local on the main server. */
+    val worker: String = "",
 )
 @Serializable private data class DownloadsDto(val tasks: List<DlTaskDto>, val active: Int, val queued: Int, val totalKbps: Double)
 @Serializable private data class ManagedSeriesDto(val title: String, val chapters: Int, val incomplete: Int, val bytes: Long, val hasCover: Boolean, val sourceName: String = "")
@@ -925,6 +927,7 @@ private fun downloadsSnapshot(): DownloadsDto = DownloadsDto(
             it.sourceId.toString(), DownloadQueue.sourceName(it.sourceId),
             if (it.state == "queued") DownloadQueue.sourceRestUntil(it.sourceId) else 0,
             it.vfHost,
+            if (it.assignedWorker.isNotBlank()) "W-%04d".format(WorkerStore.find(it.assignedWorker)?.num ?: 0) else "",
         )
     },
     DownloadQueue.activeCount(),

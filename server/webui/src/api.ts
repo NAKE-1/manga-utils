@@ -540,6 +540,7 @@ export interface DlTask {
   sourceId?: string; sourceName?: string // for the per-source download tabs
   sourceRestUntil?: number // queued behind a rate-limited source: epoch ms it resumes (0 = not resting)
   vfHost?: string // state==="waitvf": host whose human-check must be solved to resume
+  worker?: string // "W-0001" when running on a worker node; "" = local
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 export interface UpdateSummary { newChapters: number; updatedManga: number; titles: { title: string; count: number }[]; checked?: number; failed?: number; failedTitles?: { source: string; title: string }[] }

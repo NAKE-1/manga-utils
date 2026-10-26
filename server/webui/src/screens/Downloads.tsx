@@ -204,7 +204,7 @@ function TaskCard({ t, onStop, onRetry, onResume, onForce, onMove, canUp, canDow
   return (
     <div className="dlc">
       <div className="dlc-top">
-        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.mangaTitle}{running && (t.reArms ?? 0) > 0 && <span className="dlc-retry" title="Re-running chapters the source was too busy for">retry {t.reArms}</span>}</div>
+        <div className="dlc-title">{t.tag === 'migration' && <span className="dlc-m" title="Migration download">M</span>}{t.worker && <span className="dlc-w" title={`Downloading on worker ${t.worker}`}>{t.worker}</span>}{t.mangaTitle}{running && (t.reArms ?? 0) > 0 && <span className="dlc-retry" title="Re-running chapters the source was too busy for">retry {t.reArms}</span>}</div>
         <div className="dlc-actions">
           {queued && (
             <span className="dlc-reorder">
