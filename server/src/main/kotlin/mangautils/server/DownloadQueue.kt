@@ -113,6 +113,20 @@ object DownloadQueue {
     }
     private fun releaseWorker(name: String) { busyWorkers.remove(name) }
 
+    /** Enabled workers not already handling a task. Each can run ONE more same-source download in its OWN
+     *  session + egress, so it adds to the per-source budget: to a source, a worker looks like a separate
+     *  client, so running the same source on a worker and on main at once is safe (and the whole point of
+     *  the pool). 0 when dispatch is off. No health probe here (that would block the pump lock on the
+     *  network) — an offline one just means reserveWorker returns null and the task runs locally instead. */
+    private fun freeWorkerCount(): Int {
+        val s = runCatching { SettingsStore.get() }.getOrNull() ?: return 0
+        if (s.workerDispatch != true) return 0
+        val pick = s.workerNode
+        return runCatching {
+            WorkerStore.list().count { it.enabled && (pick.isBlank() || it.name == pick) && it.name !in busyWorkers }
+        }.getOrDefault(0)
+    }
+
     // Fires parked (retrywait) tasks once their cooldown elapses. Cheap 10s tick; a parked task holds no
     // pool slot, it just waits here for the source's rate-limit window to reset.
     private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dl-retry").apply { isDaemon = true } }
@@ -152,26 +166,41 @@ object DownloadQueue {
     @Synchronized
     private fun pump() {
         ensurePool()
-        // How many manga may run from ONE source at once: 1 (gentle, default) or perSourceLimit when the
-        // same-source-parallel toggle is on.
+        // How many manga may run from ONE source on ONE node at once: 1 (gentle, default) or perSourceLimit
+        // when the same-source-parallel toggle is on. The cap is PER NODE: main counts its own local
+        // same-source downloads here; each free worker adds one more slot because it hits the source from its
+        // own session/egress (one Atsumaru on main AND one on the Pi is fine; twelve from one box is not).
         val perSourceCap = if (perSourceParallel()) perSourceLimit() else 1
         val running = tasks.values.filter { it.state == "running" }
         var slots = poolSize - running.size
         if (slots <= 0) return
-        val perSourceCount = running.groupingBy { it.sourceId }.eachCount().toMutableMap()
+        // Only downloads running on MAIN count against main's per-source cap; a task on a worker uses that
+        // worker's own session, so it doesn't consume main's budget (assignedWorker is set while delegated).
+        val localPerSource = running.filter { it.assignedWorker.isBlank() }
+            .groupingBy { it.sourceId }.eachCount().toMutableMap()
+        // Each free worker can take one task (any source); dispatch prefers a worker, overflow runs local.
+        var workerBudget = freeWorkerCount()
         val now = System.currentTimeMillis()
         for (task in tasks.values.sortedBy { it.order }) {
             if (slots <= 0) break
             if (task.state != "queued") continue
-            if ((perSourceCount[task.sourceId] ?: 0) >= perSourceCap) continue
             // A source that just rate-limited us is resting: don't start the next manga from it and cascade
             // the same failure down the whole queue. Other sources keep running; this one waits out its cooldown.
             if ((sourceCooldownUntil[task.sourceId] ?: 0) > now) continue
+            // Startable if a free worker can take it (separate session), else if main has same-source headroom.
+            when {
+                workerBudget > 0 -> workerBudget--
+                (localPerSource[task.sourceId] ?: 0) < perSourceCap ->
+                    localPerSource[task.sourceId] = (localPerSource[task.sourceId] ?: 0) + 1
+                else -> continue // every node is at its per-source cap; wait for one to free up
+            }
             task.state = "running"
-            perSourceCount[task.sourceId] = (perSourceCount[task.sourceId] ?: 0) + 1
             slots--
             futures[task.id] = pool.submit { run(task) }
         }
+        // ponytail: worker-vs-local is finalized in run()/reserveWorker, so a lost race (worker goes offline
+        // between here and there) can transiently put one extra same-source task on main. Self-corrects next
+        // pump; pin the node here if that ever matters.
     }
 
     private fun run(task: Task) {
