@@ -2,269 +2,286 @@ package mangautils.server
 
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
+import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
-import io.ktor.server.routing.routing
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import mangautils.core.convert.ImageFormat
+import mangautils.core.config.SettingsStore
+import mangautils.core.config.AppConfig
+import mangautils.core.download.ChapterIdentity
+import mangautils.core.download.ChapterSelect
+import mangautils.core.download.DownloadManager
+import mangautils.core.download.ExistingPolicy
+import mangautils.core.download.SourceRef
+import mangautils.core.util.Hashing
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.slf4j.LoggerFactory
-import java.security.MessageDigest
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Worker-node mode (WORKER=1) — the same manga-utils image booted as a headless IP-pool fetcher instead
- * of the web server. It runs ONE ban-prone step for the main server: fetch a chapter's page images from
- * THIS node's IP, verify each is an image, and hold the bytes (with a SHA-256) until the main server pulls
- * and acks them. No library, no extensions, no web UI — just okhttp + ImageFormat, reused from :core.
+ * Worker-node role. A worker is a FULL manga-utils image (extensions + solver + flaresolverr + its own
+ * cf_clearance) that the main server delegates whole chapters to; it downloads them with its own session
+ * and the main pulls the finished files back. Set with WORKER_TOKEN (enables these routes) + WORKER=1
+ * (disables autonomous schedulers in main(), so the node only does delegated work).
  *
- * Lifecycle (async, so one dispatch covers a whole chapter and survives a slow page):
- *   POST /worker/jobs            {pages:[{index,url,headers}]}      -> {id}
- *   GET  /worker/jobs/{id}       -> {state, pages:[{index,state,sha,size,status,error}]}
- *   GET  /worker/jobs/{id}/artifact/{index}  -> raw image bytes (+ X-Sha256)   main pulls + re-hashes
- *   POST /worker/jobs/{id}/ack   -> frees the held bytes
- *   GET  /worker/health          -> version, egressIp, inflight/idle, metrics{cpu,mem,temp,disk,net,load}
- *
- * All worker routes require `Authorization: Bearer <WORKER_TOKEN>` when WORKER_TOKEN is set (keeps a
- * stray tailnet host from using this node as an open proxy). Bind is tailnet-only in practice.
+ * Routes (all require `Authorization: Bearer <WORKER_TOKEN>`):
+ *   GET  /worker/health                               version, egressIp, metrics{cpu,mem,temp,disk,net,load}
+ *   POST /worker/download  {source,manga,title,chapters,clientTaskId}  -> {id}
+ *   GET  /worker/download/{id}                        per-chapter state (done chapters carry their folder)
+ *   GET  /worker/download/{id}/manifest?chapter=F     files of one done chapter: [{path,size,sha}]
+ *   GET  /worker/download/{id}/file?chapter=F&path=P  raw bytes of one file (path-sanitized)
+ *   POST /worker/download/{id}/ack?chapter=F          main committed F -> delete it on the worker
+ *   POST /worker/download/{id}/done                   drop the job record
+ *   GET  /worker/jobs                                 [{id,clientTaskId,state}] for re-adoption after a main restart
  */
 object WorkerMode {
     private val log = LoggerFactory.getLogger(javaClass)
-    private const val VERSION = "0.1.0"
+    private const val VERSION = "0.2.0"
     private val token = System.getenv("WORKER_TOKEN").orEmpty()
     private val started = System.currentTimeMillis()
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .callTimeout(25, TimeUnit.SECONDS)
-        .build()
+    /** Worker routes are live only when a token is configured (so a plain main server never exposes them). */
+    fun enabled(): Boolean = token.isNotEmpty()
 
-    // Bounded fetch pool: a worker is one IP, so a handful of concurrent GETs is plenty and keeps us from
-    // hammering a single source edge. ponytail: fixed size; make it an env knob only if a node ever starves.
-    private val pool = Executors.newFixedThreadPool(6)
+    // One download job at a time is plenty for a single node; a small pool lets a couple overlap if asked.
+    private val pool = Executors.newFixedThreadPool(2)
+    private val jobs = ConcurrentHashMap<String, DlJob>()
+    private var seq = 0L
+    @Volatile private var egressIp: String? = null
+    private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
 
-    @Serializable data class PageReq(val index: Int, val url: String, val headers: Map<String, String> = emptyMap())
-    @Serializable data class JobReq(val pages: List<PageReq>)
-    @Serializable data class JobCreated(val id: String, val pages: Int)
-    @Serializable data class PageStatus(
-        val index: Int, val state: String, val sha: String? = null, val size: Int = 0,
-        val status: Int = 0, val contentType: String? = null, val error: String? = null,
-    )
-    @Serializable data class JobStatus(val id: String, val state: String, val pages: List<PageStatus>)
+    // ---- DTOs ----
+    @Serializable data class ChReq(val url: String, val name: String)
+    @Serializable data class DownloadReqDto(val source: String, val manga: String, val title: String, val chapters: List<ChReq>, val clientTaskId: String = "")
+    @Serializable data class ChapterStatusDto(val url: String, val name: String, val state: String, val folder: String? = null, val files: Int = 0, val error: String? = null)
+    @Serializable data class JobStatusDto(val id: String, val clientTaskId: String, val state: String, val title: String, val chapters: List<ChapterStatusDto>)
+    @Serializable data class FileEntry(val path: String, val size: Long, val sha: String)
+    @Serializable data class ManifestDto(val chapter: String, val files: List<FileEntry>)
+    @Serializable data class JobRow(val id: String, val clientTaskId: String, val state: String)
+    @Serializable data class Created(val id: String)
+    @Serializable data class Err(val error: String)
     @Serializable data class Metrics(
         val cpuPct: Double? = null, val memPct: Double? = null, val tempC: Double? = null,
         val diskFreeGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
-    @Serializable data class Health(
-        val version: String, val uptimeS: Long, val egressIp: String,
-        val inflight: Int, val idle: Boolean, val metrics: Metrics,
-    )
-    @Serializable data class ErrDto(val error: String)
+    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics)
 
-    private class Page(val req: PageReq) {
-        @Volatile var state = "pending" // pending | ok | failed
-        @Volatile var sha: String? = null
-        @Volatile var bytes: ByteArray? = null
-        @Volatile var size = 0
-        @Volatile var status = 0
-        @Volatile var contentType: String? = null
+    // ---- job model ----
+    private class ChapterRec(val url: String, val name: String) {
+        @Volatile var folder: String? = null
         @Volatile var error: String? = null
     }
-    private class Job(val id: String, pageReqs: List<PageReq>) {
-        val pages = pageReqs.map { Page(it) }
-        @Volatile var state = "running" // running | done
+    private class DlJob(val id: String, val clientTaskId: String, val sourceId: Long, val mangaUrl: String, val title: String, reqs: List<ChReq>) {
+        val chapters = reqs.map { ChapterRec(it.url, it.name) }
+        @Volatile var state = "running" // running | done | failed
         val createdAt = System.currentTimeMillis()
     }
 
-    private val jobs = ConcurrentHashMap<String, Job>()
-    private var jobSeq = 0L
-    @Volatile private var egressIp: String? = null
-
-    fun run() {
-        val port = System.getenv("WORKER_PORT")?.toIntOrNull() ?: 8790
-        log.info("Starting manga-utils WORKER node on 0.0.0.0:{} (auth={})", port, if (token.isNotEmpty()) "on" else "off")
-        Thread { reapOldJobs() }.apply { isDaemon = true; name = "worker-reaper" }.start()
-        embeddedServer(Netty, port = port, host = "0.0.0.0") { module() }.start(wait = false)
-        log.info("worker ready; egress IP = {}", egress())
-        java.util.concurrent.CountDownLatch(1).await()
+    private fun start(req: DownloadReqDto): String {
+        val id = synchronized(this) { "d${++seq}-${System.currentTimeMillis().toString(36)}" }
+        val job = DlJob(id, req.clientTaskId, req.source.toLongOrNull() ?: 0L, req.manga, req.title, req.chapters)
+        jobs[id] = job
+        pool.submit { runJob(job) }
+        return id
     }
 
-    private fun Application.module() {
-        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
-        routing {
-            get("/worker/health") {
-                if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, ErrDto("unauthorized"))
-                val inflight = jobs.values.count { it.state == "running" }
-                call.respond(Health(VERSION, (System.currentTimeMillis() - started) / 1000, egress(), inflight, inflight == 0, metrics()))
+    /** Download the job's chapters to this node's own disk via the normal DownloadManager (own clearance). */
+    private fun runJob(job: DlJob) {
+        try {
+            val s = SettingsStore.get()
+            val urls = job.chapters.map { it.url }.toSet()
+            // Numbers let DownloadManager recover a chapter the source re-slugged (url changed since enqueue).
+            val nums = job.chapters.mapNotNull { numFromName(it.name) }.toSet()
+            val dm = DownloadManager(
+                concurrency = s.downloadConcurrency,
+                retries = s.downloadRetries,
+                existingPolicy = ExistingPolicy.SKIP,
+                downloadAsCbz = false, // folders, so the main harvests per page file + ComicInfo
+            )
+            dm.download(SourceRef(job.sourceId, job.mangaUrl), select = ChapterSelect.Urls(urls, nums), titleOverride = job.title)
+            // Resolve each requested chapter to its on-disk folder (or mark failed). This also catches a
+            // re-slugged chapter by its unique number when the url no longer matches.
+            resolveFolders(job)
+            job.state = "done"
+        } catch (e: Exception) {
+            log.warn("worker download job {} failed: {}", job.id, e.message)
+            runCatching { resolveFolders(job) }
+            job.state = "failed"
+        }
+    }
+
+    private fun resolveFolders(job: DlJob) {
+        val have = runCatching { ChapterIdentity.versionsOf(job.title).filter { it.complete } }.getOrDefault(emptyList())
+        for (c in job.chapters) {
+            if (c.folder != null) continue
+            val v = have.firstOrNull { it.url == c.url }
+                ?: numFromName(c.name)?.let { n ->
+                    have.filter { it.number == n }.takeIf { it.size == 1 }?.first() // unique-number fallback
+                }
+            if (v?.folder != null) c.folder = v.folder else c.error = c.error ?: "not downloaded"
+        }
+    }
+
+    // ---- disk access (title + folder resolved to a safe absolute path under the downloads dir) ----
+    private fun seriesDir(title: String): Path = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))
+
+    private fun chapterDir(job: DlJob, folder: String): Path? {
+        // Only a folder this job actually produced is reachable, and it must be a single path segment.
+        if (folder.isBlank() || folder.contains('/') || folder.contains('\\') || folder.contains("..")) return null
+        if (job.chapters.none { it.folder == folder }) return null
+        val dir = seriesDir(job.title).resolve(folder).normalize()
+        if (!dir.startsWith(seriesDir(job.title)) || !Files.isDirectory(dir)) return null
+        return dir
+    }
+
+    private fun manifest(job: DlJob, folder: String): ManifestDto? {
+        val dir = chapterDir(job, folder) ?: return null
+        val files = Files.list(dir).use { st ->
+            st.filter { Files.isRegularFile(it) }.toList().map { p ->
+                FileEntry(p.fileName.toString(), runCatching { Files.size(p) }.getOrDefault(0L), Hashing.hashFile(p))
             }
-            post("/worker/jobs") {
-                if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, ErrDto("unauthorized"))
-                val req = runCatching { call.receive<JobReq>() }.getOrNull()
-                    ?: return@post call.respond(HttpStatusCode.BadRequest, ErrDto("bad job body"))
-                if (req.pages.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, ErrDto("no pages"))
-                val id = synchronized(this@WorkerMode) { "w${++jobSeq}-${System.currentTimeMillis().toString(36)}" }
-                val job = Job(id, req.pages)
-                jobs[id] = job
-                job.pages.forEach { p -> pool.submit { fetch(p) }.also { /* fire-and-track via page.state */ } }
-                // Flip to done once every page settled — cheap watcher thread per job (short-lived).
-                Thread { awaitDone(job) }.apply { isDaemon = true; name = "worker-job-$id" }.start()
-                call.respond(HttpStatusCode.Accepted, JobCreated(id, req.pages.size))
+        }
+        return ManifestDto(folder, files.sortedBy { it.path })
+    }
+
+    private fun fileBytes(job: DlJob, folder: String, name: String): ByteArray? {
+        val dir = chapterDir(job, folder) ?: return null
+        if (name.isBlank() || name.contains('/') || name.contains('\\') || name.contains("..")) return null
+        val f = dir.resolve(name).normalize()
+        if (!f.startsWith(dir) || !Files.isRegularFile(f)) return null
+        return Files.readAllBytes(f)
+    }
+
+    private fun ackChapter(job: DlJob, folder: String): Boolean {
+        val dir = chapterDir(job, folder) ?: return false
+        return runCatching { Files.walk(dir).use { it.sorted(Comparator.reverseOrder()).forEach { p -> Files.deleteIfExists(p) } }; true }.getOrDefault(false)
+    }
+
+    private fun status(job: DlJob): JobStatusDto = JobStatusDto(
+        job.id, job.clientTaskId, job.state, job.title,
+        job.chapters.map { c ->
+            val state = when {
+                c.folder != null -> "done"
+                job.state == "running" -> "pending"
+                else -> "failed"
             }
-            get("/worker/jobs/{id}") {
-                if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, ErrDto("unauthorized"))
-                val job = jobs[call.parameters["id"]] ?: return@get call.respond(HttpStatusCode.NotFound, ErrDto("no such job"))
-                call.respond(JobStatus(job.id, job.state, job.pages.map {
-                    PageStatus(it.req.index, it.state, it.sha, it.size, it.status, it.contentType, it.error)
-                }))
-            }
-            get("/worker/jobs/{id}/artifact/{index}") {
-                if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, ErrDto("unauthorized"))
-                val job = jobs[call.parameters["id"]] ?: return@get call.respond(HttpStatusCode.NotFound, ErrDto("no such job"))
-                val idx = call.parameters["index"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, ErrDto("bad index"))
-                val page = job.pages.firstOrNull { it.req.index == idx } ?: return@get call.respond(HttpStatusCode.NotFound, ErrDto("no such page"))
-                val data = page.bytes
-                if (page.state != "ok" || data == null) return@get call.respond(HttpStatusCode.Conflict, ErrDto("page not ready: ${page.state}"))
-                call.respondBytes(data, ContentType.parse(page.contentType?.ifBlank { null } ?: "application/octet-stream"), HttpStatusCode.OK)
-            }
-            post("/worker/jobs/{id}/ack") {
-                if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, ErrDto("unauthorized"))
-                val removed = jobs.remove(call.parameters["id"])
-                removed?.pages?.forEach { it.bytes = null } // free held image bytes immediately
-                if (removed == null) call.respond(HttpStatusCode.NotFound, ErrDto("no such job")) else call.respond(HttpStatusCode.OK)
-            }
+            ChapterStatusDto(c.url, c.name, state, c.folder, 0, c.error)
+        },
+    )
+
+    // ---- routes (mounted by Application.module when enabled()) ----
+    fun Route.workerRoutes() {
+        get("/worker/health") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val inflight = jobs.values.count { it.state == "running" }
+            call.respond(Health(VERSION, (System.currentTimeMillis() - started) / 1000, egress(), inflight, inflight == 0, metrics()))
+        }
+        get("/worker/jobs") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            call.respond(jobs.values.map { JobRow(it.id, it.clientTaskId, it.state) })
+        }
+        post("/worker/download") {
+            if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val req = runCatching { call.receive<DownloadReqDto>() }.getOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, Err("bad body"))
+            if (req.chapters.isEmpty() || req.manga.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, Err("no chapters"))
+            call.respond(HttpStatusCode.Accepted, Created(start(req)))
+        }
+        get("/worker/download/{id}") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val job = jobs[call.parameters["id"]] ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such job"))
+            call.respond(status(job))
+        }
+        get("/worker/download/{id}/manifest") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val job = jobs[call.parameters["id"]] ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such job"))
+            val folder = call.request.queryParameters["chapter"] ?: return@get call.respond(HttpStatusCode.BadRequest, Err("missing chapter"))
+            val m = manifest(job, folder) ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such chapter"))
+            call.respond(m)
+        }
+        get("/worker/download/{id}/file") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val job = jobs[call.parameters["id"]] ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such job"))
+            val folder = call.request.queryParameters["chapter"] ?: return@get call.respond(HttpStatusCode.BadRequest, Err("missing chapter"))
+            val path = call.request.queryParameters["path"] ?: return@get call.respond(HttpStatusCode.BadRequest, Err("missing path"))
+            val bytes = fileBytes(job, folder, path) ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such file"))
+            call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.OK)
+        }
+        post("/worker/download/{id}/ack") {
+            if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val job = jobs[call.parameters["id"]] ?: return@post call.respond(HttpStatusCode.NotFound, Err("no such job"))
+            val folder = call.request.queryParameters["chapter"] ?: return@post call.respond(HttpStatusCode.BadRequest, Err("missing chapter"))
+            if (ackChapter(job, folder)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, Err("no such chapter"))
+        }
+        post("/worker/download/{id}/done") {
+            if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            jobs.remove(call.parameters["id"])
+            call.respond(HttpStatusCode.OK)
         }
     }
 
     private fun ApplicationCall.authed(): Boolean {
-        if (token.isEmpty()) return true
+        if (token.isEmpty()) return false // routes shouldn't even mount, but never serve without a token
         val h = request.headers["Authorization"] ?: return false
         return h.startsWith("Bearer ") && h.removePrefix("Bearer ").trim() == token
     }
 
-    /** Fetch one page from this node's IP, validate it's an image, hold the bytes + SHA-256. */
-    private fun fetch(p: Page) {
-        try {
-            val rb = Request.Builder().url(p.req.url)
-            p.req.headers.forEach { (k, v) -> rb.header(k, v) }
-            client.newCall(rb.build()).execute().use { resp ->
-                p.status = resp.code
-                p.contentType = resp.header("Content-Type")
-                val data = resp.body?.bytes() ?: ByteArray(0)
-                if (!resp.isSuccessful) { p.state = "failed"; p.error = "HTTP ${resp.code}"; p.size = data.size; return }
-                if (!ImageFormat.looksLikeImage(data)) { p.state = "failed"; p.error = "not an image (${data.size} bytes)"; p.size = data.size; return }
-                p.bytes = data
-                p.size = data.size
-                p.sha = sha256(data)
-                p.state = "ok"
-            }
-        } catch (e: Exception) {
-            p.state = "failed"; p.error = e.message ?: e.toString()
-        }
+    private fun numFromName(name: String): Float? {
+        val m = Regex("(?i)chapter\\s*([0-9]+(?:\\.[0-9]+)?)").find(name) ?: Regex("([0-9]+(?:\\.[0-9]+)?)").find(name)
+        return m?.groupValues?.getOrNull(1)?.toFloatOrNull()
     }
 
-    private fun awaitDone(job: Job) {
-        while (job.pages.any { it.state == "pending" }) Thread.sleep(50)
-        job.state = "done"
-    }
-
-    /** Drop jobs the main server never acked (crashed mid-pull) so held image bytes can't leak. */
-    private fun reapOldJobs() {
-        while (true) {
-            Thread.sleep(60_000)
-            val cutoff = System.currentTimeMillis() - 10 * 60_000
-            jobs.entries.removeIf { (_, j) -> j.createdAt < cutoff }
-        }
-    }
-
-    private fun sha256(b: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
-
-    private fun egress(): String {
-        egressIp?.let { return it }
-        for (u in listOf("https://api.ipify.org", "https://ifconfig.me/ip")) {
-            runCatching {
-                client.newCall(Request.Builder().url(u).build()).execute().use { r ->
-                    val t = r.body?.string()?.trim().orEmpty()
-                    if (r.isSuccessful && t.isNotEmpty()) { egressIp = t; return t }
-                }
-            }
-        }
-        egressIp = "" // cache the miss; don't re-probe every health poll
-        return ""
-    }
-
-    // ---- metrics: Linux pseudo-files; each probe guarded so a non-Linux box just reports null ----------
+    // ---- health metrics: Linux pseudo-files; each probe guarded so a non-Linux box reports null ----
     private fun read(path: String): String? = runCatching { java.io.File(path).readText() }.getOrNull()
 
-    private fun metrics(): Metrics = Metrics(
-        cpuPct = cpuPct(), memPct = memPct(), tempC = tempC(),
-        diskFreeGb = diskFreeGb(), diskPct = diskPct(),
-        netRxBytes = net()?.first, netTxBytes = net()?.second, load1 = load1(),
-    )
-
+    private fun metrics(): Metrics {
+        val n = net()
+        return Metrics(cpuPct(), memPct(), tempC(), diskFreeGb(), diskPct(), n?.first, n?.second, load1())
+    }
     private fun cpuSnap(): Pair<Long, Long>? {
         val first = read("/proc/stat")?.lineSequence()?.firstOrNull { it.startsWith("cpu ") } ?: return null
         val v = first.trim().split(Regex("\\s+")).drop(1).mapNotNull { it.toLongOrNull() }
         if (v.size < 4) return null
-        val idle = v[3] + (v.getOrElse(4) { 0 })
-        return v.sum() to idle
+        return v.sum() to (v[3] + v.getOrElse(4) { 0 })
     }
-
     private fun cpuPct(): Double? {
-        val a = cpuSnap() ?: return null
-        Thread.sleep(200)
-        val b = cpuSnap() ?: return null
+        val a = cpuSnap() ?: return null; Thread.sleep(200); val b = cpuSnap() ?: return null
         val dt = b.first - a.first; val di = b.second - a.second
         return if (dt > 0) ((dt - di) * 1000 / dt) / 10.0 else null
     }
-
     private fun memPct(): Double? {
-        val txt = read("/proc/meminfo") ?: return null
-        val kv = txt.lineSequence().mapNotNull {
+        val kv = (read("/proc/meminfo") ?: return null).lineSequence().mapNotNull {
             val p = it.split(Regex("\\s+")); if (p.size >= 2) p[0].removeSuffix(":") to (p[1].toLongOrNull() ?: 0) else null
         }.toMap()
-        val total = kv["MemTotal"] ?: return null
-        val avail = kv["MemAvailable"] ?: return null
+        val total = kv["MemTotal"] ?: return null; val avail = kv["MemAvailable"] ?: return null
         return if (total > 0) ((total - avail) * 1000 / total) / 10.0 else null
     }
-
     private fun tempC(): Double? {
         var best: Double? = null
         for (i in 0 until 12) {
             val v = read("/sys/class/thermal/thermal_zone$i/temp")?.trim()?.toLongOrNull() ?: continue
-            val c = v / 1000.0
-            best = if (best == null) c else maxOf(best!!, c)
+            val c = v / 1000.0; best = if (best == null) c else maxOf(best!!, c)
         }
         return best?.let { (it * 10).toLong() / 10.0 }
     }
-
     private fun diskFreeGb(): Double? = runCatching {
-        val s = java.nio.file.FileSystems.getDefault().getPath("/").let { java.nio.file.Files.getFileStore(it) }
-        (s.usableSpace / 1e8).toLong() / 10.0
+        (Files.getFileStore(java.nio.file.FileSystems.getDefault().getPath("/")).usableSpace / 1e8).toLong() / 10.0
     }.getOrNull()
-
     private fun diskPct(): Double? = runCatching {
-        val store = java.nio.file.Files.getFileStore(java.nio.file.FileSystems.getDefault().getPath("/"))
-        val total = store.totalSpace; val free = store.usableSpace
-        if (total > 0) ((total - free) * 1000 / total) / 10.0 else null
+        val s = Files.getFileStore(java.nio.file.FileSystems.getDefault().getPath("/"))
+        if (s.totalSpace > 0) ((s.totalSpace - s.usableSpace) * 1000 / s.totalSpace) / 10.0 else null
     }.getOrNull()
-
     private fun net(): Pair<Long, Long>? {
         val txt = read("/proc/net/dev") ?: return null
         var rx = 0L; var tx = 0L
@@ -276,6 +293,29 @@ object WorkerMode {
         }
         return rx to tx
     }
-
     private fun load1(): Double? = read("/proc/loadavg")?.trim()?.split(" ")?.firstOrNull()?.toDoubleOrNull()
+
+    private fun egress(): String {
+        egressIp?.let { return it }
+        for (u in listOf("https://api.ipify.org", "https://ifconfig.me/ip")) {
+            runCatching {
+                httpClient.newCall(Request.Builder().url(u).build()).execute().use { r ->
+                    val t = r.body?.string()?.trim().orEmpty()
+                    if (r.isSuccessful && t.isNotEmpty()) { egressIp = t; return t }
+                }
+            }
+        }
+        egressIp = ""; return ""
+    }
+
+    /** Drop jobs the main never finished pulling (main crashed) so held files don't pile up forever. */
+    fun startReaper() {
+        Thread {
+            while (true) {
+                Thread.sleep(300_000)
+                val cutoff = System.currentTimeMillis() - 6 * 3600_000 // 6h: generous, main re-adopts by clientTaskId
+                jobs.entries.removeIf { (_, j) -> j.state != "running" && j.createdAt < cutoff }
+            }
+        }.apply { isDaemon = true; name = "worker-job-reaper" }.start()
+    }
 }

@@ -70,4 +70,7 @@ object Workers {
     suspend fun test(url: String, token: String): WorkerStatus = withContext(Dispatchers.IO) {
         poll(WorkerNode(name = "(test)", url = url, token = token))
     }
+
+    /** Quick blocking liveness check for the dispatcher (reserveWorker). */
+    fun onlineNow(node: WorkerNode): Boolean = poll(node).online
 }

@@ -16,6 +16,8 @@ import mangautils.core.download.DownloadStore
 import mangautils.core.download.ExistingPolicy
 import mangautils.core.download.SourceRef
 import mangautils.core.source.SourceManager
+import mangautils.core.worker.WorkerNode
+import mangautils.core.worker.WorkerStore
 import eu.kanade.tachiyomi.network.interceptor.HumanCheckState
 import eu.kanade.tachiyomi.source.online.HttpSource
 import org.slf4j.LoggerFactory
@@ -63,6 +65,10 @@ object DownloadQueue {
         // What the remaining failures mean, for the card colour: "" none, "transient" source was busy,
         // "alternative" a 404 we hold under another scan, "gone" a 404 with no other copy. Worst wins.
         @Volatile var failClass = ""
+        // Worker delegation: when this task is run on a worker node, its name + the worker's job id, so a
+        // main restart can re-adopt the in-flight job (or reclaim it if the worker/job is gone). "" = local.
+        @Volatile var assignedWorker = ""
+        @Volatile var remoteJobId = ""
         // Chapters that failed (for the Retry button); URLs of finished chapters (live progress).
         // Keyed by URL, not name: several scanlations of one chapter share a name, so a name-keyed
         // set would mark every version done as soon as any one of them finished.
@@ -83,6 +89,24 @@ object DownloadQueue {
     // wall. A success clears it. ponytail: flat cooldown; it self-extends since a re-failure just re-sets it.
     private val sourceCooldownUntil = ConcurrentHashMap<Long, Long>()
     private const val SOURCE_COOLDOWN_MS = 3 * 60_000L
+
+    // Worker nodes currently handling a delegated task — one task per worker at a time, so a second
+    // concurrent task runs locally (true parallelism: main + a worker both downloading at once).
+    private val busyWorkers = ConcurrentHashMap.newKeySet<String>()
+
+    /** Reserve a free, online, enabled worker for [task], or null to download locally. No lock held during
+     *  the health probe: the worker NAME is reserved atomically first, and freed again if it's offline. */
+    private fun reserveWorker(task: Task): WorkerNode? {
+        val candidates = runCatching { WorkerStore.list().filter { it.enabled } }.getOrDefault(emptyList())
+        if (candidates.isEmpty()) return null
+        for (node in candidates) {
+            if (!busyWorkers.add(node.name)) continue // already handling a task
+            if (Workers.onlineNow(node)) return node
+            busyWorkers.remove(node.name) // offline — unreserve and try the next
+        }
+        return null
+    }
+    private fun releaseWorker(name: String) { busyWorkers.remove(name) }
 
     // Fires parked (retrywait) tasks once their cooldown elapses. Cheap 10s tick; a parked task holds no
     // pool slot, it just waits here for the source's rate-limit window to reset.
@@ -151,6 +175,20 @@ object DownloadQueue {
         task.failClass = "" // recomputed at the end; clear stale colour from a prior run
         Notifier.onDownloadStart(task.sourceId, task.mangaUrl, task.mangaTitle, task.total)
         runCatching {
+            // Worker pre-harvest: if a node is free, let it download what it can with its OWN cf_clearance
+            // (true parallelism - other tasks keep running locally). Whatever it commits to main's disk is
+            // then skipped by the local pass below. Best-effort: anything it misses falls through to local.
+            val worker = reserveWorker(task)
+            if (worker != null) {
+                task.assignedWorker = worker.name
+                try {
+                    WorkerDelegate.run(task, worker, { task.remoteJobId = it; persist() }, { task.state == "stopped" }, { persist() })
+                } catch (e: Exception) {
+                    log.warn("worker delegation of '{}' failed, falling back to local: {}", task.mangaTitle, e.message)
+                } finally {
+                    releaseWorker(worker.name); task.assignedWorker = ""; task.remoteJobId = ""
+                }
+            }
             val s = SettingsStore.get()
             // The web queue is headless — there's no prompt, so ASK must fall back to SKIP
             // (the ASK path needs an interactive ExistingPrompt and otherwise errors).
@@ -415,6 +453,7 @@ object DownloadQueue {
         val autoRetries: Int = 0, val failClass: String = "",
         val reArms: Int = 0, val retryAt: Long = 0,
         val failReason: Map<String, String> = emptyMap(),
+        val assignedWorker: String = "", val remoteJobId: String = "",
     )
     @Serializable private data class PFile(val version: Int = 1, val savedAt: Long, val tasks: List<PTask>)
 
@@ -434,7 +473,7 @@ object DownloadQueue {
             val list = tasks.values.sortedBy { it.order }.map { t ->
                 PTask(t.id, t.sourceId, t.mangaUrl, t.mangaTitle, srcName(t.sourceId), t.order, t.tag, t.state,
                     t.chapters.map { PChap(it.url, it.name) }, t.finishedUrls.toList(), t.failed.map { it.url }, t.error,
-                    t.autoRetries, t.failClass, t.reArms, t.retryAt, t.failReason.toMap())
+                    t.autoRetries, t.failClass, t.reArms, t.retryAt, t.failReason.toMap(), t.assignedWorker, t.remoteJobId)
             }
             mangautils.core.util.SafeFile.writeAtomic(queueFile, pjson.encodeToString(PFile(savedAt = System.currentTimeMillis(), tasks = list)))
         }.onFailure { log.debug("queue persist failed: {}", it.message) }
@@ -621,11 +660,12 @@ object DownloadQueue {
 
     @Synchronized
     fun loadAndResume() {
+        WorkerDelegate.cleanStaging() // discard any half-pulled worker transfers from before the restart
         val pf = mangautils.core.util.SafeFile.read(queueFile) { runCatching { pjson.decodeFromString<PFile>(it) }.getOrNull() } ?: return
         if (pf.tasks.isEmpty()) return
         var interrupted = 0; var kept = 0
         for (pt in pf.tasks) {
-            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag; autoRetries = pt.autoRetries; failClass = pt.failClass; reArms = pt.reArms; retryAt = pt.retryAt }
+            val task = Task(pt.id, pt.sourceId, pt.mangaUrl, pt.title, pt.chapters.map { Chapter(it.url, it.name) }).apply { order = pt.order; tag = pt.tag; autoRetries = pt.autoRetries; failClass = pt.failClass; reArms = pt.reArms; retryAt = pt.retryAt; assignedWorker = pt.assignedWorker; remoteJobId = pt.remoteJobId }
             // Older queue files stored names here; map them back so a restart doesn't lose progress.
             val urlByName = pt.chapters.associateBy({ it.name }, { it.url })
             pt.done.forEach { task.finishedUrls.add(if (it.startsWith("http") || it in urlByName.values) it else urlByName[it] ?: it) }

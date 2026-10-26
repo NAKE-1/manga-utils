@@ -348,15 +348,6 @@ class DownloadManager(
             if (page.imageUrl.isNullOrBlank()) {
                 runCatching { page.imageUrl = source.getImageUrl(page) }
             }
-            // Dispatch this page to a worker node (fetch from ITS IP) when one is healthy. Best-effort and
-            // side-effect free: returns null -> fall through to the local fetch below exactly as before, so
-            // this is inert with no workers registered. The worker already validated the bytes + returned a
-            // SHA that WorkerDispatch re-verified, so a non-null result is a trusted image.
-            page.imageUrl?.takeIf { it.isNotBlank() }?.let { iu ->
-                runCatching { mangautils.core.worker.WorkerDispatch.fetch(source.id, iu, source.headers) }.getOrNull()?.let { bytes ->
-                    return PageImage(page.index, bytes, ImageFormat.extensionFor(bytes))
-                }
-            }
             // Try the extension's own request first, then sibling CDN edges (MangaFire mfcdn1/2/3): when
             // one edge 522/523s (origin down), a sibling usually serves the same /mf/<hash> path. Each
             // attempt is time-boxed so a hung Cloudflare 52x fails in ~12s, not okhttp's 120s callTimeout

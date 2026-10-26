@@ -1003,14 +1003,11 @@ fun main() {
     // with "ConnectException: Permission denied: getsockopt". Forcing v4 fixes it and also prevents v6 leaks.
     // Must be set before the net stack initializes, i.e. before any socket use. (Sources use okhttp/v4 already.)
     System.setProperty("java.net.preferIPv4Stack", "true")
-    // WORKER=1: boot this same image as a headless IP-pool fetch node (just /worker/* behind a bearer
-    // token), NOT the full web server. Skips the library/extension/queue init below - a worker holds none
-    // of that. Everything after this branch is main-server-only.
-    if (System.getenv("WORKER").orEmpty().let { it == "1" || it.equals("true", ignoreCase = true) }) {
-        LogBuffer.install()
-        WorkerMode.run()
-        return
-    }
+    // WORKER=1 = worker role: a FULL node (extensions + solver + flaresolverr + its own cf_clearance) that
+    // only does downloads the main server delegates to it. Same init as main, but the autonomous schedulers
+    // are left off below so it never auto-downloads on its own. The /worker/* routes mount in module() when
+    // WORKER_TOKEN is set. (So a plain main server exposes no worker routes.)
+    val workerRole = System.getenv("WORKER").orEmpty().let { it == "1" || it.equals("true", ignoreCase = true) }
     // Disable the JVM's JAR URL cache. Without this, closing an extension's URLClassLoader still leaves a
     // cached JarFile open, which keeps the .jar LOCKED on Windows — so Unload → Update fails. Must run
     // before any extension jar is opened. (No-op-ish on Linux, which never had the lock.)
@@ -1073,9 +1070,16 @@ fun main() {
     NetMonitor.start() // watch server internet reachability so the app can degrade gracefully offline
     // Pause the download queue while offline (stop hammering doomed fetches); auto-resume on reconnect.
     NetMonitor.onChange { online -> if (online) DownloadQueue.resumeFromOffline() else DownloadQueue.pauseForOffline() }
-    UpdateScheduler.reschedule() // start background library updates if enabled in settings
-    HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
-    BackupScheduler.reschedule() // start the daily local data backup if enabled in settings
+    // A worker node does only delegated downloads — no autonomous scheduling (it must not auto-download
+    // on its own library/schedule). The main server runs all three.
+    if (!workerRole) {
+        UpdateScheduler.reschedule() // start background library updates if enabled in settings
+        HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
+        BackupScheduler.reschedule() // start the daily local data backup if enabled in settings
+    } else {
+        log.info("WORKER role: autonomous schedulers off; serving delegated downloads via /worker/*")
+    }
+    if (WorkerMode.enabled()) WorkerMode.startReaper()
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     try {
@@ -1356,6 +1360,8 @@ fun Application.module() {
     }
 
     routing {
+        // Worker-node routes (/worker/*) — only when WORKER_TOKEN is set, so a plain main server has none.
+        if (WorkerMode.enabled()) with(WorkerMode) { workerRoutes() }
         // ---- Sources ----
         get("/api/sources") {
             val visible = SettingsStore.get().visibleLanguages
