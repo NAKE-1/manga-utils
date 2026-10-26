@@ -217,8 +217,8 @@ object DownloadQueue {
                     task.state = "done"
                     sourceCooldownUntil.remove(task.sourceId) // source is clearly healthy again
                 } else {
-                    task.error = explainFailure(task, attempts)
-                    task.failClass = classifyFailures(task, attempts)
+                    task.error = explainFailure(task, attempts, job.error)
+                    task.failClass = classifyFailures(task, attempts, job.error)
                     // Blocked on an interactive human-check (MangaFire's "click the shapes"): don't fail and
                     // don't burn retry passes on a timer — no amount of waiting clears a captcha. Park it as
                     // "waitvf" and resume the moment the user solves it in the WebView (HumanCheckState.onCleared
@@ -433,7 +433,7 @@ object DownloadQueue {
      * are three different problems with three different responses - and only one of them is worth
      * retrying.
      */
-    private fun explainFailure(task: Task, attempts: List<mangautils.core.status.JobAttempt>): String {
+    private fun explainFailure(task: Task, attempts: List<mangautils.core.status.JobAttempt>, jobError: String = ""): String {
         val failedNames = task.failed.map { it.name }.toSet()
         val reasons =
             attempts
@@ -447,7 +447,9 @@ object DownloadQueue {
                     mangautils.core.download.UnavailableChapters.mark(ch.url, task.mangaTitle, ch.name, reasonFor(a.message.orEmpty()), now)
                 }
             }
-        if (reasons.isEmpty()) return "${task.failedCount} chapter(s) couldn't be downloaded"
+        // No per-chapter reasons means the job failed before the download loop (e.g. the chapter-list
+        // fetch) - surface that job-level error instead of a bare count.
+        if (reasons.isEmpty()) return if (jobError.isNotBlank()) reasonFor(jobError) else "${task.failedCount} chapter(s) couldn't be downloaded"
 
         // One reason for everything is the common case - say it once rather than per chapter.
         val distinct = reasons.values.distinct()
@@ -537,12 +539,17 @@ object DownloadQueue {
      * colour: a genuinely-gone chapter (red) outranks a busy source (amber) outranks a covered 404 (green).
      * A transient failure only lands here after auto-retry has given up on it.
      */
-    private fun classifyFailures(task: Task, attempts: List<mangautils.core.status.JobAttempt>): String {
+    private fun classifyFailures(task: Task, attempts: List<mangautils.core.status.JobAttempt>, jobError: String = ""): String {
         val permanentUrls = permanentFailedUrls(task, attempts)
+        // A whole-job failure (details/chapter-list fetch) produces NO per-chapter attempts, so the
+        // attempt-keyed permanence check above misses it. "No chapters matched" means the source's live
+        // list no longer contains these URLs (re-uploaded/delisted) - retrying on a timer never helps,
+        // so treat every stranded chapter as permanent rather than defaulting it to "transient" (busy).
+        val jobPermanent = isPermanent(jobError)
         task.failReason.clear()
         for (ch in task.failed) {
             task.failReason[ch.url] = when {
-                ch.url !in permanentUrls -> "transient" // source was busy, not missing
+                ch.url !in permanentUrls && !jobPermanent -> "transient" // source was busy, not missing
                 hasAlternative(task.sourceId, task.mangaUrl, task.mangaTitle, ch.url) -> "alternative" // covered
                 else -> "gone" // genuinely missing, no other copy
             }
