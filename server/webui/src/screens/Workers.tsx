@@ -9,9 +9,9 @@ function uptime(s?: number | null): string {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
-const pct = (n?: number | null) => (n == null ? '—' : `${n}%`)
-const temp = (n?: number | null) => (n == null ? '—' : `${n}°C`)
-const gb = (n?: number | null) => (n == null ? '—' : `${n} GB`)
+const pct = (n?: number | null) => (n == null ? '-' : `${n}%`)
+const temp = (n?: number | null) => (n == null ? '-' : `${n}°C`)
+const gb = (n?: number | null) => (n == null ? '-' : `${n} GB`)
 
 function Metric({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
@@ -70,9 +70,8 @@ export default function Workers() {
       </div>
 
       <div className="set-hint" style={{ margin: '0 0 14px' }}>
-        Worker nodes are headless manga-utils boxes (run with <code>WORKER=1</code>) that fetch page images
-        from their own IP, spreading load and ban-risk across addresses. Add one by its tailnet URL + token;
-        health is polled live below. (Dispatch — actually routing downloads through them — is the next step.)
+        Headless nodes (run with <code>WORKER=1</code>) that fetch page images from their own IP. Add one
+        by its tailnet URL and token; downloads route through online nodes automatically.
       </div>
 
       {/* Add / test */}
@@ -89,8 +88,8 @@ export default function Workers() {
         {test && (
           <div className="set-hint" style={{ marginTop: 4 }}>
             {test.online
-              ? `✓ Online — egress ${test.egressIp || '?'}${test.version ? ` · v${test.version}` : ''}`
-              : `✗ Offline — ${test.error || 'unreachable'}`}
+              ? `✓ Online · egress ${test.egressIp || '?'}${test.version ? ` · v${test.version}` : ''}`
+              : `✗ Offline · ${test.error || 'unreachable'}`}
           </div>
         )}
       </div>
@@ -112,17 +111,17 @@ export default function Workers() {
 
           {w.online ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 12, marginTop: 12 }}>
-              <Metric label="Egress IP" value={w.egressIp || '—'} />
+              <Metric label="Egress IP" value={w.egressIp || '-'} />
               <Metric label="CPU" value={pct(w.metrics?.cpuPct)} warn={(w.metrics?.cpuPct ?? 0) > 90} />
               <Metric label="RAM" value={pct(w.metrics?.memPct)} warn={(w.metrics?.memPct ?? 0) > 90} />
               <Metric label="Temp" value={temp(w.metrics?.tempC)} warn={(w.metrics?.tempC ?? 0) > 80} />
               <Metric label="Disk free" value={gb(w.metrics?.diskFreeGb)} />
-              <Metric label="In-flight" value={w.inflight == null ? '—' : String(w.inflight)} />
-              <Metric label="Load" value={w.metrics?.load1 == null ? '—' : String(w.metrics.load1)} />
-              <Metric label="Up" value={uptime(w.uptimeS) || '—'} />
+              <Metric label="In-flight" value={w.inflight == null ? '-' : String(w.inflight)} />
+              <Metric label="Load" value={w.metrics?.load1 == null ? '-' : String(w.metrics.load1)} />
+              <Metric label="Up" value={uptime(w.uptimeS) || '-'} />
             </div>
           ) : (
-            <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>Offline — {w.error || 'unreachable'}</div>
+            <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>Offline · {w.error || 'unreachable'}</div>
           )}
 
           <div className="set-actions" style={{ marginTop: 10 }}>
