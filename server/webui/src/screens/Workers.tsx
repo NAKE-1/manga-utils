@@ -3,6 +3,23 @@ import { useNavigate } from 'react-router-dom'
 import { api, type WorkerStatus, type ExitNodesDto } from '../api'
 import { IconArrowLeft } from '../components/icons'
 
+// Push main's extension jars (incl. beta/custom sideloads) to a worker so it can download the same sources.
+function SyncButton({ name }: { name: string }) {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  async function go() {
+    setBusy(true); setMsg('')
+    try { const r = await api.syncWorkerExtensions(name); setMsg(`Synced ${r.synced}/${r.total}${r.failed ? ` (${r.failed} failed)` : ''}`) }
+    catch { setMsg('Sync failed') } finally { setBusy(false) }
+  }
+  return (
+    <>
+      <button className="btn" disabled={busy} onClick={go}>{busy ? 'Syncing…' : 'Sync extensions'}</button>
+      {msg && <span className="set-hint" style={{ marginLeft: 8, alignSelf: 'center' }}>{msg}</span>}
+    </>
+  )
+}
+
 // Per-worker Tailscale exit-node switch: None (normal egress) or a chosen exit node.
 function ExitNodeControl({ name }: { name: string }) {
   const [data, setData] = useState<ExitNodesDto | null>(null)
@@ -184,7 +201,8 @@ export default function Workers() {
 
           {w.online && <ExitNodeControl name={w.name} />}
 
-          <div className="set-actions" style={{ marginTop: 10 }}>
+          <div className="set-actions" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            {w.online && <SyncButton name={w.name} />}
             <button className="btn danger" onClick={() => remove(w)}>Remove</button>
           </div>
         </div>

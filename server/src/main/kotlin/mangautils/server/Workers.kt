@@ -92,4 +92,28 @@ object Workers {
         if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
         exitClient.newCall(rb.build()).execute().use { it.body?.string() }
     }.getOrNull()
+
+    @Serializable data class SyncResult(val synced: Int, val failed: Int, val total: Int, val errors: List<String> = emptyList())
+    private val jarMedia = "application/java-archive".toMediaType()
+    private val syncClient = OkHttpClient.Builder().connectTimeout(6, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
+
+    /** Push main's EXACT set of installed extension jars to [node] so it can download the same sources,
+     *  including sideloaded beta/custom jars that can't be re-fetched from a repo. */
+    fun syncExtensions(node: WorkerNode): SyncResult {
+        val dir = mangautils.core.config.AppConfig.extensionsDir
+        val jars = runCatching {
+            java.nio.file.Files.list(dir).use { s -> s.filter { it.toString().endsWith(".jar") }.toList() }
+        }.getOrDefault(emptyList())
+        var ok = 0; var bad = 0; val errs = ArrayList<String>()
+        for (jar in jars) {
+            val sent = runCatching {
+                val body = java.nio.file.Files.readAllBytes(jar).toRequestBody(jarMedia)
+                val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions").post(body)
+                if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+                syncClient.newCall(rb.build()).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+            if (sent) ok++ else { bad++; errs.add(jar.fileName.toString()) }
+        }
+        return SyncResult(ok, bad, jars.size, errs.take(10))
+    }
 }

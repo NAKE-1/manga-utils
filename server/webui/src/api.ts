@@ -473,6 +473,10 @@ export const api = {
     const r = await fetch('/api/workers/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token }) })
     return r.json() as Promise<WorkerStatus>
   },
+  syncWorkerExtensions: async (name: string) => {
+    const r = await fetch(`/api/workers/sync-extensions?name=${encodeURIComponent(name)}`, { method: 'POST' })
+    return r.json() as Promise<{ synced: number; failed: number; total: number; errors: string[] }>
+  },
   workerExitNodes: (name: string) => getJson<ExitNodesDto>(`/api/workers/exit-nodes?name=${encodeURIComponent(name)}`, 1, 20000),
   workerSetExit: async (name: string, node: string) => {
     const r = await fetch(`/api/workers/exit-node?name=${encodeURIComponent(name)}&node=${encodeURIComponent(node)}`, { method: 'POST' })

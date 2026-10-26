@@ -5,7 +5,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveStream
 import io.ktor.server.response.respond
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import mangautils.core.extension.ExtensionInstaller
 import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -233,6 +237,19 @@ object WorkerMode {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             jobs.remove(call.parameters["id"])
             call.respond(HttpStatusCode.OK)
+        }
+        // Receive and install one extension jar pushed from main (so a worker gets main's EXACT set,
+        // including sideloaded beta/custom jars that aren't in any public repo). Reuses installLocalJar.
+        post("/worker/extensions") {
+            if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
+            if (bytes.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, Err("empty jar"))
+            val r = withContext(Dispatchers.IO) {
+                val tmp = Files.createTempFile("wsync-", ".jar")
+                try { Files.write(tmp, bytes); runCatching { ExtensionInstaller().installLocalJar(tmp) } }
+                finally { Files.deleteIfExists(tmp) }
+            }
+            r.fold(onSuccess = { call.respond(OkDto(true)) }, onFailure = { call.respond(HttpStatusCode.InternalServerError, Err(it.message ?: "install failed")) })
         }
         // Tailscale exit node: switch this node between normal egress and a chosen exit (or none).
         get("/worker/exit-nodes") {

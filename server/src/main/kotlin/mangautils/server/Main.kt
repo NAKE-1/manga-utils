@@ -1823,7 +1823,16 @@ fun Application.module() {
             val b = call.receive<Workers.AddReq>()
             if (b.name.isBlank() || b.url.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("name and url required"))
             val saved = WorkerStore.add(WorkerNode(b.name, b.url, b.token))
+            // Best-effort: push main's extension jars to the new node so it can download the same sources
+            // (incl. beta/custom sideloads). Backgrounded so adding stays snappy; manual re-sync is available.
+            Thread { runCatching { if (Workers.onlineNow(saved)) Workers.syncExtensions(saved) } }
+                .apply { isDaemon = true; name = "worker-extsync-${saved.name}" }.start()
             call.respond(Workers.statuses(listOf(saved)).first())
+        }
+        post("/api/workers/sync-extensions") {
+            val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            val node = WorkerStore.find(name) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+            call.respond(withContext(Dispatchers.IO) { Workers.syncExtensions(node) })
         }
         delete("/api/workers") {
             val name = call.queryParam("name") ?: return@delete call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
