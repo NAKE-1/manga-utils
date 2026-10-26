@@ -280,24 +280,24 @@ object WorkerMode {
         val st = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()
             ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status")
         val peers = st.Peer.values.filter { it.ExitNodeOption }
-        val out = ArrayList<ExitNode>()
+        val result = ArrayList<ExitNode>()
         // Your own (non-Mullvad) exit nodes: shown as-is, never filtered.
         peers.filter { "mullvad" !in (it.HostName + it.DNSName).lowercase() }.forEach { p ->
             val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
-            out.add(ExitNode(name, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode))
+            result.add(ExitNode(name, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode))
         }
         // Mullvad: keep only allowed cities, and collapse each city's many servers to ONE pickable entry.
         val byCity = LinkedHashMap<String, MutableList<TsPeer>>()
         for (p in peers) {
             if ("mullvad" !in (p.HostName + p.DNSName).lowercase()) continue
-            val code = mullvadCodeRe.find(p.HostName.lowercase())?.groupValues?.getOrNull(1) ?: continue
-            if (code in MULLVAD_CITIES) byCity.getOrPut(code) { mutableListOf() }.add(p)
+            val c = mullvadCodeRe.find(p.HostName.lowercase())?.groupValues?.getOrNull(1) ?: continue
+            if (c in MULLVAD_CITIES) byCity.getOrPut(c) { mutableListOf() }.add(p)
         }
-        for ((code, servers) in byCity) {
+        for ((c, servers) in byCity) {
             val rep = servers.firstOrNull { it.Online } ?: servers.first()
-            out.add(ExitNode(MULLVAD_CITIES.getValue(code), rep.TailscaleIPs.firstOrNull().orEmpty(), servers.any { it.Online }, servers.any { it.ExitNode }))
+            result.add(ExitNode(MULLVAD_CITIES.getValue(c), rep.TailscaleIPs.firstOrNull().orEmpty(), servers.any { it.Online }, servers.any { it.ExitNode }))
         }
-        val nodes = out.distinctBy { it.name }.sortedBy { it.name.lowercase() }
+        val nodes = result.distinctBy { it.name }.sortedBy { it.name.lowercase() }
         return ExitNodesDto(available = true, current = nodes.firstOrNull { it.current }?.name.orEmpty(), nodes = nodes)
     }
 
