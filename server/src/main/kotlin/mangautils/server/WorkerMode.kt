@@ -253,16 +253,19 @@ object WorkerMode {
     @Serializable private class TsStatus(val Peer: Map<String, TsPeer> = emptyMap())
     private val tsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
-    // Mullvad exit nodes we allow: Florida + nearby southeast states + New York. Matched against the node's
-    // Tailscale hostname/DNS, which carries Mullvad's city code (e.g. "us-mia-wg-001"), so both codes and
-    // full city names are listed. Only ones Mullvad actually offers appear; the rest are hidden.
-    private val MULLVAD_ALLOW = listOf(
-        "mia", "miami", "tpa", "tampa", "jax", "jacksonville",   // Florida
-        "atl", "atlanta",                                         // Georgia
-        "clt", "charlotte", "rdu", "ral", "raleigh",              // North Carolina
-        "cae", "columbia", "chs", "charleston",                   // South Carolina
-        "nyc", "new york", "newyork", "ewr", "secaucus", "buf", "buffalo", // New York
+    // Mullvad exit nodes we allow: Florida + surrounding southeast states + New York. Keyed by Mullvad's
+    // city code (from hostnames like "us-mia-wg-001") -> friendly label. Only codes Mullvad actually offers
+    // appear (verified present on-tailnet: mia, atl, rag, nyc); the rest are future-proofing (shown if added).
+    private val MULLVAD_CITIES = linkedMapOf(
+        "mia" to "Miami, FL",
+        "atl" to "Atlanta, GA",
+        "bham" to "Birmingham, AL",
+        "cae" to "Columbia, SC", "chs" to "Charleston, SC",
+        "rag" to "Raleigh, NC", "clt" to "Charlotte, NC", "rdu" to "Raleigh, NC",
+        "bna" to "Nashville, TN", "mem" to "Memphis, TN",
+        "nyc" to "New York, NY",
     )
+    private val mullvadCodeRe = Regex("""-([a-z]+)-wg""")
 
     private fun runCmd(vararg cmd: String): Pair<Int, String> = runCatching {
         val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
@@ -276,18 +279,25 @@ object WorkerMode {
         if (code != 0) return ExitNodesDto(available = false, current = "", nodes = emptyList(), error = out.trim().take(200).ifBlank { "tailscale unavailable" })
         val st = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()
             ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status")
-        val nodes = st.Peer.values.filter { it.ExitNodeOption }
-            // Mullvad exit nodes are limited to Florida + nearby SE states + New York (only those Mullvad
-            // actually has show up). Your own (non-Mullvad) exit nodes are never filtered.
-            .filter { p ->
-                val id = (p.HostName + " " + p.DNSName).lowercase()
-                val isMullvad = "mullvad" in id
-                !isMullvad || MULLVAD_ALLOW.any { it in id }
-            }
-            .map { p ->
-                val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
-                ExitNode(name = name, ip = p.TailscaleIPs.firstOrNull().orEmpty(), online = p.Online, current = p.ExitNode)
-            }.sortedBy { it.name.lowercase() }
+        val peers = st.Peer.values.filter { it.ExitNodeOption }
+        val out = ArrayList<ExitNode>()
+        // Your own (non-Mullvad) exit nodes: shown as-is, never filtered.
+        peers.filter { "mullvad" !in (it.HostName + it.DNSName).lowercase() }.forEach { p ->
+            val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
+            out.add(ExitNode(name, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode))
+        }
+        // Mullvad: keep only allowed cities, and collapse each city's many servers to ONE pickable entry.
+        val byCity = LinkedHashMap<String, MutableList<TsPeer>>()
+        for (p in peers) {
+            if ("mullvad" !in (p.HostName + p.DNSName).lowercase()) continue
+            val code = mullvadCodeRe.find(p.HostName.lowercase())?.groupValues?.getOrNull(1) ?: continue
+            if (code in MULLVAD_CITIES) byCity.getOrPut(code) { mutableListOf() }.add(p)
+        }
+        for ((code, servers) in byCity) {
+            val rep = servers.firstOrNull { it.Online } ?: servers.first()
+            out.add(ExitNode(MULLVAD_CITIES.getValue(code), rep.TailscaleIPs.firstOrNull().orEmpty(), servers.any { it.Online }, servers.any { it.ExitNode }))
+        }
+        val nodes = out.distinctBy { it.name }.sortedBy { it.name.lowercase() }
         return ExitNodesDto(available = true, current = nodes.firstOrNull { it.current }?.name.orEmpty(), nodes = nodes)
     }
 
