@@ -74,11 +74,16 @@ object WorkerDelegate {
                 Thread.sleep(POLL_MS); null
             } ?: continue
 
-            // Live page progress: surface the chapter the worker is currently pulling (if any) so the task's
-            // bar moves like a local download instead of sitting still until a whole chapter harvests.
-            st.chapters.firstOrNull { it.state != "done" && it.pagesTotal > 0 }?.let { act ->
-                task.currentChapter = act.name; task.currentChapterUrl = act.url
-                task.pagesDone = act.pagesDone; task.pagesTotal = act.pagesTotal
+            // Live progress: surface the worker's active chapter + pages + speed onto the task, the same
+            // shape a local download shows. These come from the job itself (not a per-chapter scan), so they
+            // stay correct even when the worker finishes chapters faster than we poll - the old per-chapter
+            // pick showed a stale/wrong chapter and never carried a download speed at all.
+            if (st.curChapter.isNotBlank() || st.curPagesTotal > 0) {
+                task.currentChapter = st.curChapter
+                task.currentChapterUrl = st.curChapterUrl
+                task.pagesDone = st.curPagesDone
+                task.pagesTotal = st.curPagesTotal
+                task.bytesPerSec = st.bytesPerSec
             }
             for (ch in st.chapters) {
                 if (isStopped()) break

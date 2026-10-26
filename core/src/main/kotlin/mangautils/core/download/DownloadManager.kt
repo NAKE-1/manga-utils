@@ -257,7 +257,11 @@ class DownloadManager(
             try {
                 val images =
                     runBlocking {
-                        val pages = cand.source.getPageList(cand.chapter)
+                        // Time-box the page-list fetch like the per-page fetch below. Unboxed, it rides
+                        // okhttp's 120s callTimeout x retries, so a throttled/hung source freezes the whole
+                        // chapter for minutes with no log - the worker's JSSE TLS stack hit this where
+                        // main's Conscrypt didn't (chapter stuck at 0/0 pages = hung here, before any page).
+                        val pages = withTimeout(PAGELIST_TIMEOUT_MS) { cand.source.getPageList(cand.chapter) }
                         if (pages.isEmpty()) error("source returned 0 pages")
                         downloadPages(cand.source, pages, chapter.name, chapter.url, cand.sourceId)
                     }
@@ -346,7 +350,9 @@ class DownloadManager(
         var lastError: Exception? = null
         repeat(retries) { attempt ->
             if (page.imageUrl.isNullOrBlank()) {
-                runCatching { page.imageUrl = source.getImageUrl(page) }
+                // Time-boxed like the image fetch below: an unboxed getImageUrl is another unbounded
+                // source call that can hang for ~2min on a throttled edge.
+                runCatching { withTimeout(IMAGE_TIMEOUT_MS) { page.imageUrl = source.getImageUrl(page) } }
             }
             // Try the extension's own request first, then sibling CDN edges (MangaFire mfcdn1/2/3): when
             // one edge 522/523s (origin down), a sibling usually serves the same /mf/<hash> path. Each
@@ -359,7 +365,7 @@ class DownloadManager(
             }
             for (alt in candidates) {
                 try {
-                    val bytes = withTimeout(12_000) {
+                    val bytes = withTimeout(IMAGE_TIMEOUT_MS) {
                         val resp = if (alt == null) {
                             source.getImage(page)
                         } else {
@@ -546,6 +552,12 @@ class DownloadManager(
     companion object {
         /** Skip a source for the rest of a job after this many consecutive chapter failures. */
         private const val MAX_SOURCE_FAILURES = 4
+
+        // Every blocking source call is time-boxed so one hung request can't freeze a chapter for minutes
+        // on okhttp's 120s callTimeout (seen on the worker's JSSE TLS stack). Page-list is one request +
+        // parse (generous); per-image matches the edge-retry box below.
+        private const val PAGELIST_TIMEOUT_MS = 30_000L
+        private const val IMAGE_TIMEOUT_MS = 12_000L
 
         /** Scanlator names are arbitrary ("Gamma 3", "Team/Scans"); cap so a path can't blow up. */
         const val DISC_MAX = 32

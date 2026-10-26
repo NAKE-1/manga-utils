@@ -71,7 +71,7 @@ object WorkerMode {
     @Serializable data class ChReq(val url: String, val name: String)
     @Serializable data class DownloadReqDto(val source: String, val manga: String, val title: String, val chapters: List<ChReq>, val clientTaskId: String = "")
     @Serializable data class ChapterStatusDto(val url: String, val name: String, val state: String, val folder: String? = null, val files: Int = 0, val error: String? = null, val pagesDone: Int = 0, val pagesTotal: Int = 0)
-    @Serializable data class JobStatusDto(val id: String, val clientTaskId: String, val state: String, val title: String, val chapters: List<ChapterStatusDto>)
+    @Serializable data class JobStatusDto(val id: String, val clientTaskId: String, val state: String, val title: String, val chapters: List<ChapterStatusDto>, val curChapter: String = "", val curChapterUrl: String = "", val curPagesDone: Int = 0, val curPagesTotal: Int = 0, val bytesPerSec: Double = 0.0)
     @Serializable data class FileEntry(val path: String, val size: Long, val sha: String)
     @Serializable data class ManifestDto(val chapter: String, val files: List<FileEntry>)
     @Serializable data class JobRow(val id: String, val clientTaskId: String, val state: String)
@@ -100,6 +100,14 @@ object WorkerMode {
         val chapters = reqs.map { ChapterRec(it.url, it.name) }
         @Volatile var state = "running" // running | done | failed
         val createdAt = System.currentTimeMillis()
+        // Job-level live progress (the chapter the worker is pulling right now + its speed). Main surfaces
+        // these onto the task, exactly like a local download, so the card shows pages + KB/s.
+        @Volatile var curChapter = ""
+        @Volatile var curChapterUrl = ""
+        @Volatile var curPagesDone = 0
+        @Volatile var curPagesTotal = 0
+        @Volatile var curBytesPerSec = 0.0
+        @Volatile var lastLogAt = 0L
     }
 
     private fun start(req: DownloadReqDto): String {
@@ -112,21 +120,35 @@ object WorkerMode {
 
     /** Download the job's chapters to this node's own disk via the normal DownloadManager (own clearance). */
     private fun runJob(job: DlJob) {
+        // Resolve finished chapters' folders on a side thread (~every 1.5s) so main harvests incrementally
+        // and the done-count climbs live. Kept OFF the download hot path on purpose: resolveFolders scans
+        // every finished chapter via ChapterIdentity, and running that inside the progress listener (which
+        // fires under the DownloadManager lock) serialized every concurrent page write behind a growing
+        // disk scan - a worker-specific drag that got worse with each chapter landed.
+        val resolver = Thread {
+            try { while (job.state == "running") { Thread.sleep(1500); synchronized(job) { runCatching { resolveFolders(job) } } } }
+            catch (_: InterruptedException) { /* job ended */ }
+        }.apply { isDaemon = true; name = "wjob-resolve-${job.id}" }
+        resolver.start()
         try {
             val s = SettingsStore.get()
             val urls = job.chapters.map { it.url }.toSet()
             // Numbers let DownloadManager recover a chapter the source re-slugged (url changed since enqueue).
             val nums = job.chapters.mapNotNull { numFromName(it.name) }.toSet()
             val byUrl = job.chapters.associateBy { it.url }
-            // Live progress: record each chapter's page count as it downloads, and resolve finished chapters'
-            // folders during the run (throttled) so main harvests them incrementally and the done-count
-            // climbs live, instead of everything landing in one jump at the very end.
-            var lastResolve = 0L
+            // Live progress: record the active chapter's pages + speed on the job (main surfaces these onto
+            // the task) and log a clean, throttled line prefixed with the job id - so the worker console
+            // reads like main ("[d2-xxx] DOWNLOAD Chapter 20 - 5/39 pages - 480 KB/s") instead of being
+            // silent behind Ktor's per-request access log. The listener is cheap: no disk I/O, no lock.
             val listener = DownloadListener { p ->
+                job.curChapter = p.chapter; job.curChapterUrl = p.chapterUrl
+                job.curPagesDone = p.pagesDone; job.curPagesTotal = p.pagesTotal; job.curBytesPerSec = p.bytesPerSecond
                 byUrl[p.chapterUrl]?.let { it.pagesDone = p.pagesDone; it.pagesTotal = p.pagesTotal }
                 val now = System.currentTimeMillis()
-                if (now - lastResolve > 1500L) synchronized(job) {
-                    if (now - lastResolve > 1500L) { lastResolve = now; runCatching { resolveFolders(job) } }
+                if (p.finished || p.pagesDone <= 1 || now - job.lastLogAt > 800) {
+                    job.lastLogAt = now
+                    val sp = if (p.bytesPerSecond > 0) " - ${(p.bytesPerSecond / 1024).toInt()} KB/s" else ""
+                    log.info("[{}] DOWNLOAD {} - {}/{} pages{}", job.id, p.chapter, p.pagesDone, p.pagesTotal, sp)
                 }
             }
             val dm = DownloadManager(
@@ -136,14 +158,19 @@ object WorkerMode {
                 existingPolicy = ExistingPolicy.SKIP,
                 downloadAsCbz = false, // folders, so the main harvests per page file + ComicInfo
             )
+            log.info("worker job {} START: {} chapter(s) of '{}'", job.id, job.chapters.size, job.title)
             dm.download(SourceRef(job.sourceId, job.mangaUrl), select = ChapterSelect.Urls(urls, nums), titleOverride = job.title)
             // Final resolve: catch the last chapter(s) and any re-slugged one (unique-number fallback).
             synchronized(job) { resolveFolders(job) }
             job.state = "done"
+            val ready = job.chapters.count { it.folder != null }
+            log.info("worker job {} DONE: {}/{} chapter(s) ready for main to pull", job.id, ready, job.chapters.size)
         } catch (e: Exception) {
-            log.warn("worker download job {} failed: {}", job.id, e.message)
+            log.warn("worker job {} FAILED: {}", job.id, e.message)
             runCatching { resolveFolders(job) }
             job.state = "failed"
+        } finally {
+            resolver.interrupt()
         }
     }
 
@@ -204,6 +231,7 @@ object WorkerMode {
             }
             ChapterStatusDto(c.url, c.name, state, c.folder, 0, c.error, c.pagesDone, c.pagesTotal)
         },
+        job.curChapter, job.curChapterUrl, job.curPagesDone, job.curPagesTotal, job.curBytesPerSec,
     )
 
     // ---- routes (mounted by Application.module when enabled()) ----
@@ -248,7 +276,11 @@ object WorkerMode {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             val job = jobs[call.parameters["id"]] ?: return@post call.respond(HttpStatusCode.NotFound, Err("no such job"))
             val folder = call.request.queryParameters["chapter"] ?: return@post call.respond(HttpStatusCode.BadRequest, Err("missing chapter"))
-            if (ackChapter(job, folder)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, Err("no such chapter"))
+            if (ackChapter(job, folder)) {
+                // Not silent any more: the ack means main verified + committed this chapter, so we free it here.
+                log.info("worker job {} -> shipped '{}' to main (committed, freed locally)", job.id, folder)
+                call.respond(HttpStatusCode.OK)
+            } else call.respond(HttpStatusCode.NotFound, Err("no such chapter"))
         }
         post("/worker/download/{id}/done") {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
