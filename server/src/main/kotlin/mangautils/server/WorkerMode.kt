@@ -176,13 +176,19 @@ object WorkerMode {
 
     private fun resolveFolders(job: DlJob) {
         val have = runCatching { ChapterIdentity.versionsOf(job.title).filter { it.complete } }.getOrDefault(emptyList())
+        // Folders already resolved to a chapter in this job, so NO two chapters can ever map to the same one.
+        // An aggregated source (Atsumaru) lists many same-number scanlation versions; the unique-number
+        // fallback used to assign the one complete "Chapter 1" folder to ALL unresolved number-1 chapters,
+        // and main then harvested that single folder over and over - it deletes on ack, so every repeat
+        // 404'd and main logged "failed to harvest; will retry locally" in a tight loop.
+        val claimed = job.chapters.mapNotNullTo(HashSet()) { it.folder }
         for (c in job.chapters) {
             if (c.folder != null) continue
-            val v = have.firstOrNull { it.url == c.url }
+            val v = have.firstOrNull { it.url == c.url && it.folder != null && it.folder !in claimed }
                 ?: numFromName(c.name)?.let { n ->
-                    have.filter { it.number == n }.takeIf { it.size == 1 }?.first() // unique-number fallback
+                    have.filter { it.number == n && it.folder != null && it.folder !in claimed }.takeIf { it.size == 1 }?.first()
                 }
-            if (v?.folder != null) c.folder = v.folder else c.error = c.error ?: "not downloaded"
+            if (v?.folder != null) { c.folder = v.folder; claimed.add(v.folder!!) } else c.error = c.error ?: "not downloaded"
         }
     }
 

@@ -98,42 +98,39 @@ object Workers {
     private val jarMedia = "application/java-archive".toMediaType()
     private val syncClient = OkHttpClient.Builder().connectTimeout(6, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
 
-    /** Push main's EXACT set of installed extension jars to [node] so it can download the same sources,
-     *  including sideloaded beta/custom jars that can't be re-fetched from a repo. */
+    /** Push main's real INSTALLED extensions to [node] so it can download the same sources, including
+     *  sideloaded beta/custom jars that can't be re-fetched from a repo. Driven by InstalledStore (not a
+     *  raw dir listing) so orphan jars left in the dir - ones not actually installed as a source on main,
+     *  and which main never dispatches anyway - aren't pushed and don't show up as spurious failures. Each
+     *  push carries the class metadata main enumerated, so even an APK-translated jar (no bundled manifest)
+     *  installs on the worker. */
     fun syncExtensions(node: WorkerNode): SyncResult {
-        val dir = mangautils.core.config.AppConfig.extensionsDir
-        val jars = runCatching {
-            java.nio.file.Files.list(dir).use { s -> s.filter { it.toString().endsWith(".jar") }.toList() }
-        }.getOrDefault(emptyList())
-        // Metadata main already enumerated for each jar, keyed by jar filename, so the worker can install
-        // even a jar with no bundled manifest (APK-translated sources: mangahere, mangakatana, natsu, ...).
-        val byJar = runCatching { mangautils.core.extension.InstalledStore.list() }.getOrDefault(emptyList())
-            .associateBy { java.nio.file.Path.of(it.jarPath).fileName.toString() }
+        val installed = runCatching { mangautils.core.extension.InstalledStore.list() }.getOrDefault(emptyList())
         var ok = 0; var bad = 0; val errs = ArrayList<String>()
-        for (jar in jars) {
+        for (m in installed) {
+            val jar = java.nio.file.Path.of(m.jarPath)
+            if (!java.nio.file.Files.exists(jar)) { bad++; errs.add("${m.name}: jar missing on main (${jar.fileName})"); continue }
             // null = installed OK; else the worker's error message (or a transport failure) so the caller
             // sees WHY a jar was rejected, not just its name.
             val err = runCatching {
                 val body = java.nio.file.Files.readAllBytes(jar).toRequestBody(jarMedia)
                 val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions").post(body)
                 if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
-                byJar[jar.fileName.toString()]?.let { m ->
-                    // Header values are ASCII (package/class/version); strip just in case so one odd char
-                    // can't throw and fail a jar that would otherwise install fine.
-                    fun hdr(k: String, v: String) { rb.header(k, v.filter { it.code in 0x20..0x7e }) }
-                    hdr("X-Ext-Pkg", m.pkg)
-                    hdr("X-Ext-Nsfw", if (m.nsfw) "1" else "0")
-                    hdr("X-Ext-Version", m.versionName)
-                    hdr("X-Ext-Code", m.versionCode.toString())
-                    hdr("X-Ext-Classes", m.classNames.joinToString(";"))
-                }
+                // Header values are ASCII (package/class/version); strip just in case so one odd char can't
+                // throw and fail a jar that would otherwise install fine.
+                fun hdr(k: String, v: String) { rb.header(k, v.filter { it.code in 0x20..0x7e }) }
+                hdr("X-Ext-Pkg", m.pkg)
+                hdr("X-Ext-Nsfw", if (m.nsfw) "1" else "0")
+                hdr("X-Ext-Version", m.versionName)
+                hdr("X-Ext-Code", m.versionCode.toString())
+                hdr("X-Ext-Classes", m.classNames.joinToString(";"))
                 syncClient.newCall(rb.build()).execute().use { r ->
                     if (r.isSuccessful) null else (r.body?.string()?.take(200)?.ifBlank { null } ?: "HTTP ${r.code}")
                 }
             }.getOrElse { it.message ?: "push failed" }
-            if (err == null) ok++ else { bad++; errs.add("${jar.fileName}: $err") }
+            if (err == null) ok++ else { bad++; errs.add("${m.name}: $err") }
         }
-        return SyncResult(ok, bad, jars.size, errs.take(10))
+        return SyncResult(ok, bad, installed.size, errs.take(10))
     }
 
     /** The extensions installed on a worker (proxied through from its /worker/extensions). */
