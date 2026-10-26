@@ -108,6 +108,11 @@ export function Dev() {
     finally { setBfBusy(false) }
   }
 
+  // Open at the top. The window is the scroll container and there's no scroll reset on navigation, so
+  // without this the Dev screen inherits Settings' scroll offset (the "Open developer tools" button sits
+  // at the bottom of Settings) and lands mid-page on the cookies/solver section.
+  useEffect(() => { window.scrollTo(0, 0) }, [])
+
   useEffect(() => {
     const load = () => api.devStats().then((d) => { setS(d); setFailed(false) }).catch(() => setFailed(true))
     load()
