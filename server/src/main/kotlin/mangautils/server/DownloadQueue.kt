@@ -183,7 +183,10 @@ object DownloadQueue {
                 },
             )
             val allUrls = task.chapters.map { it.url }.toSet()
-            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls), titleOverride = task.mangaTitle)
+            // Numbers the queued chapters were recorded under, so a chapter the source re-slugged (url
+            // changed since enqueue) can still be recovered by number at download time (see ChapterSelect.Urls).
+            val wantNums = task.chapters.mapNotNull { numFromName(it.name) }.toSet()
+            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls, wantNums), titleOverride = task.mangaTitle)
             // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
             // Reconcile by URL, not by chapter name: several scanlations of a chapter share a name, so
             // grouping attempts by name merges them and undercounts a versioned download.
@@ -197,8 +200,21 @@ object DownloadQueue {
                 .flatMap { a -> task.chapters.filter { it.name == a.target } }
                 .forEach { doneUrls.add(it.url) }
             foldSkips()
+            // A re-slugged chapter (ChapterSelect.Urls number-recovery) was downloaded under its NEW live
+            // url, so its queued url is absent from finishedUrls and would read as failed. Credit the queued
+            // chapter when an "ok" attempt carries its number AND that number is unique within this task -
+            // the same unique-number guard the recovery uses, so a multi-version download is never falsely
+            // credited from a sibling version.
+            val okNums = attempts.filter { it.outcome == "ok" }.mapNotNull { numFromName(it.target) }.toSet()
+            for (ch in task.chapters) {
+                if (ch.url in doneUrls) continue
+                val n = numFromName(ch.name) ?: continue
+                if (n in okNums && task.chapters.count { numFromName(it.name) == n } == 1) doneUrls.add(ch.url)
+            }
 
-            task.doneCount = doneUrls.size
+            // Count only queued chapters credited done - finishedUrls may hold a recovered chapter's new
+            // live url, which is not one of task.chapters and must not inflate the count.
+            task.doneCount = task.chapters.count { it.url in doneUrls }
             task.bytesPerSec = 0.0
             if (task.state == "stopped") {
                 // Stopped by the user: keep the chapters that finished, drop the rest silently
@@ -522,6 +538,14 @@ object DownloadQueue {
      * everything else (down, rate-limited, timed out, Cloudflare) can succeed on a later attempt and
      * must not be written off.
      */
+    /** Parse a chapter number out of its name, mirroring DownloadManager.chapterNumberOf's name path
+     *  ("Chapter 12" / "Ch. 124.1"). Used only to recover a re-slugged chapter by number. */
+    private fun numFromName(name: String): Float? {
+        val m = Regex("(?i)chapter\\s*([0-9]+(?:\\.[0-9]+)?)").find(name)
+            ?: Regex("([0-9]+(?:\\.[0-9]+)?)").find(name)
+        return m?.groupValues?.getOrNull(1)?.toFloatOrNull()
+    }
+
     private fun isPermanent(message: String): Boolean =
         message.contains("404") || message.contains("No chapters matched")
 

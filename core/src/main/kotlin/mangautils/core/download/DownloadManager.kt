@@ -48,8 +48,14 @@ sealed interface ChapterSelect {
 
     data class Numbers(val numbers: Set<Float>) : ChapterSelect
 
-    /** Exact chapters by their url (used by the library tracker to grab specific new chapters). */
-    data class Urls(val urls: Set<String>) : ChapterSelect
+    /**
+     * Exact chapters by their url (used by the library tracker to grab specific new chapters).
+     * [numbers] are the chapter numbers those urls were queued under: if a source re-slugs a chapter
+     * (its url changes between enqueue and download, e.g. MangaFire), the url no longer matches the
+     * live list, so the chapter is recovered by number instead - but only when that number is
+     * unambiguous in the live list (see resolveSelection), never swapping a multi-version chapter.
+     */
+    data class Urls(val urls: Set<String>, val numbers: Set<Float> = emptySet()) : ChapterSelect
 
     /** Every chapter. */
     data object All : ChapterSelect
@@ -385,7 +391,18 @@ class DownloadManager(
             is ChapterSelect.First -> oldestFirst.take(select.n)
             is ChapterSelect.Latest -> chapters.take(select.n)
             is ChapterSelect.Numbers -> oldestFirst.filter { chapterNumberOf(it) in select.numbers }
-            is ChapterSelect.Urls -> oldestFirst.filter { it.url in select.urls }
+            is ChapterSelect.Urls -> {
+                val byUrl = oldestFirst.filter { it.url in select.urls }
+                // Recover any queued url the source re-slugged (now absent from the live list) by its
+                // number - but only when exactly one live chapter carries that number, so a chapter with
+                // several scanlations is never silently swapped to the wrong one. A number already served
+                // by a matched url isn't re-fetched.
+                val matchedNums = byUrl.map { chapterNumberOf(it) }.toSet()
+                val recovered = (select.numbers - matchedNums)
+                    .filter { it >= 0f }
+                    .mapNotNull { n -> oldestFirst.filter { chapterNumberOf(it) == n }.singleOrNull() }
+                byUrl + recovered
+            }
             is ChapterSelect.All -> oldestFirst
             is ChapterSelect.Missing -> oldestFirst.filterNot { java.nio.file.Files.exists(destFor(title, it)) }
             is ChapterSelect.Range -> oldestFirst.filter { chapterNumberOf(it) in select.from..select.to }
