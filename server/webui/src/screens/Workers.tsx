@@ -1,7 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type WorkerStatus } from '../api'
+import { api, type WorkerStatus, type ExitNodesDto } from '../api'
 import { IconArrowLeft } from '../components/icons'
+
+// Per-worker Tailscale exit-node switch: None (normal egress) or a chosen exit node.
+function ExitNodeControl({ name }: { name: string }) {
+  const [data, setData] = useState<ExitNodesDto | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () => api.workerExitNodes(name).then(setData).catch(() => setData({ available: false, current: '', nodes: [], error: 'unreachable' }))
+  useEffect(() => { load() }, [name])
+  if (!data) return <div className="set-hint" style={{ marginTop: 10 }}>Exit node: checking…</div>
+  if (!data.available) return <div className="set-hint" style={{ marginTop: 10 }}>Exit node: Tailscale not available on this node</div>
+  const currentIp = data.nodes.find((n) => n.current)?.ip ?? ''
+  async function choose(ip: string) {
+    setBusy(true)
+    try { await api.workerSetExit(name, ip); await load() } finally { setBusy(false) }
+  }
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="set-row-label">Exit node (egress IP)</div>
+      <select className="set-input" value={currentIp} disabled={busy} onChange={(e) => choose(e.target.value)}>
+        <option value="">None (normal egress)</option>
+        {data.nodes.map((n) => <option key={n.ip} value={n.ip}>{n.name}{n.online ? '' : ' (offline)'}</option>)}
+      </select>
+    </div>
+  )
+}
 
 // Human "2h 14m" from seconds.
 function uptime(s?: number | null): string {
@@ -157,6 +181,8 @@ export default function Workers() {
           ) : (
             <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>Offline · {w.error || 'unreachable'}</div>
           )}
+
+          {w.online && <ExitNodeControl name={w.name} />}
 
           <div className="set-actions" style={{ marginTop: 10 }}>
             <button className="btn danger" onClick={() => remove(w)}>Remove</button>

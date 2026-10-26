@@ -1835,6 +1835,20 @@ fun Application.module() {
             val b = call.receive<Workers.TestReq>()
             call.respond(Workers.test(b.url, b.token))
         }
+        // Exit-node control for a worker — main proxies the worker's own response body to the UI.
+        get("/api/workers/exit-nodes") {
+            val name = call.queryParam("name") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            val node = WorkerStore.find(name) ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+            val body = withContext(Dispatchers.IO) { Workers.exitNodes(node) } ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
+            call.respondText(body, io.ktor.http.ContentType.Application.Json)
+        }
+        post("/api/workers/exit-node") {
+            val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            val exit = call.queryParam("node") ?: ""
+            val node = WorkerStore.find(name) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+            val body = withContext(Dispatchers.IO) { Workers.setExit(node, exit) } ?: return@post call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
+            call.respondText(body, io.ktor.http.ContentType.Application.Json)
+        }
 
         // ---- Download manager (browse / delete on-disk content) ----
         // Broken-download detection: every series with interrupted/incomplete chapters (missing the

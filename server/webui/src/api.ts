@@ -473,7 +473,15 @@ export const api = {
     const r = await fetch('/api/workers/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token }) })
     return r.json() as Promise<WorkerStatus>
   },
+  workerExitNodes: (name: string) => getJson<ExitNodesDto>(`/api/workers/exit-nodes?name=${encodeURIComponent(name)}`, 1, 20000),
+  workerSetExit: async (name: string, node: string) => {
+    const r = await fetch(`/api/workers/exit-node?name=${encodeURIComponent(name)}&node=${encodeURIComponent(node)}`, { method: 'POST' })
+    return r.json() as Promise<{ ok: boolean; error?: string }>
+  },
 }
+
+export interface ExitNode { name: string; ip: string; online: boolean; current: boolean }
+export interface ExitNodesDto { available: boolean; current: string; nodes: ExitNode[]; error?: string }
 
 export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; tempC: number | null; diskFreeGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
 export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null }

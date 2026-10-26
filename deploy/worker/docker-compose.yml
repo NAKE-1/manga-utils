@@ -1,0 +1,75 @@
+# manga-utils WORKER NODE — a full node (own cf_clearance) that the main server delegates downloads to.
+#
+# Drop-in: this one file turns ANY box into a worker. To move the worker from one machine to another
+# (e.g. a test PC -> the Orange Pi), copy this file + set WORKER_TOKEN, run `docker compose up -d`,
+# then register the box's tailnet URL (http://<tailscale-ip>:8790) + token in the main UI's
+# "Worker nodes" screen and flip the "Route downloads through a worker" toggle.
+#
+#   WORKER_TOKEN=some-long-secret docker compose -f deploy/worker/docker-compose.yml up -d --build
+#
+# Seed its extensions/settings once (so it can actually download): in the worker's own web UI
+# (http://<ip>:8790) import a .mudata backup exported from main — that carries the extensions + settings.
+# The node serves the normal UI too, but its autonomous schedulers are OFF (WORKER=1): it only downloads
+# what main hands it.
+#
+# ARM note (Orange Pi / RK3588): build on the Pi so the image matches its arch. FlareSolverr publishes
+# arm64; the solver sidecar builds Chromium-on-Xvfb for arm64 from source here.
+
+services:
+  manga-worker:
+    image: nake1/manga-utils:latest
+    build:
+      context: ../..                         # repo root (so `docker compose build` builds our image for THIS box's arch)
+      dockerfile: deploy/Dockerfile
+    container_name: manga-worker
+    hostname: manga-worker
+    ports:
+      - "8790:8790"                          # the port you register in the main UI
+    volumes:
+      - mu-worker-data:/data                 # its own library/extensions/temp downloads (ship-back deletes them after ack)
+    shm_size: "2gb"
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
+    environment:
+      - WORKER=1                             # worker role: schedulers OFF, only delegated downloads
+      - WORKER_TOKEN=${WORKER_TOKEN:?set WORKER_TOKEN to a long secret}   # bearer token the main server authenticates with
+      - MANGA_WEB_PORT=8790
+      - TZ=America/New_York
+      - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # its OWN flaresolverr -> its OWN cf_clearance
+      - MU_SOLVER_URL=http://solver:8000               # its OWN solver (MangaFire in-page fetch)
+      - MU_JCEF_POOL=3
+    depends_on:
+      - flaresolverr
+      - solver
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr-worker
+    environment:
+      - LOG_LEVEL=info
+    shm_size: "1gb"
+    restart: unless-stopped
+
+  solver:
+    image: manga-solver:local
+    build:
+      context: ../solver
+    container_name: solver-worker
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: autoheal-worker
+    restart: unless-stopped
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=15
+      - AUTOHEAL_START_PERIOD=60
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  mu-worker-data:

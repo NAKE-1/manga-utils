@@ -76,6 +76,10 @@ object WorkerMode {
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics)
+    @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
+    @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null)
+    @Serializable data class SetExitReq(val node: String = "") // ip or MagicDNS name; "" = none (normal egress)
+    @Serializable data class OkDto(val ok: Boolean, val error: String? = null)
 
     // ---- job model ----
     private class ChapterRec(val url: String, val name: String) {
@@ -229,6 +233,50 @@ object WorkerMode {
             jobs.remove(call.parameters["id"])
             call.respond(HttpStatusCode.OK)
         }
+        // Tailscale exit node: switch this node between normal egress and a chosen exit (or none).
+        get("/worker/exit-nodes") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            call.respond(exitNodes())
+        }
+        post("/worker/exit-node") {
+            if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val req = runCatching { call.receive<SetExitReq>() }.getOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, Err("bad body"))
+            val err = setExitNode(req.node)
+            egressIp = null // force a re-probe so /health reflects the new egress
+            call.respond(OkDto(err == null, err))
+        }
+    }
+
+    // ---- Tailscale exit-node control (shells the `tailscale` CLI on this box) ----
+    @Serializable private class TsPeer(val HostName: String = "", val DNSName: String = "", val TailscaleIPs: List<String> = emptyList(), val ExitNodeOption: Boolean = false, val ExitNode: Boolean = false, val Online: Boolean = false)
+    @Serializable private class TsStatus(val Peer: Map<String, TsPeer> = emptyMap())
+    private val tsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+    private fun runCmd(vararg cmd: String): Pair<Int, String> = runCatching {
+        val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        if (!p.waitFor(20, TimeUnit.SECONDS)) { p.destroyForcibly(); return -1 to "timed out" }
+        p.exitValue() to out
+    }.getOrElse { -1 to (it.message ?: "tailscale not available") }
+
+    private fun exitNodes(): ExitNodesDto {
+        val (code, out) = runCmd("tailscale", "status", "--json")
+        if (code != 0) return ExitNodesDto(available = false, current = "", nodes = emptyList(), error = out.trim().take(200).ifBlank { "tailscale unavailable" })
+        val st = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()
+            ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status")
+        val nodes = st.Peer.values.filter { it.ExitNodeOption }.map { p ->
+            val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
+            ExitNode(name = name, ip = p.TailscaleIPs.firstOrNull().orEmpty(), online = p.Online, current = p.ExitNode)
+        }.sortedBy { it.name.lowercase() }
+        return ExitNodesDto(available = true, current = nodes.firstOrNull { it.current }?.name.orEmpty(), nodes = nodes)
+    }
+
+    /** Set the exit node by ip/name, or "" to clear (normal egress). Returns an error string or null on success. */
+    private fun setExitNode(node: String): String? {
+        val arg = if (node.isBlank()) "--exit-node=" else "--exit-node=$node"
+        val (code, out) = if (node.isBlank()) runCmd("tailscale", "set", arg)
+        else runCmd("tailscale", "set", arg, "--exit-node-allow-lan-access")
+        return if (code == 0) null else out.trim().take(200).ifBlank { "tailscale set failed" }
     }
 
     private fun ApplicationCall.authed(): Boolean {

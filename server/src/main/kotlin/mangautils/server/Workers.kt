@@ -6,10 +6,13 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import mangautils.core.worker.WorkerNode
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
@@ -73,4 +76,20 @@ object Workers {
 
     /** Quick blocking liveness check for the dispatcher (reserveWorker). */
     fun onlineNow(node: WorkerNode): Boolean = poll(node).online
+
+    // Exit-node control is proxied straight through: main forwards the worker's own response body to the UI.
+    private val exitClient = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
+
+    fun exitNodes(node: WorkerNode): String? = runCatching {
+        val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/exit-nodes")
+        if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+        exitClient.newCall(rb.build()).execute().use { it.body?.string() }
+    }.getOrNull()
+
+    fun setExit(node: WorkerNode, exitNode: String): String? = runCatching {
+        val body = Json.encodeToString(WorkerMode.SetExitReq(exitNode)).toRequestBody("application/json".toMediaType())
+        val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/exit-node").post(body)
+        if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+        exitClient.newCall(rb.build()).execute().use { it.body?.string() }
+    }.getOrNull()
 }
