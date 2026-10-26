@@ -23,6 +23,10 @@ services:
       dockerfile: deploy/Dockerfile
     container_name: manga-worker
     hostname: manga-worker
+    # Run as root so the container can use the host's root-owned tailscaled.sock (mounted below) to switch
+    # exit nodes. Only needed for the exit-node feature; drop this line to run as the default non-root user
+    # if you're not using it. (uid 0 in the container = host root with no userns remapping.)
+    user: "0:0"
     ports:
       - "8790:8790"                          # the port you register in the main UI
     volumes:
