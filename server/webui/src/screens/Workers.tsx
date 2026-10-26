@@ -226,11 +226,24 @@ export default function Workers() {
                 <span style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontSize: 11 }}>Egress IP </span>
                 <b style={{ fontVariantNumeric: 'tabular-nums' }}>{w.egressIp || '-'}</b>
               </div>
+              {/* Disk gets its own line (for the downloads volume) with room for free / total + used% and a
+                  usage bar - it's the metric that matters most for a worker, and will grow once SSDs land. */}
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                <span style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontSize: 11 }}>Disk (downloads) </span>
+                <b style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {gb(w.metrics?.diskFreeGb)} free{w.metrics?.diskTotalGb != null ? ` / ${gb(w.metrics.diskTotalGb)}` : ''}
+                </b>
+                {w.metrics?.diskPct != null && <span className="set-hint" style={{ marginLeft: 6 }}>({w.metrics.diskPct}% used)</span>}
+                {w.metrics?.diskPct != null && (
+                  <div style={{ marginTop: 5, height: 5, borderRadius: 3, background: 'var(--border, #2a2a2a)', overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.min(100, w.metrics.diskPct)}%`, height: '100%', background: w.metrics.diskPct > 90 ? 'var(--danger, #e5484d)' : 'var(--accent, #7c6cff)' }} />
+                  </div>
+                )}
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(68px, 1fr))', gap: 12, marginTop: 10 }}>
                 <Metric label="CPU" value={pct(w.metrics?.cpuPct)} warn={(w.metrics?.cpuPct ?? 0) > 90} />
                 <Metric label="RAM" value={pct(w.metrics?.memPct)} warn={(w.metrics?.memPct ?? 0) > 90} />
                 <Metric label="Temp" value={temp(w.metrics?.tempC)} warn={(w.metrics?.tempC ?? 0) > 80} />
-                <Metric label="Disk free" value={gb(w.metrics?.diskFreeGb)} />
                 <Metric label="In-flight" value={w.inflight == null ? '-' : String(w.inflight)} />
                 <Metric label="Load" value={w.metrics?.load1 == null ? '-' : String(w.metrics.load1)} />
                 <Metric label="Up" value={uptime(w.uptimeS) || '-'} />

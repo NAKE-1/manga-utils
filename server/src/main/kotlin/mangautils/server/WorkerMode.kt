@@ -79,7 +79,7 @@ object WorkerMode {
     @Serializable data class Err(val error: String)
     @Serializable data class Metrics(
         val cpuPct: Double? = null, val memPct: Double? = null, val tempC: Double? = null,
-        val diskFreeGb: Double? = null, val diskPct: Double? = null,
+        val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics)
@@ -445,8 +445,12 @@ object WorkerMode {
     private fun read(path: String): String? = runCatching { java.io.File(path).readText() }.getOrNull()
 
     private fun metrics(): Metrics {
-        val n = net()
-        return Metrics(cpuPct(), memPct(), tempC(), diskFreeGb(), diskPct(), n?.first, n?.second, load1())
+        val n = net(); val d = disk()
+        return Metrics(
+            cpuPct = cpuPct(), memPct = memPct(), tempC = tempC(),
+            diskFreeGb = d.first, diskTotalGb = d.second, diskPct = d.third,
+            netRxBytes = n?.first, netTxBytes = n?.second, load1 = load1(),
+        )
     }
     private fun cpuSnap(): Pair<Long, Long>? {
         val first = read("/proc/stat")?.lineSequence()?.firstOrNull { it.startsWith("cpu ") } ?: return null
@@ -474,13 +478,18 @@ object WorkerMode {
         }
         return best?.let { (it * 10).toLong() / 10.0 }
     }
-    private fun diskFreeGb(): Double? = runCatching {
-        (Files.getFileStore(java.nio.file.FileSystems.getDefault().getPath("/")).usableSpace / 1e8).toLong() / 10.0
-    }.getOrNull()
-    private fun diskPct(): Double? = runCatching {
-        val s = Files.getFileStore(java.nio.file.FileSystems.getDefault().getPath("/"))
-        if (s.totalSpace > 0) ((s.totalSpace - s.usableSpace) * 1000 / s.totalSpace) / 10.0 else null
-    }.getOrNull()
+    /** Disk free/total/used% for the filesystem that actually holds downloads (/data), not "/" - that's the
+     *  one that fills up, and once a worker's /data sits on an SSD (2230/2280) this follows it. Falls back to
+     *  "/" if the downloads dir can't be resolved yet. (free, totalGb, usedPct), all rounded to 0.1 GB/%. */
+    private fun disk(): Triple<Double?, Double?, Double?> {
+        val s = runCatching { Files.getFileStore(AppConfig.downloadsDir) }
+            .recoverCatching { Files.getFileStore(java.nio.file.FileSystems.getDefault().getPath("/")) }
+            .getOrNull() ?: return Triple(null, null, null)
+        val free = (s.usableSpace / 1e8).toLong() / 10.0
+        val total = (s.totalSpace / 1e8).toLong() / 10.0
+        val pct = if (s.totalSpace > 0) ((s.totalSpace - s.usableSpace) * 1000 / s.totalSpace) / 10.0 else null
+        return Triple(free, total, pct)
+    }
     private fun net(): Pair<Long, Long>? {
         val txt = read("/proc/net/dev") ?: return null
         var rx = 0L; var tx = 0L
