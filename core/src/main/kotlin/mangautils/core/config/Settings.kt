@@ -38,6 +38,12 @@ data class Settings(
     val perSourceParallel: Boolean = false,
     /** When perSourceParallel is on, how many manga from one source may download at once. Ignored when off. */
     val perSourceLimit: Int = 2,
+    /** Master switch: route downloads through a registered worker node. Off (default) = always download
+     *  locally on the main server, even if a worker is registered and online. */
+    val workerDispatch: Boolean = false,
+    /** Which worker to use when [workerDispatch] is on. "" = Auto (any enabled + online node); otherwise
+     *  the chosen node's name. */
+    val workerNode: String = "",
     /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
     val downloadDir: String? = null,
     /** Languages whose sources are shown in the web UI (codes like "en", "fr"). Empty = all;

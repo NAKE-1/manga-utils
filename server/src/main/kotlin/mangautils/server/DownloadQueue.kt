@@ -97,7 +97,12 @@ object DownloadQueue {
     /** Reserve a free, online, enabled worker for [task], or null to download locally. No lock held during
      *  the health probe: the worker NAME is reserved atomically first, and freed again if it's offline. */
     private fun reserveWorker(task: Task): WorkerNode? {
-        val candidates = runCatching { WorkerStore.list().filter { it.enabled } }.getOrDefault(emptyList())
+        val s = runCatching { SettingsStore.get() }.getOrNull()
+        if (s?.workerDispatch != true) return null // master toggle off -> always download locally
+        val pick = s.workerNode // "" = Auto, else a chosen node
+        val candidates = runCatching {
+            WorkerStore.list().filter { it.enabled && (pick.isBlank() || it.name == pick) }
+        }.getOrDefault(emptyList())
         if (candidates.isEmpty()) return null
         for (node in candidates) {
             if (!busyWorkers.add(node.name)) continue // already handling a task

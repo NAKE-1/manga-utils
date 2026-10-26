@@ -32,14 +32,20 @@ export default function Workers() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [test, setTest] = useState<WorkerStatus | null>(null)
+  const [dispatch, setDispatch] = useState(false) // master toggle: route downloads through a worker
+  const [pick, setPick] = useState('') // "" = Auto, else a node name
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
   useEffect(() => {
     load()
+    api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode) }).catch(() => {})
     timer.current = setInterval(load, 5000) // live health; workers are polled server-side each call
     return () => clearInterval(timer.current)
   }, [])
+
+  async function toggleDispatch() { const v = !dispatch; setDispatch(v); await api.saveSettings({ workerDispatch: v }).catch(() => setDispatch(!v)) }
+  async function choose(n: string) { setPick(n); await api.saveSettings({ workerNode: n }).catch(() => {}) }
 
   async function add() {
     setErr(''); setBusy(true)
@@ -72,6 +78,28 @@ export default function Workers() {
       <div className="set-hint" style={{ margin: '0 0 14px' }}>
         Headless nodes (run with <code>WORKER=1</code>) that fetch page images from their own IP. Add one
         by its tailnet URL and token; downloads route through online nodes automatically.
+      </div>
+
+      {/* Master toggle + node selector */}
+      <div className="wh-card">
+        <button className="set-toggle" onClick={toggleDispatch}>
+          <div>
+            <div className="set-row-label">Route downloads through a worker</div>
+            <div className="set-hint">Off = always download on the main server. On = delegate chapters to the node below.</div>
+          </div>
+          <span className={'switch' + (dispatch ? ' on' : '')}><span className="knob" /></span>
+        </button>
+        {dispatch && (
+          <div style={{ marginTop: 10 }}>
+            <div className="set-row-label">Node</div>
+            <select className="set-input" value={pick} onChange={(e) => choose(e.target.value)}>
+              <option value="">Auto (any online)</option>
+              {workers.filter((w) => w.enabled).map((w) => (
+                <option key={w.name} value={w.name}>{w.name}{w.online ? '' : ' (offline)'}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Add / test */}
