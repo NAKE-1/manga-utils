@@ -58,6 +58,7 @@ object WorkerMode {
     private val jobs = ConcurrentHashMap<String, DlJob>()
     private var seq = 0L
     @Volatile private var egressIp: String? = null
+    @Volatile private var exitActive = false // an exit node we set is live — the watchdog guards it
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
 
     // ---- DTOs ----
@@ -271,12 +272,37 @@ object WorkerMode {
         return ExitNodesDto(available = true, current = nodes.firstOrNull { it.current }?.name.orEmpty(), nodes = nodes)
     }
 
-    /** Set the exit node by ip/name, or "" to clear (normal egress). Returns an error string or null on success. */
+    private fun applyExit(node: String): Pair<Int, String> =
+        if (node.isBlank()) runCmd("tailscale", "set", "--exit-node=")
+        else runCmd("tailscale", "set", "--exit-node=$node", "--exit-node-allow-lan-access")
+
+    /**
+     * Set the exit node by ip/name, or "" to clear (normal egress). SELF-REVERTING: after selecting an
+     * exit node it verifies egress actually works, and if not, drops back to normal egress on its own - so
+     * a dead/broken exit node can never strand the worker without internet. (Clearing is always safe.)
+     */
     private fun setExitNode(node: String): String? {
-        val arg = if (node.isBlank()) "--exit-node=" else "--exit-node=$node"
-        val (code, out) = if (node.isBlank()) runCmd("tailscale", "set", arg)
-        else runCmd("tailscale", "set", arg, "--exit-node-allow-lan-access")
-        return if (code == 0) null else out.trim().take(200).ifBlank { "tailscale set failed" }
+        val (code, out) = applyExit(node)
+        if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
+        if (node.isBlank()) { exitActive = false; return null } // back to normal egress - nothing to verify
+        if (verifyEgress()) { exitActive = true; return null }
+        // The exit node didn't give us a working path out. Revert to normal egress so downloads keep working.
+        log.warn("exit node '{}' failed connectivity check - reverting to normal egress", node)
+        applyExit(""); exitActive = false; egressIp = null
+        return "exit node didn't connect - reverted to normal egress"
+    }
+
+    /** Can we reach the internet right now? Retries over ~15s (a fresh exit node takes a moment to come up). */
+    private fun verifyEgress(): Boolean {
+        val probe = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
+        repeat(5) {
+            val ok = runCatching {
+                probe.newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+            if (ok) return true
+            Thread.sleep(3000)
+        }
+        return false
     }
 
     private fun ApplicationCall.authed(): Boolean {
@@ -365,5 +391,24 @@ object WorkerMode {
                 jobs.entries.removeIf { (_, j) -> j.state != "running" && j.createdAt < cutoff }
             }
         }.apply { isDaemon = true; name = "worker-job-reaper" }.start()
+        // Exit-node watchdog: if an exit node we set loses internet for a sustained window, revert to normal
+        // egress so the node can never get stuck with no working path out. Conservative (3 strikes / ~3 min)
+        // so a transient blip doesn't drop a working exit. Tailnet comms with main bypass the exit anyway.
+        Thread {
+            var strikes = 0
+            while (true) {
+                Thread.sleep(60_000)
+                if (!exitActive) { strikes = 0; continue }
+                val ok = runCatching {
+                    OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
+                        .newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { it.isSuccessful }
+                }.getOrDefault(false)
+                if (ok) { strikes = 0; continue }
+                if (++strikes >= 3) {
+                    log.warn("exit node egress dead {} checks - reverting to normal egress", strikes)
+                    applyExit(""); exitActive = false; egressIp = null; strikes = 0
+                }
+            }
+        }.apply { isDaemon = true; name = "worker-exit-watchdog" }.start()
     }
 }
