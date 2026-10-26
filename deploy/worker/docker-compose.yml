@@ -27,6 +27,11 @@ services:
       - "8790:8790"                          # the port you register in the main UI
     volumes:
       - mu-worker-data:/data                 # its own library/extensions/temp downloads (ship-back deletes them after ack)
+      # Exit-node control: run `tailscale up` on the Pi HOST, then mount its socket + CLI binary so the
+      # worker can drive the host's exit node from main's UI. (tailscale is a static Go binary — mounting
+      # it needs no libs. Comment these out if you don't use the exit-node feature.)
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+      - /usr/bin/tailscale:/usr/bin/tailscale:ro
     shm_size: "2gb"
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
