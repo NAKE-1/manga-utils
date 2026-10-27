@@ -226,6 +226,19 @@ export default function Workers() {
                 <span style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontSize: 11 }}>Egress IP </span>
                 <b style={{ fontVariantNumeric: 'tabular-nums' }}>{w.egressIp || '-'}</b>
               </div>
+              {/* RAM as used / total GB (+ bar) - percent alone doesn't tell you what a future node needs. */}
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                <span style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontSize: 11 }}>RAM </span>
+                <b style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {gb(w.metrics?.memUsedGb)}{w.metrics?.memTotalGb != null ? ` / ${gb(w.metrics.memTotalGb)}` : ''}
+                </b>
+                {w.metrics?.memPct != null && <span className="set-hint" style={{ marginLeft: 6 }}>({w.metrics.memPct}% used)</span>}
+                {w.metrics?.memPct != null && (
+                  <div style={{ marginTop: 5, height: 5, borderRadius: 3, background: 'var(--border, #2a2a2a)', overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.min(100, w.metrics.memPct)}%`, height: '100%', background: w.metrics.memPct > 90 ? 'var(--danger, #e5484d)' : 'var(--accent, #7c6cff)' }} />
+                  </div>
+                )}
+              </div>
               {/* Disk gets its own line (for the downloads volume) with room for free / total + used% and a
                   usage bar - it's the metric that matters most for a worker, and will grow once SSDs land. */}
               <div style={{ marginTop: 8, fontSize: 13 }}>
@@ -242,7 +255,6 @@ export default function Workers() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(68px, 1fr))', gap: 12, marginTop: 10 }}>
                 <Metric label="CPU" value={pct(w.metrics?.cpuPct)} warn={(w.metrics?.cpuPct ?? 0) > 90} />
-                <Metric label="RAM" value={pct(w.metrics?.memPct)} warn={(w.metrics?.memPct ?? 0) > 90} />
                 <Metric label="Temp" value={temp(w.metrics?.tempC)} warn={(w.metrics?.tempC ?? 0) > 80} />
                 <Metric label="In-flight" value={w.inflight == null ? '-' : String(w.inflight)} />
                 <Metric label="Load" value={w.metrics?.load1 == null ? '-' : String(w.metrics.load1)} />

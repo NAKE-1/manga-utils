@@ -489,7 +489,7 @@ export interface WorkerExt { pkg: string; name: string; version: string; beta: b
 export interface ExitNode { name: string; ip: string; online: boolean; current: boolean }
 export interface ExitNodesDto { available: boolean; current: string; nodes: ExitNode[]; error?: string }
 
-export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; tempC: number | null; diskFreeGb: number | null; diskTotalGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
+export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; memUsedGb: number | null; memTotalGb: number | null; tempC: number | null; diskFreeGb: number | null; diskTotalGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
 export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null; checking?: boolean }
 
 export interface MigrateSide { sourceName: string; title: string; cover?: string | null; total: number; readCount: number; readUpTo: string; bookmarks: number; downloaded: number }

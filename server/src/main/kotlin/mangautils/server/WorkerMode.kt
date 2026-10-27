@@ -82,7 +82,9 @@ object WorkerMode {
     @Serializable data class Created(val id: String)
     @Serializable data class Err(val error: String)
     @Serializable data class Metrics(
-        val cpuPct: Double? = null, val memPct: Double? = null, val tempC: Double? = null,
+        val cpuPct: Double? = null,
+        val memPct: Double? = null, val memUsedGb: Double? = null, val memTotalGb: Double? = null,
+        val tempC: Double? = null,
         val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
@@ -479,9 +481,9 @@ object WorkerMode {
     private fun read(path: String): String? = runCatching { java.io.File(path).readText() }.getOrNull()
 
     private fun metrics(): Metrics {
-        val n = net(); val d = disk()
+        val n = net(); val d = disk(); val m = mem()
         return Metrics(
-            cpuPct = cpuPct(), memPct = memPct(), tempC = tempC(),
+            cpuPct = cpuPct(), memPct = m.third, memUsedGb = m.first, memTotalGb = m.second, tempC = tempC(),
             diskFreeGb = d.first, diskTotalGb = d.second, diskPct = d.third,
             netRxBytes = n?.first, netTxBytes = n?.second, load1 = load1(),
         )
@@ -497,12 +499,18 @@ object WorkerMode {
         val dt = b.first - a.first; val di = b.second - a.second
         return if (dt > 0) ((dt - di) * 1000 / dt) / 10.0 else null
     }
-    private fun memPct(): Double? {
-        val kv = (read("/proc/meminfo") ?: return null).lineSequence().mapNotNull {
+    /** RAM (usedGb, totalGb, usedPct) from /proc/meminfo (kB). used = MemTotal - MemAvailable. */
+    private fun mem(): Triple<Double?, Double?, Double?> {
+        val kv = (read("/proc/meminfo") ?: return Triple(null, null, null)).lineSequence().mapNotNull {
             val p = it.split(Regex("\\s+")); if (p.size >= 2) p[0].removeSuffix(":") to (p[1].toLongOrNull() ?: 0) else null
         }.toMap()
-        val total = kv["MemTotal"] ?: return null; val avail = kv["MemAvailable"] ?: return null
-        return if (total > 0) ((total - avail) * 1000 / total) / 10.0 else null
+        val total = kv["MemTotal"] ?: return Triple(null, null, null)
+        val avail = kv["MemAvailable"] ?: return Triple(null, null, null)
+        val used = total - avail
+        val usedGb = (used / 1048576.0 * 10).toLong() / 10.0   // kB -> GiB, 0.1 precision
+        val totalGb = (total / 1048576.0 * 10).toLong() / 10.0
+        val pct = if (total > 0) (used * 1000 / total) / 10.0 else null
+        return Triple(usedGb, totalGb, pct)
     }
     private fun tempC(): Double? {
         var best: Double? = null
