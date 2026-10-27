@@ -490,7 +490,7 @@ export interface ExitNode { name: string; ip: string; online: boolean; current: 
 export interface ExitNodesDto { available: boolean; current: string; nodes: ExitNode[]; error?: string }
 
 export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; tempC: number | null; diskFreeGb: number | null; diskTotalGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
-export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null }
+export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null; checking?: boolean }
 
 export interface MigrateSide { sourceName: string; title: string; cover?: string | null; total: number; readCount: number; readUpTo: string; bookmarks: number; downloaded: number }
 export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryRead: number; unmatchedRead: number; willCarryBookmarks: number; unmatchedBookmarks: number; chapterDiff: number; unnumbered: number }

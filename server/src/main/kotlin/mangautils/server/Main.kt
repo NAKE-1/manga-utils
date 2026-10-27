@@ -34,6 +34,7 @@ import io.ktor.server.plugins.compression.excludeContentType
 import io.ktor.server.plugins.compression.gzip
 import io.ktor.server.plugins.compression.minimumSize
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
+import io.ktor.server.plugins.origin
 import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveStream
@@ -1084,11 +1085,12 @@ fun main() {
         UpdateScheduler.reschedule() // start background library updates if enabled in settings
         HealthScheduler.reschedule() // start the daily health sweep if enabled in settings
         BackupScheduler.reschedule() // start the daily local data backup if enabled in settings
+        Workers.startPoller()        // keep the worker status cache fresh for nodes that aren't heartbeating
     } else {
         log.info("WORKER role: autonomous schedulers off; serving delegated downloads via /worker/*")
         WorkerMode.cleanDownloadsAtBoot() // drop orphaned partials left by a crash/restart (no library here)
     }
-    if (WorkerMode.enabled()) WorkerMode.startReaper()
+    if (WorkerMode.enabled()) { WorkerMode.startReaper(); WorkerMode.startHeartbeat() }
     val port = System.getenv("MANGA_WEB_PORT")?.toIntOrNull() ?: 8080
     log.info("Starting manga-utils web server on 0.0.0.0:{}", port)
     try {
@@ -1819,7 +1821,17 @@ fun Application.module() {
         }
 
         // ---- Worker pool (distributed IP-pool fetch nodes) ----
-        get("/api/workers") { call.respond(Workers.statuses(WorkerStore.list())) }
+        // Reads the status cache (fed by worker heartbeats + a background poll), so the screen is instant -
+        // an offline node shows at once instead of blocking on a connection timeout.
+        get("/api/workers") { call.respond(Workers.cachedStatuses(WorkerStore.list())) }
+        // Worker heartbeat: a node announces itself (token + health). Matched to a registered node by source
+        // IP + token, then cached online - so main knows it's up the instant it boots, no poll/timeout.
+        post("/api/workers/checkin") {
+            val dto = runCatching { call.receive<Workers.CheckinDto>() }.getOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad body"))
+            if (Workers.recordCheckin(call.request.origin.remoteHost, dto)) call.respond(HttpStatusCode.OK)
+            else call.respond(HttpStatusCode.Unauthorized, ErrorDto("unknown node or bad token"))
+        }
         post("/api/workers") {
             val b = call.receive<Workers.AddReq>()
             if (b.name.isBlank() || b.url.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("name and url required"))
@@ -1828,7 +1840,9 @@ fun Application.module() {
             // (incl. beta/custom sideloads). Backgrounded so adding stays snappy; manual re-sync is available.
             Thread { runCatching { if (Workers.onlineNow(saved)) Workers.syncExtensions(saved) } }
                 .apply { isDaemon = true; name = "worker-extsync-${saved.name}" }.start()
-            call.respond(Workers.statuses(listOf(saved)).first())
+            val st = Workers.statuses(listOf(saved)).first()
+            Workers.seed(st) // so the new card isn't "checking" until the poller/heartbeat catches up
+            call.respond(st)
         }
         post("/api/workers/sync-extensions") {
             val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))

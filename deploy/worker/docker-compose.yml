@@ -43,6 +43,9 @@ services:
     environment:
       - WORKER=1                             # worker role: schedulers OFF, only delegated downloads
       - WORKER_TOKEN=${WORKER_TOKEN:?set WORKER_TOKEN to a long secret}   # bearer token the main server authenticates with
+      - MAIN_URL=${MAIN_URL:-}               # main server's tailnet URL (e.g. http://100.67.109.13:8080) so this
+                                             # node heartbeats in - main then shows it online the instant it boots.
+                                             # Optional: if unset, main falls back to polling this node.
       - MANGA_WEB_PORT=8790
       - TZ=America/New_York
       - MU_FLARESOLVERR_URL=http://flaresolverr:8191   # its OWN flaresolverr -> its OWN cf_clearance

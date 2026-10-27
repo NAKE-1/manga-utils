@@ -40,6 +40,7 @@ object Workers {
         val version: String? = null,
         val uptimeS: Long? = null,
         val error: String? = null,
+        val checking: Boolean = false, // never heard from yet (grey dot) - distinct from confirmed offline
     )
 
     @Serializable data class AddReq(val name: String, val url: String, val token: String = "")
@@ -65,9 +66,68 @@ object Workers {
         }
     }
 
-    /** Poll every registered node in parallel for the list screen. */
+    /** Poll every registered node in parallel (used by Add/Test, where an immediate live probe is wanted). */
     suspend fun statuses(nodes: List<WorkerNode>): List<WorkerStatus> = withContext(Dispatchers.IO) {
         coroutineScope { nodes.map { async { poll(it) } }.awaitAll() }
+    }
+
+    // ---- Status cache: the Worker nodes screen reads THIS (instant, no live probe), so an offline node never
+    // costs a connection timeout on the request path. Filled two ways: worker heartbeats (/checkin, fast) and
+    // a background poll (fallback for a node that isn't heartbeating). ----
+    private class Cached(val at: Long, val status: WorkerStatus)
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Cached>()
+    private const val FRESH_MS = 50_000L // online if we heard from the node within this window (heartbeat ~20s)
+
+    /** Build the UI cards from the cache only - instant. Fresh entry -> its status; stale -> offline; never
+     *  heard from -> "checking" (grey dot) until the first heartbeat/poll lands. */
+    fun cachedStatuses(nodes: List<WorkerNode>): List<WorkerStatus> {
+        val now = System.currentTimeMillis()
+        return nodes.map { n ->
+            val c = cache[n.name]
+            when {
+                c == null -> WorkerStatus(n.name, n.url.trimEnd('/'), n.enabled, online = false, checking = true)
+                now - c.at <= FRESH_MS -> c.status.copy(name = n.name, url = n.url.trimEnd('/'), enabled = n.enabled)
+                else -> WorkerStatus(n.name, n.url.trimEnd('/'), n.enabled, online = false, egressIp = c.status.egressIp, error = "no response")
+            }
+        }
+    }
+
+    /** Seed a node's cached status (right after Add, so the new card isn't "checking" for a tick). */
+    fun seed(status: WorkerStatus) { cache[status.name] = Cached(System.currentTimeMillis(), status) }
+
+    @Serializable data class CheckinDto(val token: String = "", val health: WorkerMode.Health? = null)
+
+    /** A worker pushed a heartbeat. Match it to a registered node by the request's source IP (its tailscale
+     *  address = the host in its registered URL) + token, then cache it online with the pushed health. */
+    fun recordCheckin(remoteHost: String, dto: CheckinDto): Boolean {
+        val node = WorkerStore.list().firstOrNull { nodeHost(it.url) == remoteHost } ?: return false
+        if (node.token.isNotBlank() && node.token != dto.token) return false
+        val h = dto.health
+        cache[node.name] = Cached(System.currentTimeMillis(), WorkerStatus(
+            node.name, node.url.trimEnd('/'), node.enabled, online = true,
+            egressIp = h?.egressIp, inflight = h?.inflight, metrics = h?.metrics, version = h?.version, uptimeS = h?.uptimeS,
+        ))
+        return true
+    }
+
+    private fun nodeHost(url: String): String? = runCatching { java.net.URI(url.trim().trimEnd('/')).host }.getOrNull()
+
+    /** Background refresher: poll nodes that AREN'T heartbeating and cache the result, off the request path so
+     *  an offline node's timeout never blocks the UI. A node with a fresh heartbeat is skipped (push wins). */
+    fun startPoller() {
+        Thread {
+            while (true) {
+                runCatching {
+                    val now = System.currentTimeMillis()
+                    for (n in WorkerStore.list()) {
+                        val c = cache[n.name]
+                        if (c != null && c.status.online && now - c.at < 25_000L) continue // fresh heartbeat/poll
+                        cache[n.name] = Cached(System.currentTimeMillis(), poll(n))
+                    }
+                }
+                Thread.sleep(15_000)
+            }
+        }.apply { isDaemon = true; name = "worker-poller" }.start()
     }
 
     /** Probe an unsaved node (the "Test" button when adding one). */

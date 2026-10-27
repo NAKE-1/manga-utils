@@ -209,7 +209,7 @@ export default function Workers() {
       {workers.map((w) => (
         <div className="wh-card" key={w.name} style={{ opacity: w.enabled ? 1 : 0.55 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: w.online ? '#30a46c' : '#e5484d' }} />
+            <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: w.checking ? '#8b95a1' : w.online ? '#30a46c' : '#e5484d' }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700 }}>{w.name}{!w.enabled && <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}> · disabled</span>}</div>
               <div style={{ fontSize: 12, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.url}</div>
@@ -249,6 +249,8 @@ export default function Workers() {
                 <Metric label="Up" value={uptime(w.uptimeS) || '-'} />
               </div>
             </>
+          ) : w.checking ? (
+            <div className="set-hint" style={{ marginTop: 8 }}>Checking…</div>
           ) : (
             <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>Offline · {w.error || 'unreachable'}</div>
           )}

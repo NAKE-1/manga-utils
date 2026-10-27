@@ -25,8 +25,11 @@ import mangautils.core.download.DownloadManager
 import mangautils.core.download.ExistingPolicy
 import mangautils.core.download.SourceRef
 import mangautils.core.util.Hashing
+import kotlinx.serialization.encodeToString
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
@@ -66,6 +69,7 @@ object WorkerMode {
     @Volatile private var egressIp: String? = null
     @Volatile private var exitActive = false // an exit node we set is live — the watchdog guards it
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
+    private val hbJson = kotlinx.serialization.json.Json { encodeDefaults = true }
 
     // ---- DTOs ----
     @Serializable data class ChReq(val url: String, val name: String)
@@ -547,6 +551,28 @@ object WorkerMode {
     }
 
     /** Drop jobs the main never finished pulling (main crashed) so held files don't pile up forever. */
+    /** Heartbeat: announce ourselves to main (token + health) every ~20s, so main knows we're online the
+     *  instant we boot and marks us offline by a missed beat - no polling + connection-timeout on its side.
+     *  Needs MAIN_URL (main's tailnet URL); absent -> off, and main falls back to polling us. */
+    fun startHeartbeat() {
+        val mainUrl = System.getenv("MAIN_URL")?.trim()?.trimEnd('/').orEmpty()
+        if (mainUrl.isBlank()) { log.info("heartbeat off (MAIN_URL not set)"); return }
+        val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).callTimeout(8, TimeUnit.SECONDS).build()
+        val url = "$mainUrl/api/workers/checkin"
+        Thread {
+            while (true) {
+                runCatching {
+                    val inflight = jobs.values.count { it.state == "running" }
+                    val h = Health(VERSION, (System.currentTimeMillis() - started) / 1000, egress(), inflight, inflight == 0, metrics())
+                    val body = hbJson.encodeToString(Workers.CheckinDto(token, h)).toRequestBody("application/json".toMediaType())
+                    client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
+                }
+                Thread.sleep(20_000)
+            }
+        }.apply { isDaemon = true; name = "worker-heartbeat" }.start()
+        log.info("heartbeat -> {} every 20s", url)
+    }
+
     fun startReaper() {
         Thread {
             while (true) {
