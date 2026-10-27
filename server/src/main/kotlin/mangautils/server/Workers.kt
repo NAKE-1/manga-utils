@@ -100,8 +100,17 @@ object Workers {
     /** A worker pushed a heartbeat. Match it to a registered node by the request's source IP (its tailscale
      *  address = the host in its registered URL) + token, then cache it online with the pushed health. */
     fun recordCheckin(remoteHost: String, dto: CheckinDto): Boolean {
-        val node = WorkerStore.list().firstOrNull { nodeHost(it.url) == remoteHost } ?: return false
-        if (node.token.isNotBlank() && node.token != dto.token) return false
+        // Match by TOKEN (what the worker reliably knows + sends). Source IP is unreliable here: main runs
+        // behind Docker's published-port NAT, so the container sees the docker gateway, not the worker's
+        // tailscale IP. IP is only a tiebreaker when several nodes share a token, and the fallback for a
+        // token-less node.
+        val nodes = WorkerStore.list()
+        val node = if (dto.token.isNotBlank()) {
+            val byToken = nodes.filter { it.token == dto.token }
+            byToken.firstOrNull { nodeHost(it.url) == remoteHost } ?: byToken.firstOrNull()
+        } else {
+            nodes.firstOrNull { it.token.isBlank() && nodeHost(it.url) == remoteHost }
+        } ?: return false
         val h = dto.health
         cache[node.name] = Cached(System.currentTimeMillis(), WorkerStatus(
             node.name, node.url.trimEnd('/'), node.enabled, online = true,
