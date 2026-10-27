@@ -314,6 +314,22 @@ object Notifier {
         }
     }
 
+    /** A worker node changed state. [kind] = "down" | "recovered" | "online" (first seen). Called only on a
+     *  transition, so a dead node produces one message. [detail] is prebuilt by the caller (downtime + health). */
+    fun onWorkerTransition(name: String, kind: String, detail: String) {
+        if (!active() || cfg()?.workerHealth != true) return
+        bg.submit {
+            runCatching {
+                val (title, color) = when (kind) {
+                    "down" -> "🔴 $name is down" to RED
+                    "recovered" -> "🟢 $name recovered — back up" to GREEN
+                    else -> "🟢 $name online" to GREEN
+                }
+                enqueue(Payload(embeds = listOf(Embed(title = title, description = detail, color = color))))
+            }
+        }
+    }
+
     // ================================ building helpers ================================
     private data class MangaItem(val title: String, val url: String, val info: String, val source: String, val cover: ByteArray?)
     private data class SessionEntry(val title: String, val source: String, val chapters: Int)

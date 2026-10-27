@@ -95,6 +95,53 @@ object Workers {
     /** Seed a node's cached status (right after Add, so the new card isn't "checking" for a tick). */
     fun seed(status: WorkerStatus) { cache[status.name] = Cached(System.currentTimeMillis(), status) }
 
+    // ---- Up/down alerter: fire a Discord message on each node's online/down/recovered edge (gated in Notifier
+    // by the webhook + "worker health" toggle). State is tracked ALWAYS, so enabling alerts never dumps a backlog.
+    private const val DOWN_ALERT_MS = 90_000L // silent this long before a node counts as "down" (skips a restart)
+    private val lastUp = java.util.concurrent.ConcurrentHashMap<String, Long>()               // last time online
+    private val lastHealth = java.util.concurrent.ConcurrentHashMap<String, WorkerStatus>()   // last ONLINE status (for the msg)
+    private class AlertState(var up: Boolean, var downSince: Long, var downAlerted: Boolean)
+    private val alertState = java.util.concurrent.ConcurrentHashMap<String, AlertState>()
+
+    /** Compare each node's current up/down (by whether we heard from it within DOWN_ALERT_MS) to its last state
+     *  and fire one alert per edge. online on first-seen-up; down on up→silent; recovered on down→up (w/ downtime). */
+    private fun evaluateAlerts() {
+        val now = System.currentTimeMillis()
+        val names = HashSet<String>()
+        for (n in runCatching { WorkerStore.list() }.getOrDefault(emptyList())) {
+            if (!n.enabled) { alertState.remove(n.name); continue }
+            names.add(n.name)
+            val up = lastUp[n.name]?.let { now - it <= DOWN_ALERT_MS } ?: false
+            val prev = alertState[n.name]
+            when {
+                prev == null -> { alertState[n.name] = AlertState(up, now, false); if (up) fireWorker(n, "online", null) }
+                prev.up && !up -> { prev.up = false; prev.downSince = lastUp[n.name] ?: now; prev.downAlerted = true; fireWorker(n, "down", null) }
+                !prev.up && up -> { prev.up = true; if (prev.downAlerted) fireWorker(n, "recovered", now - prev.downSince) else fireWorker(n, "online", null); prev.downAlerted = false }
+                else -> {}
+            }
+        }
+        alertState.keys.retainAll(names) // forget removed nodes
+    }
+
+    private fun fireWorker(n: WorkerNode, kind: String, downMs: Long?) {
+        val h = lastHealth[n.name]
+        val bits = buildList {
+            h?.egressIp?.takeIf { it.isNotBlank() }?.let { add("egress $it") }
+            h?.version?.let { add("v$it") }
+            val m = h?.metrics
+            if (m?.memUsedGb != null && m.memTotalGb != null) add("RAM ${m.memUsedGb}/${m.memTotalGb} GB")
+            if (kind == "down" && (h?.inflight ?: 0) > 0) add("${h?.inflight} download(s) were in flight - main re-runs them")
+        }
+        val tail = bits.joinToString(" · ")
+        val detail = if (downMs != null) "Down for ${humanDur(downMs)}." + (if (tail.isNotEmpty()) " $tail" else "") else tail
+        Notifier.onWorkerTransition(n.name, kind, detail)
+    }
+
+    private fun humanDur(ms: Long): String {
+        val s = ms / 1000; val h = s / 3600; val m = (s % 3600) / 60
+        return if (h > 0) "${h}h ${m}m" else if (m > 0) "${m}m" else "${s}s"
+    }
+
     @Serializable data class CheckinDto(val token: String = "", val health: WorkerMode.Health? = null)
 
     /** A worker pushed a heartbeat. Match it to a registered node by the request's source IP (its tailscale
@@ -112,10 +159,13 @@ object Workers {
             nodes.firstOrNull { it.token.isBlank() && nodeHost(it.url) == remoteHost }
         } ?: return false
         val h = dto.health
-        cache[node.name] = Cached(System.currentTimeMillis(), WorkerStatus(
+        val now = System.currentTimeMillis()
+        val st = WorkerStatus(
             node.name, node.url.trimEnd('/'), node.enabled, online = true,
             egressIp = h?.egressIp, inflight = h?.inflight, metrics = h?.metrics, version = h?.version, uptimeS = h?.uptimeS,
-        ))
+        )
+        cache[node.name] = Cached(now, st)
+        lastUp[node.name] = now; lastHealth[node.name] = st
         return true
     }
 
@@ -131,8 +181,11 @@ object Workers {
                     for (n in WorkerStore.list()) {
                         val c = cache[n.name]
                         if (c != null && c.status.online && now - c.at < 25_000L) continue // fresh heartbeat/poll
-                        cache[n.name] = Cached(System.currentTimeMillis(), poll(n))
+                        val st = poll(n); val t = System.currentTimeMillis()
+                        cache[n.name] = Cached(t, st)
+                        if (st.online) { lastUp[n.name] = t; lastHealth[n.name] = st }
                     }
+                    evaluateAlerts()
                 }
                 Thread.sleep(15_000)
             }

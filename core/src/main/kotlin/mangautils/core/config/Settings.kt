@@ -141,6 +141,8 @@ data class NotifyConfig(
     val sourceHealth: Boolean = true,
     /** Server started, and FlareSolverr going down or coming back. */
     val serviceHealth: Boolean = true,
+    /** A worker node going down, coming back (recovered), or first coming online. */
+    val workerHealth: Boolean = true,
     /** A source hit an interactive "verify you're human" captcha and needs you to solve it in the WebView. */
     val needsVerify: Boolean = true,
     val coverStyle: String = "thumbnail", // "thumbnail" | "poster"

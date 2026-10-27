@@ -497,7 +497,7 @@ export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryR
 export interface MigrateProgress { running: boolean; finished: boolean; phase: string; error: string; steps: string[] }
 
 export interface WebhookResult { ok: boolean; status: number; rateLimited: boolean; retryAfter?: number; error?: string }
-export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; serviceHealth: boolean; needsVerify: boolean; coverStyle: string }
+export interface NotifyConfig { enabled: boolean; libraryCheck: boolean; newChapters: boolean; downloadStart: boolean; downloadComplete: boolean; downloadFailed: boolean; sourceHealth: boolean; serviceHealth: boolean; workerHealth: boolean; needsVerify: boolean; coverStyle: string }
 
 export interface HealthSource {
   id: string; name: string; lang: string; cfState: 'green' | 'orange' | 'red'

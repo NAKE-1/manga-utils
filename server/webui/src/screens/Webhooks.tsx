@@ -18,6 +18,7 @@ const EVENTS: { key: keyof NotifyConfig; label: string }[] = [
   { key: 'downloadFailed', label: 'Download failed' },
   { key: 'sourceHealth', label: 'Source down / recovered' },
   { key: 'serviceHealth', label: 'Server online · Cloudflare bypass down / recovered' },
+  { key: 'workerHealth', label: 'Worker node online / down / recovered' },
   { key: 'needsVerify', label: 'Needs verification (solve a captcha)' },
 ]
 
