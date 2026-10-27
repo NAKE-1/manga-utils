@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt } from '../api'
+import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage } from '../api'
 import { IconArrowLeft } from '../components/icons'
 
 // View a worker's installed extensions (name, version, BETA for sideloads).
@@ -24,6 +24,63 @@ function ExtList({ name }: { name: string }) {
               <span className="set-hint" style={{ fontVariantNumeric: 'tabular-nums' }}>v{e.version}</span>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Tiny RAM sparkline over recent readings.
+function Spark({ data }: { data: number[] }) {
+  if (!data || data.length < 2) return null
+  const w = 240, h = 30, max = Math.max(...data), min = Math.min(...data), rng = (max - min) || 1
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / rng) * (h - 3) - 1.5}`).join(' ')
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ maxWidth: '100%', display: 'block', marginTop: 6 }}>
+      <polyline points={pts} fill="none" stroke="var(--accent, #7c6cff)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}
+function URow({ label, s, unit }: { label: string; s: { min: number; max: number; avg: number }; unit: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      <span style={{ width: 44, color: 'var(--muted)' }}>{label}</span>
+      <span>avg <b>{s.avg}</b> · peak <b>{s.max}</b> · min {s.min}{unit}</span>
+    </div>
+  )
+}
+// Rolling resource usage (min/max/avg over 1h / 24h / since boot) - to size future nodes from real numbers.
+function UsagePanel({ name }: { name: string }) {
+  const [open, setOpen] = useState(false)
+  const [u, setU] = useState<WorkerUsage | 'none' | null>(null)
+  const [win, setWin] = useState<'h1' | 'h24' | 'boot'>('h24')
+  async function toggle() {
+    const n = !open; setOpen(n)
+    if (n && u === null) { try { setU(await api.workerUsage(name)) } catch { setU('none') } }
+  }
+  const data = u && u !== 'none' ? u : null
+  const w = data ? data[win] : null
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button className="btn" onClick={toggle}>{open ? 'Hide' : 'View'} usage</button>
+      {open && u === 'none' && <div className="set-hint" style={{ marginTop: 8 }}>No usage data yet - it builds as the node reports in.</div>}
+      {open && data && w && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+            {(['h1', 'h24', 'boot'] as const).map((k) => (
+              <button key={k} className={'btn' + (win === k ? ' primary' : '')} style={{ padding: '3px 10px', fontSize: 12 }} onClick={() => setWin(k)}>
+                {k === 'h1' ? '1h' : k === 'h24' ? '24h' : 'Since boot'}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 12.5, lineHeight: 1.7, fontVariantNumeric: 'tabular-nums' }}>
+            <URow label="RAM" s={w.ram} unit={` / ${data.ramTotalGb} GB`} />
+            <URow label="CPU" s={w.cpu} unit="%" />
+            <URow label="Temp" s={w.temp} unit="°C" />
+            <URow label="Disk" s={w.disk} unit={` / ${data.diskTotalGb} GB`} />
+          </div>
+          <Spark data={data.ramSpark} />
+          <div className="set-hint" style={{ fontSize: 11, marginTop: 2 }}>{w.samples} samples · RAM over recent readings ↑</div>
         </div>
       )}
     </div>
@@ -268,6 +325,7 @@ export default function Workers() {
           )}
 
           {w.online && <ExitNodeControl name={w.name} onChanged={load} />}
+          {w.online && <UsagePanel name={w.name} />}
           {w.online && <ExtList name={w.name} />}
 
           <div className="set-actions" style={{ marginTop: 10, flexWrap: 'wrap' }}>

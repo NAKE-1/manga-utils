@@ -166,6 +166,7 @@ object Workers {
         )
         cache[node.name] = Cached(now, st)
         lastUp[node.name] = now; lastHealth[node.name] = st
+        UsageStore.record(node.name, h?.metrics)
         return true
     }
 
@@ -183,7 +184,7 @@ object Workers {
                         if (c != null && c.status.online && now - c.at < 25_000L) continue // fresh heartbeat/poll
                         val st = poll(n); val t = System.currentTimeMillis()
                         cache[n.name] = Cached(t, st)
-                        if (st.online) { lastUp[n.name] = t; lastHealth[n.name] = st }
+                        if (st.online) { lastUp[n.name] = t; lastHealth[n.name] = st; UsageStore.record(n.name, st.metrics) }
                     }
                     evaluateAlerts()
                 }

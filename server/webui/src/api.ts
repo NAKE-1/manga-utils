@@ -478,6 +478,7 @@ export const api = {
     return r.json() as Promise<{ synced: number; failed: number; total: number; errors: string[] }>
   },
   workerExtensions: (name: string) => getJson<WorkerExt[]>(`/api/workers/extensions?name=${encodeURIComponent(name)}`, 1, 20000),
+  workerUsage: (name: string) => getJson<WorkerUsage>(`/api/workers/usage?name=${encodeURIComponent(name)}`, 1, 15000),
   workerExitNodes: (name: string) => getJson<ExitNodesDto>(`/api/workers/exit-nodes?name=${encodeURIComponent(name)}`, 1, 20000),
   workerSetExit: async (name: string, node: string) => {
     const r = await fetch(`/api/workers/exit-node?name=${encodeURIComponent(name)}&node=${encodeURIComponent(node)}`, { method: 'POST' })
@@ -491,6 +492,9 @@ export interface ExitNodesDto { available: boolean; current: string; nodes: Exit
 
 export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; memUsedGb: number | null; memTotalGb: number | null; tempC: number | null; diskFreeGb: number | null; diskTotalGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
 export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null; checking?: boolean }
+export interface UsageStat { min: number; max: number; avg: number }
+export interface UsageWindow { samples: number; ram: UsageStat; cpu: UsageStat; temp: UsageStat; disk: UsageStat }
+export interface WorkerUsage { ramTotalGb: number; diskTotalGb: number; h1: UsageWindow; h24: UsageWindow; boot: UsageWindow; ramSpark: number[] }
 
 export interface MigrateSide { sourceName: string; title: string; cover?: string | null; total: number; readCount: number; readUpTo: string; bookmarks: number; downloaded: number }
 export interface MigratePreview { from: MigrateSide; to: MigrateSide; willCarryRead: number; unmatchedRead: number; willCarryBookmarks: number; unmatchedBookmarks: number; chapterDiff: number; unnumbered: number }

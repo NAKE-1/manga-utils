@@ -1855,6 +1855,12 @@ fun Application.module() {
             val body = withContext(Dispatchers.IO) { Workers.extensions(node) } ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
             call.respondText(body, io.ktor.http.ContentType.Application.Json)
         }
+        // Rolling resource usage (min/max/avg RAM/CPU/temp/disk over 1h/24h/since-boot) for capacity planning.
+        get("/api/workers/usage") {
+            val name = call.queryParam("name") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
+            val u = UsageStore.usage(name) ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("no usage data yet"))
+            call.respond(u)
+        }
         delete("/api/workers") {
             val name = call.queryParam("name") ?: return@delete call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
             if (WorkerStore.remove(name)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
