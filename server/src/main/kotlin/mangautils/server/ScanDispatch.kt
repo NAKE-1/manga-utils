@@ -69,7 +69,9 @@ object ScanDispatch {
             node to pool.submit<Map<String, List<ChapterRef>>> { fetchFromWorker(node, buckets[idx + 1]) }
         }
         // Main scans its bucket locally while the workers fetch theirs.
+        val tMain = System.currentTimeMillis()
         val mainResults = LibraryService.update(buckets[0], prog, isOnline, onFailure)
+        val mainSec = (System.currentTimeMillis() - tMain) / 1000
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
         // for the rest (worker-failed or unreachable). Either way every entry in the bucket is processed.
         var remote = 0
@@ -83,8 +85,8 @@ object ScanDispatch {
             LibraryService.update(bucket, prog, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
         }
         val all = mainResults + workerResults
-        log.info("scan done: {} checked - {} on main + {} via {} worker(s) ({} fell back local), {} new, {} failed",
-            all.size, buckets[0].size, remote, nodes.size, entries.size - buckets[0].size - remote,
+        log.info("scan done: {} checked - {} on main ({}s) + {} via {} worker(s) ({} fell back local), {} new, {} failed",
+            all.size, buckets[0].size, mainSec, remote, nodes.size, entries.size - buckets[0].size - remote,
             all.sumOf { it.newChapters.size }, all.count { it.failed })
         return all
     }

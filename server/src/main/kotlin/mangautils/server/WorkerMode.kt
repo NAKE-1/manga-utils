@@ -311,6 +311,7 @@ object WorkerMode {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             val req = runCatching { call.receive<ScanReqDto>() }.getOrNull()
                 ?: return@post call.respond(HttpStatusCode.BadRequest, Err("bad body"))
+            val t0 = System.currentTimeMillis()
             val results = withContext(Dispatchers.IO) {
                 coroutineScope {
                     val sem = Semaphore(8)
@@ -328,6 +329,8 @@ object WorkerMode {
                     }.awaitAll()
                 }
             }
+            val ok = results.count { it.chapters != null }
+            log.info("scan batch: {}/{} series in {}s", ok, results.size, (System.currentTimeMillis() - t0) / 1000)
             call.respond(ScanResDto(results))
         }
         post("/worker/download") {
