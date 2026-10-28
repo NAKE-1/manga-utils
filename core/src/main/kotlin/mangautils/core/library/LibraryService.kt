@@ -129,6 +129,10 @@ object LibraryService {
         // Worker-assisted scan: pre-fetched chapter refs for an entry (fetched by a worker node). Returns
         // null -> this entry is fetched locally as usual (so a worker miss falls back, never drops a title).
         prefetch: ((LibraryEntry) -> List<ChapterRef>?)? = null,
+        // When false, a prefetch MISS is treated as a failure rather than re-fetched locally. Used when the
+        // caller already attempted the fetch itself (main's own parallel fetch) - re-fetching a series that
+        // just failed there only stalls on the same dead source. Worker misses still use the default (fetch).
+        localFetch: Boolean = true,
     ): List<UpdateResult> {
         val total = entries.size
         val results = mutableListOf<UpdateResult>()
@@ -139,7 +143,7 @@ object LibraryService {
                 entries.drop(i).forEach { results.add(UpdateResult(it, emptyList(), failed = true)) }
                 break
             }
-            val res = updateOne(entry, prefetch).also { onProgress?.invoke(i + 1, total) }
+            val res = updateOne(entry, prefetch, localFetch).also { onProgress?.invoke(i + 1, total) }
             results.add(res)
             // A failed title is corroborating evidence of an outage — probe now (throttled) so the very next
             // isOnline() check can short-circuit the rest of the run instead of timing out on each.
@@ -162,19 +166,23 @@ object LibraryService {
     private fun retryAfterHumanCheckCleared(results: MutableList<UpdateResult>) {
         val failed = results.withIndex().filter { it.value.failed }
         if (failed.isEmpty()) return
-        val hosts = failed.mapNotNull { hostOf(it.value.entry.sourceId) }.toSet()
+        // Only retry titles whose host is actually blocked by a human-check. A plain failure (HTTP 522, a
+        // timeout, a dead source) won't recover on an immediate re-fetch - retrying it just stalls the scan
+        // re-timing-out on the same source - so leave those failed for the next scheduled run.
+        val blocked = failed.mapNotNull { hostOf(it.value.entry.sourceId) }.toSet().filter { HumanCheckState.isPending(it) }.toSet()
+        if (blocked.isEmpty()) return
         val autoSolve = runCatching { mangautils.core.config.SettingsStore.get().autoSolveCaptcha }.getOrDefault(false)
         if (autoSolve) {
-            // Wait (bounded) for any in-progress solve to clear the blocked host(s).
+            // Wait (bounded) for the in-progress solve to clear the blocked host(s).
             val deadline = System.currentTimeMillis() + 25_000
-            while (hosts.any { HumanCheckState.isPending(it) } && System.currentTimeMillis() < deadline) {
+            while (blocked.any { HumanCheckState.isPending(it) } && System.currentTimeMillis() < deadline) {
                 runCatching { Thread.sleep(1000) }
             }
         }
         var recovered = 0
         for ((idx, res) in failed) {
-            val host = hostOf(res.entry.sourceId)
-            if (host != null && HumanCheckState.isPending(host)) continue // still blocked → leave it failed
+            val host = hostOf(res.entry.sourceId) ?: continue
+            if (host !in blocked || HumanCheckState.isPending(host)) continue // not captcha-blocked, or still blocked
             val retry = updateOne(res.entry, null)
             if (!retry.failed) { results[idx] = retry; recovered++ }
         }
@@ -192,11 +200,14 @@ object LibraryService {
         return runBlocking { source.getChapterList(seed(mangaUrl)) }.map { it.toRef() }
     }
 
-    private fun updateOne(entry: LibraryEntry, prefetch: ((LibraryEntry) -> List<ChapterRef>?)? = null): UpdateResult {
+    private fun updateOne(entry: LibraryEntry, prefetch: ((LibraryEntry) -> List<ChapterRef>?)? = null, localFetch: Boolean = true): UpdateResult {
         // Use the worker's pre-fetched refs when it supplied them; otherwise fetch locally (also the fallback
         // for any entry a worker failed on, so a worker miss never drops a title from the update).
         val prefetched = prefetch?.invoke(entry)
         val refs = prefetched ?: run {
+            // The caller already fetched this one and it wasn't in the result -> it failed there. Don't re-fetch
+            // (a dead/522 source would just time out again and stall the scan); mark it failed once.
+            if (!localFetch) return UpdateResult(entry, emptyList(), failed = true)
             if (SourceManager.loadSource(entry.sourceId) == null) {
                 log.warn("Source {} for '{}' not installed; skipping", entry.sourceId, entry.title)
                 return UpdateResult(entry, emptyList())

@@ -136,7 +136,9 @@ object ScanDispatch {
     ): List<UpdateResult> {
         if (!parallel) return LibraryService.update(bucket, { _, _ -> onTick() }, isOnline, onFailure)
         val refs = fetchLocalParallel(bucket) { onTick() }
-        return LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
+        // localFetch=false: fetchLocalParallel already tried every series here, so a miss is a real failure -
+        // don't re-fetch it (would just re-time-out on a dead source and stall at ~100%).
+        return LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] }, localFetch = false)
     }
 
     /** Fetch a bucket's chapter lists locally, 8-wide (mirrors the worker's /worker/scan). Returns the refs
