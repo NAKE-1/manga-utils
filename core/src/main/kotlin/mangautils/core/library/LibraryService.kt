@@ -195,7 +195,8 @@ object LibraryService {
     private fun updateOne(entry: LibraryEntry, prefetch: ((LibraryEntry) -> List<ChapterRef>?)? = null): UpdateResult {
         // Use the worker's pre-fetched refs when it supplied them; otherwise fetch locally (also the fallback
         // for any entry a worker failed on, so a worker miss never drops a title from the update).
-        val refs = prefetch?.invoke(entry) ?: run {
+        val prefetched = prefetch?.invoke(entry)
+        val refs = prefetched ?: run {
             if (SourceManager.loadSource(entry.sourceId) == null) {
                 log.warn("Source {} for '{}' not installed; skipping", entry.sourceId, entry.title)
                 return UpdateResult(entry, emptyList())
@@ -206,12 +207,15 @@ object LibraryService {
                     return UpdateResult(entry, emptyList(), failed = true)
                 }
         }
-        return diffEntry(entry, refs)
+        // Log the per-series line only when WE fetched it here (sequential/fallback) - live, one at a time.
+        // Prefetched entries were already logged at their fetch site (main's parallel fetch, or the worker),
+        // so logging again in the diff would just dump them all in a burst at the end.
+        return diffEntry(entry, refs, logLine = prefetched == null)
     }
 
     /** Diff a freshly-fetched chapter list against the entry's snapshot: find new chapters/versions, newly
      *  unlocked, update the stored snapshot. Pure data - no network - whether the refs came from main or a worker. */
-    private fun diffEntry(entry: LibraryEntry, currentRefs: List<ChapterRef>): UpdateResult {
+    private fun diffEntry(entry: LibraryEntry, currentRefs: List<ChapterRef>, logLine: Boolean = true): UpdateResult {
         val knownUrls = entry.knownChapters.map { it.url }.toSet()
         // Group by chapter number so a new URL can be told apart: a number we've never had (a real new
         // chapter) vs another scan of one we already track. Same number-keying the download counts use.
@@ -237,8 +241,10 @@ object LibraryService {
         // rewrites the whole library.json, which was O(n^2) on a full scan). The entry is mutated in place.
         // Per-series INFO line (like a download logs per chapter), so a scan shows its work live, not just a
         // final summary. Failures already log at WARN in updateOne.
-        val found = newChapters.size + newVersions.size
-        log.info("SCAN '{}' - {} chapters{}", entry.title, currentRefs.size, if (found > 0) ", $found new" else "")
+        if (logLine) {
+            val found = newChapters.size + newVersions.size
+            log.info("SCAN '{}' - {} chapters{}", entry.title, currentRefs.size, if (found > 0) ", $found new" else "")
+        }
         // Both are returned so auto-download still pulls every version - the split is for the badge, not
         // for what gets fetched. newlyUnlocked rides along so just-unlocked chapters download too.
         return UpdateResult(entry, newChapters, newVersions, newlyUnlocked = newlyUnlocked)

@@ -148,8 +148,12 @@ object ScanDispatch {
             bucket.map { e ->
                 async {
                     sem.withPermit {
-                        try { runCatching { LibraryService.fetchRefs(e.sourceId, e.mangaUrl) }.getOrNull()?.let { e.mangaUrl to it } }
-                        finally { onOne() } // tick progress per fetch (success or not), that's where the time is
+                        try {
+                            runCatching { LibraryService.fetchRefs(e.sourceId, e.mangaUrl) }.getOrNull()?.let {
+                                log.info("SCAN '{}' - {} chapters", e.title, it.size) // live, as each lands (not a diff-time burst)
+                                e.mangaUrl to it
+                            }
+                        } finally { onOne() } // tick progress per fetch (success or not), that's where the time is
                     }
                 }
             }.awaitAll().filterNotNull().toMap()
