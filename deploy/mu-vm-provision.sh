@@ -15,6 +15,11 @@ MAIN_URL="${MAIN_URL:-http://100.67.109.13:8080}"
 REPO="${REPO:-https://github.com/NAKE-1/manga-utils.git}"
 GITDIR=/root/manga-src
 
+# base packages (cloud image is minimal): guest agent so `qm`/mu-fleet can drive this VM, git for the clone.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y && apt-get install -y qemu-guest-agent git curl ca-certificates jq
+systemctl enable --now qemu-guest-agent 2>/dev/null || true
+
 # --- 1. find + mount the burn disk (download churn only) ------------------------------------------
 echo "== disks (verify the burn disk below is the blank data disk, NOT the OS disk) =="
 lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
