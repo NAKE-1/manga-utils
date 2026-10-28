@@ -22,11 +22,11 @@ SSHKEY=/root/.ssh/id_ed25519.pub  # your pubkey (change to id_rsa.pub if that's 
 IMG_URL=https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
 IMG=/var/lib/vz/template/iso/debian-12-genericcloud-amd64.qcow2
 
-# vmid:name:cores:ramMB:osGB:burnGB   (3 roomy workers; edit to taste)
+# vmid:name:cores:ramMB:osGB:burnGB   (node-1 is the Orange Pi, so VMs start at node-2; VMID = 200 + node number)
 WORKERS=(
-  "201:mu-worker-1:4:8192:20:80"
-  "202:mu-worker-2:4:8192:20:80"
-  "203:mu-worker-3:4:8192:20:80"
+  "202:node-2:4:8192:20:80"
+  "203:node-3:4:8192:20:80"
+  "204:node-4:4:8192:20:80"
 )
 # -------------------------------------------------------------------------------------------------
 
