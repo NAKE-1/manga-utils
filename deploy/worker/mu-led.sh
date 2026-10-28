@@ -7,7 +7,6 @@
 #   red + blue fast      = worker app (container) not responding
 #   red + blue slow      = online but can't reach main
 #   green + blue fast    = downloading a delegated job
-#   white (green+blue on)= a Tailscale exit node is active
 #   green + blue heartbeat = standby / ready (alive)
 #
 # Runs on the HOST (not in the container) via systemd, so it can still show red/error if the worker
@@ -36,7 +35,6 @@ apply() {
     error)   g 0; bbl 120 120 ;;  # red + blue fast - worker app down
     nomain)  g 0; bbl 600 600 ;;  # red + blue slow - can't reach main
     dl)      g 1; bbl 120 120 ;;  # green + blue fast - downloading
-    vpn)     g 1; b 1 ;;          # white - exit node active
     standby) g 1; bheart ;;       # green + blue heartbeat - ready, alive
   esac
   logger -t mu-led "state=$1"
@@ -56,8 +54,6 @@ while true; do
     IN=$(curl -s --max-time 3 -H "Authorization: Bearer $WORKER_TOKEN" "$W/worker/health" 2>/dev/null | grep -o '"inflight":[0-9]*' | grep -o '[0-9]*')
     if [ "${IN:-0}" -gt 0 ] 2>/dev/null; then
       apply dl
-    elif tailscale status --json 2>/dev/null | tr -d ' \n' | grep -q '"ExitNode":true'; then
-      apply vpn
     else
       apply standby
     fi
