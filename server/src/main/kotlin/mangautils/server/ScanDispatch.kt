@@ -32,7 +32,11 @@ object ScanDispatch {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
-        .callTimeout(15, TimeUnit.MINUTES) // a worker's whole share of the library can be a lot of series
+        // The worker holds ONE request open while it fetches its whole share (minutes, no bytes in between),
+        // so the default 10s per-read timeout kills it mid-scan. Disable per-read/write and let callTimeout cap it.
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.MINUTES) // overall bound; a worker's share can be a lot of series
         .build()
     private val pool = Executors.newCachedThreadPool { Thread(it, "scan-worker").apply { isDaemon = true } }
 
