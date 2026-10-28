@@ -8,6 +8,12 @@ import mangautils.core.library.LibraryStore
 import mangautils.core.library.UpdateResult
 import mangautils.core.worker.WorkerNode
 import mangautils.core.worker.WorkerStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -70,7 +76,11 @@ object ScanDispatch {
         }
         // Main scans its bucket locally while the workers fetch theirs.
         val tMain = System.currentTimeMillis()
-        val mainResults = LibraryService.update(buckets[0], prog, isOnline, onFailure)
+        // Fetch main's own bucket in parallel (same 8-wide batch the worker uses - the sources tolerate it,
+        // the worker just proved it with 0 failures), then diff serially via prefetch so library writes stay
+        // safe. A series the parallel fetch misses falls back to a plain local fetch inside update().
+        val mainRefs = fetchLocalParallel(buckets[0])
+        val mainResults = LibraryService.update(buckets[0], prog, isOnline, onFailure, prefetch = { mainRefs[it.mangaUrl] })
         val mainSec = (System.currentTimeMillis() - tMain) / 1000
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
         // for the rest (worker-failed or unreachable). Either way every entry in the bucket is processed.
@@ -89,6 +99,20 @@ object ScanDispatch {
             all.size, buckets[0].size, mainSec, remote, nodes.size, entries.size - buckets[0].size - remote,
             all.sumOf { it.newChapters.size }, all.count { it.failed })
         return all
+    }
+
+    private const val LOCAL_CONCURRENCY = 8 // ponytail: fixed; lower if main's IP ever gets rate-limited scanning
+
+    /** Fetch a bucket's chapter lists locally, 8-wide (mirrors the worker's /worker/scan). Returns the refs
+     *  it got; a failed series is simply absent, so update()'s prefetch falls back to a local fetch for it. */
+    private fun fetchLocalParallel(bucket: List<LibraryEntry>): Map<String, List<ChapterRef>> {
+        if (bucket.isEmpty()) return emptyMap()
+        return runBlocking(Dispatchers.IO) {
+            val sem = Semaphore(LOCAL_CONCURRENCY)
+            bucket.map { e ->
+                async { sem.withPermit { runCatching { LibraryService.fetchRefs(e.sourceId, e.mangaUrl) }.getOrNull()?.let { e.mangaUrl to it } } }
+            }.awaitAll().filterNotNull().toMap()
+        }
     }
 
     /** Enabled + online nodes to offload to, honoring the workerNode pick. Empty unless the setting is on. */
