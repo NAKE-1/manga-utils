@@ -6,6 +6,7 @@
 package mangautils.core.library
 
 import eu.kanade.tachiyomi.network.interceptor.HumanCheckState
+import eu.kanade.tachiyomi.network.interceptor.SolverClient
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -135,6 +136,7 @@ object LibraryService {
         localFetch: Boolean = true,
     ): List<UpdateResult> {
         val total = entries.size
+        val scanStart = System.currentTimeMillis()
         val results = mutableListOf<UpdateResult>()
         for ((i, entry) in entries.withIndex()) {
             if (!isOnline()) {
@@ -149,7 +151,7 @@ object LibraryService {
             // isOnline() check can short-circuit the rest of the run instead of timing out on each.
             if (res.failed) onFailure?.invoke()
         }
-        retryAfterHumanCheckCleared(results)
+        retryFailed(results, scanStart)
         // Persist every diffed entry in ONE write (see diffEntry). Failed entries weren't mutated, so skip
         // them; re-persisting an unchanged non-failed entry is a harmless no-op.
         runCatching { LibraryStore.upsertAll(results.filterNot { it.failed }.map { it.entry }) }
@@ -158,22 +160,25 @@ object LibraryService {
     }
 
     /**
-     * A captcha can pop mid-run: the first blocked title triggers the (background) auto-solver, but the
-     * update races on and fails a handful of titles with 403 before the clearance lands. Once the host
-     * clears, re-check just those — otherwise a mid-run captcha silently drops titles from the update.
-     * Gated on auto-solve so a manual-only setup doesn't stall the run waiting for a clear that won't come.
+     * Re-check the handful of titles that failed for a *recoverable* reason, once, at the end of the scan:
+     * a host blocked by a human-check that has since cleared (captcha auto-solver), or a host whose solver
+     * session got CF-re-warmed mid-scan (a parallel-scan straggler - many 403 the instant CF re-challenges,
+     * one re-warms the session, the rest can land before it's fresh). Plain dead-source failures are left be.
      */
-    private fun retryAfterHumanCheckCleared(results: MutableList<UpdateResult>) {
+    private fun retryFailed(results: MutableList<UpdateResult>, scanStart: Long) {
         val failed = results.withIndex().filter { it.value.failed }
         if (failed.isEmpty()) return
-        // Only retry titles whose host is actually blocked by a human-check. A plain failure (HTTP 522, a
-        // timeout, a dead source) won't recover on an immediate re-fetch - retrying it just stalls the scan
-        // re-timing-out on the same source - so leave those failed for the next scheduled run.
-        val blocked = failed.mapNotNull { hostOf(it.value.entry.sourceId) }.toSet().filter { HumanCheckState.isPending(it) }.toSet()
-        if (blocked.isEmpty()) return
+        val hosts = failed.mapNotNull { hostOf(it.value.entry.sourceId) }.toSet()
+        // Recoverable failures are re-checked once; the rest (a plain HTTP 522 / timeout / dead source, which
+        // won't recover on an immediate re-fetch) are left for the next scheduled run. Two kinds recover:
+        //  - a host blocked by a human-check (wait, bounded, for the auto-solver to clear it), and
+        //  - a host whose solver session was CF-re-warmed DURING this scan - a parallel-scan straggler that
+        //    403'd while the session was being re-cleared; it's fresh now, so a single re-check clears it.
+        val blocked = hosts.filter { HumanCheckState.isPending(it) }.toSet()
+        val rewarmed = hosts.filter { runCatching { SolverClient.rewarmedSince(it, scanStart) }.getOrDefault(false) }.toSet()
+        if (blocked.isEmpty() && rewarmed.isEmpty()) return
         val autoSolve = runCatching { mangautils.core.config.SettingsStore.get().autoSolveCaptcha }.getOrDefault(false)
-        if (autoSolve) {
-            // Wait (bounded) for the in-progress solve to clear the blocked host(s).
+        if (blocked.isNotEmpty() && autoSolve) {
             val deadline = System.currentTimeMillis() + 25_000
             while (blocked.any { HumanCheckState.isPending(it) } && System.currentTimeMillis() < deadline) {
                 runCatching { Thread.sleep(1000) }
@@ -182,11 +187,12 @@ object LibraryService {
         var recovered = 0
         for ((idx, res) in failed) {
             val host = hostOf(res.entry.sourceId) ?: continue
-            if (host !in blocked || HumanCheckState.isPending(host)) continue // not captcha-blocked, or still blocked
+            if (HumanCheckState.isPending(host)) continue // still captcha-blocked -> leave failed
+            if (host !in blocked && host !in rewarmed) continue // not a recoverable failure
             val retry = updateOne(res.entry, null)
             if (!retry.failed) { results[idx] = retry; recovered++ }
         }
-        if (recovered > 0) log.info("Update recovered {} title(s) after the captcha cleared", recovered)
+        if (recovered > 0) log.info("Update recovered {} title(s) after captcha/re-warm cleared", recovered)
     }
 
     private fun hostOf(sourceId: Long): String? = runCatching {

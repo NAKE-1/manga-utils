@@ -33,6 +33,10 @@ object SolverClient {
     private val rewarmLocks = java.util.concurrent.ConcurrentHashMap<String, Any>() // per-host recovery lock
     private const val REWARM_COOLDOWN_MS = 30_000L
 
+    /** Did [host]'s solver session get re-warmed (CF re-cleared) at or after [sinceMs]? The scan uses this to
+     *  re-check a straggler that failed while its source was being re-warmed (session is fresh now). */
+    fun rewarmedSince(host: String, sinceMs: Long): Boolean = (lastRewarm[host] ?: 0L) >= sinceMs
+
     /** Drop the solver's per-host sessions + cached cf_clearance (part of the egress reset — the clearance
      *  is IP-bound, so a new exit node must re-solve). Best-effort. */
     fun reset() {
