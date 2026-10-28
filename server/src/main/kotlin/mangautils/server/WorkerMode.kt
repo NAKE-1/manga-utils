@@ -77,6 +77,8 @@ object WorkerMode {
     @Volatile private var lastServeAt = 0L // last manifest/file served to main (= shipping a chapter back)
     @Volatile private var lastExtAt = 0L   // last extension jar received from main (= syncing)
     @Volatile private var exitActive = false // an exit node we set is live — the watchdog guards it
+    private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
+    @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
     private val hbJson = kotlinx.serialization.json.Json { encodeDefaults = true }
 
@@ -109,6 +111,7 @@ object WorkerMode {
     @Serializable data class ScanReqDto(val series: List<ScanItem>)
     @Serializable data class ScanResItem(val manga: String, val chapters: List<ChapterRef>? = null, val error: String? = null)
     @Serializable data class ScanResDto(val results: List<ScanResItem>)
+    @Serializable data class ScanProgressDto(val done: Int, val total: Int)
 
     // ---- job model ----
     private class ChapterRec(val url: String, val name: String) {
@@ -312,6 +315,7 @@ object WorkerMode {
             val req = runCatching { call.receive<ScanReqDto>() }.getOrNull()
                 ?: return@post call.respond(HttpStatusCode.BadRequest, Err("bad body"))
             val t0 = System.currentTimeMillis()
+            scanTotal = req.series.size; scanProgress.set(0) // so main can poll live progress of this batch
             val results = withContext(Dispatchers.IO) {
                 coroutineScope {
                     val sem = Semaphore(8)
@@ -319,11 +323,13 @@ object WorkerMode {
                         async {
                             sem.withPermit {
                                 val label = item.title.ifBlank { item.manga }
-                                runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
-                                    .fold(
-                                        onSuccess = { log.info("SCAN '{}' - {} chapters", label, it.size); ScanResItem(item.manga, chapters = it) },
-                                        onFailure = { log.warn("SCAN '{}' - FAILED: {}", label, it.message); ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
-                                    )
+                                try {
+                                    runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
+                                        .fold(
+                                            onSuccess = { log.info("SCAN '{}' - {} chapters", label, it.size); ScanResItem(item.manga, chapters = it) },
+                                            onFailure = { log.warn("SCAN '{}' - FAILED: {}", label, it.message); ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
+                                        )
+                                } finally { scanProgress.incrementAndGet() }
                             }
                         }
                     }.awaitAll()
@@ -332,6 +338,10 @@ object WorkerMode {
             val ok = results.count { it.chapters != null }
             log.info("scan batch: {}/{} series in {}s", ok, results.size, (System.currentTimeMillis() - t0) / 1000)
             call.respond(ScanResDto(results))
+        }
+        get("/worker/scan/progress") {
+            if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            call.respond(ScanProgressDto(scanProgress.get(), scanTotal))
         }
         post("/worker/download") {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))

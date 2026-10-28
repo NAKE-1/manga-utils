@@ -44,6 +44,8 @@ object ScanDispatch {
         .writeTimeout(60, TimeUnit.SECONDS)
         .callTimeout(15, TimeUnit.MINUTES) // overall bound; a worker's share can be a lot of series
         .build()
+    private val pollClient = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS).callTimeout(3, TimeUnit.SECONDS).build()
     private val pool = Executors.newCachedThreadPool { Thread(it, "scan-worker").apply { isDaemon = true } }
 
     fun update(
@@ -67,24 +69,32 @@ object ScanDispatch {
         entries.forEachIndexed { i, e -> buckets[i % buckets.size].add(e) }
 
         val total = entries.size
-        val done = AtomicInteger(0)
         onProgress?.invoke(0, total) // publish the total up front so the bar shows 0/total, not a stuck 0/0
-        // Progress ticks on the FETCHES (where the time is now), not the near-instant prefetched diffs. Each
-        // local fetch ticks 1; a worker's whole share ticks when its remote batch returns (no per-series signal).
-        val bump: (Int) -> Unit = { n -> onProgress?.invoke(done.addAndGet(n), total) }
+        // Progress tracks the FETCHES (where the time is), split so BOTH halves climb the bar live: main ticks
+        // per local fetch; each worker's share is polled from its /worker/scan/progress while its batch runs.
+        val mainDone = AtomicInteger(0)
+        val workerDone = AtomicInteger(0)
+        val publish = { onProgress?.invoke((mainDone.get() + workerDone.get()).coerceAtMost(total), total) }
 
         // Kick off every worker's fetch up front so they run in parallel with main's own local scan.
         val futures = nodes.mapIndexed { idx, node ->
-            node to pool.submit<Map<String, List<ChapterRef>>> {
-                fetchFromWorker(node, buckets[idx + 1]).also { bump(buckets[idx + 1].size) }
+            node to pool.submit<Map<String, List<ChapterRef>>> { fetchFromWorker(node, buckets[idx + 1]) }
+        }
+        // Poll the workers' live scan progress so the bar climbs during their (single-remote-call) fetch,
+        // instead of jumping only when each batch returns. Stops once every worker future is done.
+        val poller = pool.submit {
+            runCatching {
+                while (futures.any { !it.second.isDone }) {
+                    workerDone.set(nodes.sumOf { pollScanProgress(it) }); publish()
+                    Thread.sleep(700)
+                }
             }
         }
-        // Main scans its bucket locally while the workers fetch theirs.
-        val tMain = System.currentTimeMillis()
         // Fetch main's own bucket in parallel (same 8-wide batch the worker uses - the sources tolerate it,
         // the worker just proved it with 0 failures), then diff serially via prefetch so library writes stay
         // safe. A series the parallel fetch misses falls back to a plain local fetch inside update().
-        val mainRefs = fetchLocalParallel(buckets[0]) { bump(1) }
+        val tMain = System.currentTimeMillis()
+        val mainRefs = fetchLocalParallel(buckets[0]) { mainDone.incrementAndGet(); publish() }
         val mainResults = LibraryService.update(buckets[0], null, isOnline, onFailure, prefetch = { mainRefs[it.mangaUrl] })
         val mainSec = (System.currentTimeMillis() - tMain) / 1000
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
@@ -99,6 +109,8 @@ object ScanDispatch {
             remote += refs.size
             LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
         }
+        poller.cancel(true)
+        workerDone.set(buckets.drop(1).sumOf { it.size }); publish() // finalize both halves to total
         val all = mainResults + workerResults
         log.info("scan done: {} checked - {} on main ({}s) + {} via {} worker(s) ({} fell back local), {} new, {} failed",
             all.size, buckets[0].size, mainSec, remote, nodes.size, entries.size - buckets[0].size - remote,
@@ -124,6 +136,16 @@ object ScanDispatch {
             }.awaitAll().filterNotNull().toMap()
         }
     }
+
+    /** How many series a node has fetched in its in-flight /worker/scan, for live progress. 0 on any error. */
+    private fun pollScanProgress(node: WorkerNode): Int = runCatching {
+        val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/scan/progress").get()
+        if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+        pollClient.newCall(rb.build()).execute().use { r ->
+            if (!r.isSuccessful) return 0
+            json.decodeFromString(WorkerMode.ScanProgressDto.serializer(), r.body?.string() ?: return 0).done
+        }
+    }.getOrDefault(0)
 
     /** Enabled + online nodes to offload to, honoring the workerNode pick. Empty unless the setting is on. */
     private fun scanNodes(): List<WorkerNode> {
