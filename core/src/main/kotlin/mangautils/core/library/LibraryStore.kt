@@ -31,6 +31,15 @@ object LibraryStore {
         save(others + entry)
     }
 
+    /** Replace many entries (by key) in ONE read+write. A per-series upsert rewrites the whole file each call,
+     *  so a full-library scan doing 587 upserts was O(n^2) on disk; update() batches through this instead. */
+    @Synchronized
+    fun upsertAll(entries: List<LibraryEntry>) {
+        if (entries.isEmpty()) return
+        val keys = entries.map { it.key }.toSet()
+        save(list().filterNot { it.key in keys } + entries)
+    }
+
     @Synchronized
     fun remove(
         sourceId: Long,

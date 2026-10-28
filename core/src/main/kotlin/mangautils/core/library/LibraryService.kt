@@ -146,6 +146,10 @@ object LibraryService {
             if (res.failed) onFailure?.invoke()
         }
         retryAfterHumanCheckCleared(results)
+        // Persist every diffed entry in ONE write (see diffEntry). Failed entries weren't mutated, so skip
+        // them; re-persisting an unchanged non-failed entry is a harmless no-op.
+        runCatching { LibraryStore.upsertAll(results.filterNot { it.failed }.map { it.entry }) }
+            .onFailure { log.warn("library batch save failed: {}", it.message) }
         return results
     }
 
@@ -229,7 +233,8 @@ object LibraryService {
             newVersions.forEach { if (it.url !in entry.newVersions) entry.newVersions.add(it.url) }
         }
         entry.lastCheckedAt = now
-        LibraryStore.upsert(entry)
+        // Note: NOT persisted here - update() batches one LibraryStore.upsertAll at the end (per-series upsert
+        // rewrites the whole library.json, which was O(n^2) on a full scan). The entry is mutated in place.
         // Per-series INFO line (like a download logs per chapter), so a scan shows its work live, not just a
         // final summary. Failures already log at WARN in updateOne.
         val found = newChapters.size + newVersions.size
