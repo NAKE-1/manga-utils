@@ -497,6 +497,7 @@ private data class SettingsDto(
     val workerDispatch: Boolean,
     val workerNode: String,
     val workerUpdateChecking: Boolean,
+    val parallelUpdateScan: Boolean,
 )
 
 @Serializable
@@ -614,6 +615,7 @@ private data class SettingsPatch(
     val workerDispatch: Boolean? = null,
     val workerNode: String? = null,
     val workerUpdateChecking: Boolean? = null,
+    val parallelUpdateScan: Boolean? = null,
 )
 
 @Serializable
@@ -702,7 +704,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.autoBackupEnabled, s.autoBackupHour, s.autoBackupKeep,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
     s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha, s.webviewEngine,
-    s.workerDispatch, s.workerNode, s.workerUpdateChecking,
+    s.workerDispatch, s.workerNode, s.workerUpdateChecking, s.parallelUpdateScan,
 )
 
 @Serializable
@@ -2320,6 +2322,7 @@ fun Application.module() {
             body.workerDispatch?.let { s = s.copy(workerDispatch = it) }
             body.workerNode?.let { s = s.copy(workerNode = it) }
             body.workerUpdateChecking?.let { s = s.copy(workerUpdateChecking = it) }
+            body.parallelUpdateScan?.let { s = s.copy(parallelUpdateScan = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config

@@ -173,13 +173,14 @@ export default function Workers() {
   const [test, setTest] = useState<WorkerStatus | null>(null)
   const [dispatch, setDispatch] = useState(false) // master toggle: route downloads through a worker
   const [updChk, setUpdChk] = useState(false) // use workers to help check the library for updates
+  const [parScan, setParScan] = useState(true) // fetch chapter lists in parallel during an update scan
   const [pick, setPick] = useState('') // "" = Auto, else a node name
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
   useEffect(() => {
     load()
-    api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode); setUpdChk(s.workerUpdateChecking) }).catch(() => {})
+    api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode); setUpdChk(s.workerUpdateChecking); setParScan(s.parallelUpdateScan) }).catch(() => {})
     timer.current = setInterval(load, 5000) // live health; workers are polled server-side each call
     return () => clearInterval(timer.current)
   }, [])
@@ -187,6 +188,7 @@ export default function Workers() {
   async function toggleDispatch() { const v = !dispatch; setDispatch(v); await api.saveSettings({ workerDispatch: v }).catch(() => setDispatch(!v)) }
   async function choose(n: string) { setPick(n); await api.saveSettings({ workerNode: n }).catch(() => {}) }
   async function toggleUpdChk() { const v = !updChk; setUpdChk(v); await api.saveSettings({ workerUpdateChecking: v }).catch(() => setUpdChk(!v)) }
+  async function toggleParScan() { const v = !parScan; setParScan(v); await api.saveSettings({ parallelUpdateScan: v }).catch(() => setParScan(!v)) }
 
   async function add() {
     setErr(''); setBusy(true)
@@ -247,6 +249,13 @@ export default function Workers() {
             <div className="set-hint">Off = main checks the whole library. On = split the update scan across main + online workers (faster). Separate from downloads above.</div>
           </div>
           <span className={'switch' + (updChk ? ' on' : '')}><span className="knob" /></span>
+        </button>
+        <button className="set-toggle" onClick={toggleParScan} style={{ marginTop: 10 }}>
+          <div>
+            <div className="set-row-label">Scan sources in parallel</div>
+            <div className="set-hint">On = fetch many chapter lists at once (fast: ~20s for a big library, even with no worker). Off = one at a time (slower, gentler on sources).</div>
+          </div>
+          <span className={'switch' + (parScan ? ' on' : '')}><span className="knob" /></span>
         </button>
       </div>
 

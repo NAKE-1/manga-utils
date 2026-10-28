@@ -47,6 +47,9 @@ data class Settings(
     /** Use worker nodes to help check the library for updates (split the scan across main + worker). Off by
      *  default - scanning hits sources harder than downloads, so this is a deliberate opt-in. */
     val workerUpdateChecking: Boolean = false,
+    /** Fetch chapter lists in parallel during an update scan (fast, ~8-20s for a big library). Off = one
+     *  source at a time (gentler, the old slow behavior). On by default; applies even with no worker nodes. */
+    val parallelUpdateScan: Boolean = true,
     /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
     val downloadDir: String? = null,
     /** Languages whose sources are shown in the web UI (codes like "en", "fr"). Empty = all;

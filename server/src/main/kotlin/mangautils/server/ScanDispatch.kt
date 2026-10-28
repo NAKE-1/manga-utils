@@ -54,12 +54,17 @@ object ScanDispatch {
         isOnline: () -> Boolean = { true },
         onFailure: (() -> Unit)? = null,
     ): List<UpdateResult> {
+        val parallel = parallelScanEnabled()
         val nodes = scanNodes()
-        // Not worth splitting a tiny library; and with no worker it's just the normal local scan.
+        // No worker (off / none / all down) or a tiny library: scan it all on main - parallel if enabled
+        // (fast even with zero workers), else the old one-at-a-time sequential scan.
         if (nodes.isEmpty() || entries.size < 4) {
-            val res = LibraryService.update(entries, onProgress, isOnline, onFailure)
-            log.info("scan done: {} checked on main, {} new, {} failed",
-                res.size, res.sumOf { it.newChapters.size }, res.count { it.failed })
+            val total = entries.size
+            onProgress?.invoke(0, total)
+            val done = AtomicInteger(0)
+            val res = scanLocal(entries, parallel, isOnline, onFailure) { onProgress?.invoke(done.incrementAndGet(), total) }
+            log.info("scan done: {} checked on main{}, {} new, {} failed",
+                res.size, if (parallel) " (parallel)" else "", res.sumOf { it.newChapters.size }, res.count { it.failed })
             return res
         }
 
@@ -90,12 +95,9 @@ object ScanDispatch {
                 }
             }
         }
-        // Fetch main's own bucket in parallel (same 8-wide batch the worker uses - the sources tolerate it,
-        // the worker just proved it with 0 failures), then diff serially via prefetch so library writes stay
-        // safe. A series the parallel fetch misses falls back to a plain local fetch inside update().
+        // Scan main's own bucket (parallel when enabled, else sequential) while the workers fetch theirs.
         val tMain = System.currentTimeMillis()
-        val mainRefs = fetchLocalParallel(buckets[0]) { mainDone.incrementAndGet(); publish() }
-        val mainResults = LibraryService.update(buckets[0], null, isOnline, onFailure, prefetch = { mainRefs[it.mangaUrl] })
+        val mainResults = scanLocal(buckets[0], parallel, isOnline, onFailure) { mainDone.incrementAndGet(); publish() }
         val mainSec = (System.currentTimeMillis() - tMain) / 1000
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
         // for the rest (worker-failed or unreachable). Either way every entry in the bucket is processed.
@@ -119,6 +121,23 @@ object ScanDispatch {
     }
 
     private const val LOCAL_CONCURRENCY = 8 // ponytail: fixed; lower if main's IP ever gets rate-limited scanning
+
+    private fun parallelScanEnabled(): Boolean =
+        runCatching { SettingsStore.get().parallelUpdateScan }.getOrDefault(true)
+
+    /** Scan a bucket on main, ticking [onTick] per series. Parallel = 8-wide fetch + prefetched (serial,
+     *  safe) diff; sequential = the old one-source-at-a-time scan. Either way a title is never dropped. */
+    private fun scanLocal(
+        bucket: List<LibraryEntry>,
+        parallel: Boolean,
+        isOnline: () -> Boolean,
+        onFailure: (() -> Unit)?,
+        onTick: () -> Unit,
+    ): List<UpdateResult> {
+        if (!parallel) return LibraryService.update(bucket, { _, _ -> onTick() }, isOnline, onFailure)
+        val refs = fetchLocalParallel(bucket) { onTick() }
+        return LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
+    }
 
     /** Fetch a bucket's chapter lists locally, 8-wide (mirrors the worker's /worker/scan). Returns the refs
      *  it got; a failed series is simply absent, so update()'s prefetch falls back to a local fetch for it. */
