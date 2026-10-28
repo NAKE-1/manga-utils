@@ -68,19 +68,24 @@ object ScanDispatch {
 
         val total = entries.size
         val done = AtomicInteger(0)
-        val prog: (Int, Int) -> Unit = { _, _ -> onProgress?.invoke(done.incrementAndGet(), total) }
+        onProgress?.invoke(0, total) // publish the total up front so the bar shows 0/total, not a stuck 0/0
+        // Progress ticks on the FETCHES (where the time is now), not the near-instant prefetched diffs. Each
+        // local fetch ticks 1; a worker's whole share ticks when its remote batch returns (no per-series signal).
+        val bump: (Int) -> Unit = { n -> onProgress?.invoke(done.addAndGet(n), total) }
 
         // Kick off every worker's fetch up front so they run in parallel with main's own local scan.
         val futures = nodes.mapIndexed { idx, node ->
-            node to pool.submit<Map<String, List<ChapterRef>>> { fetchFromWorker(node, buckets[idx + 1]) }
+            node to pool.submit<Map<String, List<ChapterRef>>> {
+                fetchFromWorker(node, buckets[idx + 1]).also { bump(buckets[idx + 1].size) }
+            }
         }
         // Main scans its bucket locally while the workers fetch theirs.
         val tMain = System.currentTimeMillis()
         // Fetch main's own bucket in parallel (same 8-wide batch the worker uses - the sources tolerate it,
         // the worker just proved it with 0 failures), then diff serially via prefetch so library writes stay
         // safe. A series the parallel fetch misses falls back to a plain local fetch inside update().
-        val mainRefs = fetchLocalParallel(buckets[0])
-        val mainResults = LibraryService.update(buckets[0], prog, isOnline, onFailure, prefetch = { mainRefs[it.mangaUrl] })
+        val mainRefs = fetchLocalParallel(buckets[0]) { bump(1) }
+        val mainResults = LibraryService.update(buckets[0], null, isOnline, onFailure, prefetch = { mainRefs[it.mangaUrl] })
         val mainSec = (System.currentTimeMillis() - tMain) / 1000
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
         // for the rest (worker-failed or unreachable). Either way every entry in the bucket is processed.
@@ -92,7 +97,7 @@ object ScanDispatch {
                 .getOrElse { log.warn("scan via {} failed, all {} fall back local: {}", node.name, bucket.size, it.message); emptyMap() }
             if (refs.isNotEmpty()) log.info("scan via {}: {}/{} fetched remotely", node.name, refs.size, bucket.size)
             remote += refs.size
-            LibraryService.update(bucket, prog, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
+            LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
         }
         val all = mainResults + workerResults
         log.info("scan done: {} checked - {} on main ({}s) + {} via {} worker(s) ({} fell back local), {} new, {} failed",
@@ -105,12 +110,17 @@ object ScanDispatch {
 
     /** Fetch a bucket's chapter lists locally, 8-wide (mirrors the worker's /worker/scan). Returns the refs
      *  it got; a failed series is simply absent, so update()'s prefetch falls back to a local fetch for it. */
-    private fun fetchLocalParallel(bucket: List<LibraryEntry>): Map<String, List<ChapterRef>> {
+    private fun fetchLocalParallel(bucket: List<LibraryEntry>, onOne: () -> Unit): Map<String, List<ChapterRef>> {
         if (bucket.isEmpty()) return emptyMap()
         return runBlocking(Dispatchers.IO) {
             val sem = Semaphore(LOCAL_CONCURRENCY)
             bucket.map { e ->
-                async { sem.withPermit { runCatching { LibraryService.fetchRefs(e.sourceId, e.mangaUrl) }.getOrNull()?.let { e.mangaUrl to it } } }
+                async {
+                    sem.withPermit {
+                        try { runCatching { LibraryService.fetchRefs(e.sourceId, e.mangaUrl) }.getOrNull()?.let { e.mangaUrl to it } }
+                        finally { onOne() } // tick progress per fetch (success or not), that's where the time is
+                    }
+                }
             }.awaitAll().filterNotNull().toMap()
         }
     }
