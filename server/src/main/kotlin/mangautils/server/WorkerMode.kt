@@ -67,6 +67,8 @@ object WorkerMode {
     private val jobs = ConcurrentHashMap<String, DlJob>()
     private var seq = 0L
     @Volatile private var egressIp: String? = null
+    @Volatile private var lastServeAt = 0L // last manifest/file served to main (= shipping a chapter back)
+    @Volatile private var lastExtAt = 0L   // last extension jar received from main (= syncing)
     @Volatile private var exitActive = false // an exit node we set is live — the watchdog guards it
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
     private val hbJson = kotlinx.serialization.json.Json { encodeDefaults = true }
@@ -88,7 +90,7 @@ object WorkerMode {
         val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
-    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics)
+    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false)
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
     @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null)
     @Serializable data class SetExitReq(val node: String = "") // ip or MagicDNS name; "" = none (normal egress)
@@ -282,7 +284,9 @@ object WorkerMode {
         get("/worker/health") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             val inflight = jobs.values.count { it.state == "running" }
-            call.respond(Health(VERSION, (System.currentTimeMillis() - started) / 1000, egress(), inflight, inflight == 0, metrics()))
+            val now = System.currentTimeMillis()
+            call.respond(Health(VERSION, (now - started) / 1000, egress(), inflight, inflight == 0, metrics(),
+                shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000))
         }
         get("/worker/jobs") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
@@ -305,6 +309,7 @@ object WorkerMode {
             val job = jobs[call.parameters["id"]] ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such job"))
             val folder = call.request.queryParameters["chapter"] ?: return@get call.respond(HttpStatusCode.BadRequest, Err("missing chapter"))
             val m = manifest(job, folder) ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such chapter"))
+            lastServeAt = System.currentTimeMillis()
             call.respond(m)
         }
         get("/worker/download/{id}/file") {
@@ -313,6 +318,7 @@ object WorkerMode {
             val folder = call.request.queryParameters["chapter"] ?: return@get call.respond(HttpStatusCode.BadRequest, Err("missing chapter"))
             val path = call.request.queryParameters["path"] ?: return@get call.respond(HttpStatusCode.BadRequest, Err("missing path"))
             val bytes = fileBytes(job, folder, path) ?: return@get call.respond(HttpStatusCode.NotFound, Err("no such file"))
+            lastServeAt = System.currentTimeMillis()
             call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.OK)
         }
         post("/worker/download/{id}/ack") {
@@ -345,6 +351,7 @@ object WorkerMode {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             val bytes = withContext(Dispatchers.IO) { call.receiveStream().readBytes() }
             if (bytes.isEmpty()) return@post call.respond(HttpStatusCode.BadRequest, Err("empty jar"))
+            lastExtAt = System.currentTimeMillis()
             // Optional metadata main sends with the jar so a worker can install even an APK-translated jar
             // that has no bundled manifest. Absent (older main) -> null -> install derives from the jar.
             val provided = call.request.headers["X-Ext-Pkg"]?.let { pkg ->
@@ -571,7 +578,9 @@ object WorkerMode {
             while (true) {
                 runCatching {
                     val inflight = jobs.values.count { it.state == "running" }
-                    val h = Health(VERSION, (System.currentTimeMillis() - started) / 1000, egress(), inflight, inflight == 0, metrics())
+                    val nowH = System.currentTimeMillis()
+                    val h = Health(VERSION, (nowH - started) / 1000, egress(), inflight, inflight == 0, metrics(),
+                        shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000)
                     val body = hbJson.encodeToString(Workers.CheckinDto(token, h)).toRequestBody("application/json".toMediaType())
                     client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
                 }

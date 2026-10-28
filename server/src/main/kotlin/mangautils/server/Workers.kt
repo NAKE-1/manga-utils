@@ -97,7 +97,7 @@ object Workers {
 
     // ---- Up/down alerter: fire a Discord message on each node's online/down/recovered edge (gated in Notifier
     // by the webhook + "worker health" toggle). State is tracked ALWAYS, so enabling alerts never dumps a backlog.
-    private const val DOWN_ALERT_MS = 90_000L // silent this long before a node counts as "down" (skips a restart)
+    private const val DOWN_ALERT_MS = 45_000L // silent this long before a node counts as "down" (skips a restart)
     private val lastUp = java.util.concurrent.ConcurrentHashMap<String, Long>()               // last time online
     private val lastHealth = java.util.concurrent.ConcurrentHashMap<String, WorkerStatus>()   // last ONLINE status (for the msg)
     private class AlertState(var up: Boolean, var downSince: Long, var downAlerted: Boolean)
