@@ -48,7 +48,12 @@ object ScanDispatch {
     ): List<UpdateResult> {
         val nodes = scanNodes()
         // Not worth splitting a tiny library; and with no worker it's just the normal local scan.
-        if (nodes.isEmpty() || entries.size < 4) return LibraryService.update(entries, onProgress, isOnline, onFailure)
+        if (nodes.isEmpty() || entries.size < 4) {
+            val res = LibraryService.update(entries, onProgress, isOnline, onFailure)
+            log.info("scan done: {} checked on main, {} new, {} failed",
+                res.size, res.sumOf { it.newChapters.size }, res.count { it.failed })
+            return res
+        }
 
         // Round-robin into buckets: bucket 0 = main, 1..N = each worker. Interleaving spreads each source
         // evenly across buckets, so parallel hits on one source come from different egress IPs (politer).
@@ -67,15 +72,21 @@ object ScanDispatch {
         val mainResults = LibraryService.update(buckets[0], prog, isOnline, onFailure)
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
         // for the rest (worker-failed or unreachable). Either way every entry in the bucket is processed.
+        var remote = 0
         val workerResults = futures.flatMapIndexed { idx, pair ->
             val (node, fut) = pair
             val bucket = buckets[idx + 1]
             val refs = runCatching { fut.get() }
                 .getOrElse { log.warn("scan via {} failed, all {} fall back local: {}", node.name, bucket.size, it.message); emptyMap() }
             if (refs.isNotEmpty()) log.info("scan via {}: {}/{} fetched remotely", node.name, refs.size, bucket.size)
+            remote += refs.size
             LibraryService.update(bucket, prog, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
         }
-        return mainResults + workerResults
+        val all = mainResults + workerResults
+        log.info("scan done: {} checked - {} on main + {} via {} worker(s) ({} fell back local), {} new, {} failed",
+            all.size, buckets[0].size, remote, nodes.size, entries.size - buckets[0].size - remote,
+            all.sumOf { it.newChapters.size }, all.count { it.failed })
+        return all
     }
 
     /** Enabled + online nodes to offload to, honoring the workerNode pick. Empty unless the setting is on. */
