@@ -105,7 +105,7 @@ object WorkerMode {
     @Serializable data class ExtInfo(val pkg: String, val name: String, val version: String, val beta: Boolean, val sources: Int)
     // Distributed library scan: main hands a batch of series, the worker fetches each source's current chapter
     // list (the expensive network step) and ships back the refs - main does the diff against its library.
-    @Serializable data class ScanItem(val source: String, val manga: String)
+    @Serializable data class ScanItem(val source: String, val manga: String, val title: String = "")
     @Serializable data class ScanReqDto(val series: List<ScanItem>)
     @Serializable data class ScanResItem(val manga: String, val chapters: List<ChapterRef>? = null, val error: String? = null)
     @Serializable data class ScanResDto(val results: List<ScanResItem>)
@@ -317,10 +317,11 @@ object WorkerMode {
                     req.series.map { item ->
                         async {
                             sem.withPermit {
+                                val label = item.title.ifBlank { item.manga }
                                 runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
                                     .fold(
-                                        onSuccess = { ScanResItem(item.manga, chapters = it) },
-                                        onFailure = { ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
+                                        onSuccess = { log.info("SCAN '{}' - {} chapters", label, it.size); ScanResItem(item.manga, chapters = it) },
+                                        onFailure = { log.warn("SCAN '{}' - FAILED: {}", label, it.message); ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
                                     )
                             }
                         }

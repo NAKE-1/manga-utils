@@ -103,7 +103,7 @@ object ScanDispatch {
     /** POST a bucket to the node's /worker/scan; return mangaUrl -> refs for the series it fetched OK. */
     private fun fetchFromWorker(node: WorkerNode, bucket: List<LibraryEntry>): Map<String, List<ChapterRef>> {
         if (bucket.isEmpty()) return emptyMap()
-        val body = WorkerMode.ScanReqDto(bucket.map { WorkerMode.ScanItem(it.sourceId.toString(), it.mangaUrl) })
+        val body = WorkerMode.ScanReqDto(bucket.map { WorkerMode.ScanItem(it.sourceId.toString(), it.mangaUrl, it.title) })
         val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/scan")
             .post(json.encodeToString(WorkerMode.ScanReqDto.serializer(), body).toRequestBody(JSON))
         if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
