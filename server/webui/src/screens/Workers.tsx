@@ -131,13 +131,18 @@ function ExitNodeControl({ name, onChanged }: { name: string; onChanged?: () => 
     // exit-node list and the parent worker card (new egress IP) right away - no page reload needed.
     try { await api.workerSetExit(name, ip); await load(); onChanged?.() } finally { setBusy(false) }
   }
+  const value = data.auto ? 'auto' : currentIp
   return (
     <div style={{ marginTop: 10 }}>
       <div className="set-row-label">Exit node (egress IP)</div>
-      <select className="set-input" value={currentIp} disabled={busy} onChange={(e) => choose(e.target.value)}>
-        <option value="">None (normal egress)</option>
+      <select className="set-input" value={value} disabled={busy} onChange={(e) => choose(e.target.value)}>
+        <option value="">Off (direct egress)</option>
+        <option value="auto">Auto (nearby, fail over)</option>
         {data.nodes.map((n) => <option key={n.ip} value={n.ip}>{n.name}{n.online ? '' : ' (offline)'}</option>)}
       </select>
+      {data.current
+        ? <div className="set-hint" style={{ marginTop: 4 }}>On: {data.current}</div>
+        : data.auto && <div className="set-hint" style={{ marginTop: 4 }}>Auto: no nearby node up - normal egress</div>}
     </div>
   )
 }

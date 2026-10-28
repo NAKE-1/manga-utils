@@ -77,6 +77,8 @@ object WorkerMode {
     @Volatile private var lastServeAt = 0L // last manifest/file served to main (= shipping a chapter back)
     @Volatile private var lastExtAt = 0L   // last extension jar received from main (= syncing)
     @Volatile private var exitActive = false // an exit node we set is live — the watchdog guards it
+    @Volatile private var autoMode = false   // auto nearby-exit mode: the watchdog fails over between nodes
+    @Volatile private var currentExit = ""   // the specific exit node (tailnet ip) we last applied; "" = direct
     private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
     @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
@@ -101,7 +103,7 @@ object WorkerMode {
     )
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false)
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
-    @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null)
+    @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null, val auto: Boolean = false)
     @Serializable data class SetExitReq(val node: String = "") // ip or MagicDNS name; "" = none (normal egress)
     @Serializable data class OkDto(val ok: Boolean, val error: String? = null)
     @Serializable data class ExtInfo(val pkg: String, val name: String, val version: String, val beta: Boolean, val sources: Int)
@@ -464,11 +466,32 @@ object WorkerMode {
         p.exitValue() to out
     }.getOrElse { -1 to (it.message ?: "tailscale not available") }
 
+    // Stable per-worker offset so auto mode on different workers prefers DIFFERENT servers (spreads egress
+    // IPs without any main-side coordination) instead of every worker grabbing the same first node.
+    private val selfOffset: Int by lazy {
+        runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() }?.hashCode() ?: 0
+    }
+    private fun <T> List<T>.rotated(by: Int): List<T> =
+        if (isEmpty()) this else Math.floorMod(by, size).let { k -> drop(k) + take(k) }
+    private fun cityOf(p: TsPeer): String? = mullvadCodeRe.find(p.HostName.lowercase())?.groupValues?.getOrNull(1)
+
+    /** Allowed-city Mullvad exit peers, ordered by our city priority then hostname (auto's candidate pool). */
+    private fun mullvadCandidates(): List<TsPeer> {
+        val (code, out) = runCmd("tailscale", "status", "--json")
+        if (code != 0) return emptyList()
+        val peers = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()?.Peer?.values ?: return emptyList()
+        val pri = MULLVAD_CITIES.keys.withIndex().associate { (i, c) -> c to i }
+        return peers.filter { it.ExitNodeOption && "mullvad" in (it.HostName + it.DNSName).lowercase() }
+            .mapNotNull { p -> cityOf(p)?.takeIf { it in MULLVAD_CITIES }?.let { p to it } }
+            .sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName }))
+            .map { it.first }
+    }
+
     private fun exitNodes(): ExitNodesDto {
         val (code, out) = runCmd("tailscale", "status", "--json")
-        if (code != 0) return ExitNodesDto(available = false, current = "", nodes = emptyList(), error = out.trim().take(200).ifBlank { "tailscale unavailable" })
+        if (code != 0) return ExitNodesDto(false, "", emptyList(), out.trim().take(200).ifBlank { "tailscale unavailable" }, autoMode)
         val st = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()
-            ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status")
+            ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status", autoMode)
         val peers = st.Peer.values.filter { it.ExitNodeOption }
         val result = ArrayList<ExitNode>()
         // Your own (non-Mullvad) exit nodes: shown as-is, never filtered.
@@ -476,38 +499,67 @@ object WorkerMode {
             val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
             result.add(ExitNode(name, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode))
         }
-        // Mullvad: keep only allowed cities, and collapse each city's many servers to ONE pickable entry.
-        val byCity = LinkedHashMap<String, MutableList<TsPeer>>()
-        for (p in peers) {
-            if ("mullvad" !in (p.HostName + p.DNSName).lowercase()) continue
-            val c = mullvadCodeRe.find(p.HostName.lowercase())?.groupValues?.getOrNull(1) ?: continue
-            if (c in MULLVAD_CITIES) byCity.getOrPut(c) { mutableListOf() }.add(p)
-        }
-        for ((c, servers) in byCity) {
-            val rep = servers.firstOrNull { it.Online } ?: servers.first()
-            result.add(ExitNode(MULLVAD_CITIES.getValue(c), rep.TailscaleIPs.firstOrNull().orEmpty(), servers.any { it.Online }, servers.any { it.ExitNode }))
-        }
-        val nodes = result.distinctBy { it.name }.sortedBy { it.name.lowercase() }
-        return ExitNodesDto(available = true, current = nodes.firstOrNull { it.current }?.name.orEmpty(), nodes = nodes)
+        // Mullvad: list the INDIVIDUAL allowed-city servers (vpn id shown next to the city), not collapsed, so
+        // you can see exactly which node a worker is on and pick a specific one.
+        val pri = MULLVAD_CITIES.keys.withIndex().associate { (i, c) -> c to i }
+        peers.mapNotNull { p ->
+            if ("mullvad" !in (p.HostName + p.DNSName).lowercase()) return@mapNotNull null
+            val c = cityOf(p)?.takeIf { it in MULLVAD_CITIES } ?: return@mapNotNull null
+            Triple(p, c, "${MULLVAD_CITIES.getValue(c)} · ${p.HostName}")
+        }.sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName }))
+            .forEach { (p, _, label) -> result.add(ExitNode(label, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode)) }
+        return ExitNodesDto(true, result.firstOrNull { it.current }?.name.orEmpty(), result, auto = autoMode)
     }
 
     private fun applyExit(node: String): Pair<Int, String> =
         if (node.isBlank()) runCmd("tailscale", "set", "--exit-node=")
         else runCmd("tailscale", "set", "--exit-node=$node", "--exit-node-allow-lan-access")
 
+    /** Quick one-shot egress check (the watchdog's probe; verifyEgress is the slower retrying one for a set). */
+    private fun egressWorks(): Boolean = runCatching {
+        OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
+            .newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { it.isSuccessful }
+    }.getOrDefault(false)
+
     /**
-     * Set the exit node by ip/name, or "" to clear (normal egress). SELF-REVERTING: after selecting an
-     * exit node it verifies egress actually works, and if not, drops back to normal egress on its own - so
-     * a dead/broken exit node can never strand the worker without internet. (Clearing is always safe.)
+     * Auto nearby-exit mode: from the allowed-city pool (rotated by a stable per-worker offset so multiple
+     * workers spread across DIFFERENT servers), skip [avoid], and try each ONLINE candidate until egress
+     * verifies. All nearby down -> normal egress (last resort, never strands the worker); the watchdog keeps
+     * retrying so it re-acquires a node when one comes back.
+     */
+    private fun autoSelect(avoid: String? = null): String? {
+        autoMode = true
+        val pool = mullvadCandidates().rotated(selfOffset).filter { it.Online }
+        for (p in pool) {
+            val ip = p.TailscaleIPs.firstOrNull() ?: continue
+            if (ip == avoid) continue
+            val (code, _) = applyExit(ip)
+            if (code == 0 && verifyEgress()) {
+                currentExit = ip; exitActive = true
+                log.info("auto exit node -> {} ({})", p.HostName, ip)
+                return null
+            }
+        }
+        log.warn("auto exit: no nearby node connected - using normal egress for now")
+        applyExit(""); currentExit = ""; exitActive = false; egressIp = null
+        return null
+    }
+
+    /**
+     * Set the exit node: "" = off (normal egress), "auto" = auto nearby mode with failover, else a specific
+     * ip/name (manual pin). A manual pin is SELF-REVERTING - if it can't connect it drops back to normal
+     * egress so a dead node never strands the worker. Auto mode fails over to the next nearby node instead.
      */
     private fun setExitNode(node: String): String? {
+        if (node == "auto") return autoSelect()
+        autoMode = false
         val (code, out) = applyExit(node)
         if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
-        if (node.isBlank()) { exitActive = false; return null } // back to normal egress - nothing to verify
-        if (verifyEgress()) { exitActive = true; return null }
+        if (node.isBlank()) { exitActive = false; currentExit = ""; return null } // normal egress - nothing to verify
+        if (verifyEgress()) { exitActive = true; currentExit = node; return null }
         // The exit node didn't give us a working path out. Revert to normal egress so downloads keep working.
         log.warn("exit node '{}' failed connectivity check - reverting to normal egress", node)
-        applyExit(""); exitActive = false; egressIp = null
+        applyExit(""); exitActive = false; currentExit = ""; egressIp = null
         return "exit node didn't connect - reverted to normal egress"
     }
 
@@ -649,22 +701,25 @@ object WorkerMode {
                 jobs.entries.removeIf { (_, j) -> j.state != "running" && j.createdAt < cutoff }
             }
         }.apply { isDaemon = true; name = "worker-job-reaper" }.start()
-        // Exit-node watchdog: if an exit node we set loses internet for a sustained window, revert to normal
-        // egress so the node can never get stuck with no working path out. Conservative (3 strikes / ~3 min)
-        // so a transient blip doesn't drop a working exit. Tailnet comms with main bypass the exit anyway.
+        // Exit-node watchdog (checks every ~60s, 3 strikes / ~3 min so a transient blip doesn't act). In AUTO
+        // mode it fails over to the next nearby node when the current one dies (and re-acquires one if it had
+        // fallen back to normal egress). For a MANUAL pin it reverts to normal egress so a dead node can never
+        // strand the worker. Tailnet comms with main bypass the exit anyway.
         Thread {
             var strikes = 0
             while (true) {
                 Thread.sleep(60_000)
+                if (autoMode) {
+                    if (!exitActive) { autoSelect(); strikes = 0; continue } // re-acquire a nearby node when one is back
+                    if (egressWorks()) { strikes = 0; continue }
+                    if (++strikes >= 3) { strikes = 0; log.warn("auto exit {} dead - failing over to next nearby node", currentExit); autoSelect(avoid = currentExit) }
+                    continue
+                }
                 if (!exitActive) { strikes = 0; continue }
-                val ok = runCatching {
-                    OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
-                        .newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { it.isSuccessful }
-                }.getOrDefault(false)
-                if (ok) { strikes = 0; continue }
+                if (egressWorks()) { strikes = 0; continue }
                 if (++strikes >= 3) {
                     log.warn("exit node egress dead {} checks - reverting to normal egress", strikes)
-                    applyExit(""); exitActive = false; egressIp = null; strikes = 0
+                    applyExit(""); exitActive = false; currentExit = ""; egressIp = null; strikes = 0
                 }
             }
         }.apply { isDaemon = true; name = "worker-exit-watchdog" }.start()
