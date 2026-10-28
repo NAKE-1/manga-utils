@@ -27,6 +27,10 @@ object SolverClient {
         .build()
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     private val SKIP = setOf("host", "cookie", "user-agent", "referer", "content-length", "accept-encoding", "connection")
+    // Per-host throttle for the re-warm-on-403: at most one reset+retry per host per window, so a burst of
+    // failures (e.g. a long MangaFire download whose session got re-challenged) re-warms once, not per chapter.
+    private val lastRewarm = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val REWARM_COOLDOWN_MS = 30_000L
 
     /** Drop the solver's per-host sessions + cached cf_clearance (part of the egress reset — the clearance
      *  is IP-bound, so a new exit node must re-solve). Best-effort. */
@@ -39,7 +43,9 @@ object SolverClient {
     }
 
     /** Run [request] (with its vrf) through the solver. Null on any failure so the caller can fall back. */
-    fun fetch(request: Request): Response? {
+    fun fetch(request: Request): Response? = doFetch(request, rewarm = true)
+
+    private fun doFetch(request: Request, rewarm: Boolean): Response? {
         val base = SolverConfig.url?.trimEnd('/') ?: return null
         val hdrs = request.headers.names().filter { it.lowercase() !in SKIP }.associateWith { request.headers[it] ?: "" }
         val payload = json.encodeToString(SolverReq.serializer(), SolverReq(request.url.toString(), hdrs))
@@ -49,7 +55,22 @@ object SolverClient {
         if (text.isBlank()) return null
         val out = runCatching { json.decodeFromString(SolverResp.serializer(), text) }.getOrNull() ?: return null
         if (out.status !in 200..399 || out.body.isNullOrEmpty()) {
-            log.info { "solver ${request.url.host}${request.url.encodedPath}: status ${out.status}, ${out.body?.length ?: 0}B${out.error?.let { " err=$it" } ?: ""}" }
+            // Log a snippet of the blocked body so the challenge is identifiable (CF "Just a moment", MangaFire
+            // /@waf shapes, a rate-limit page, or an app error) instead of just a byte count.
+            val snippet = out.body?.take(220)?.replace(Regex("\\s+"), " ")?.trim()
+            log.info { "solver ${request.url.host}${request.url.encodedPath}: status ${out.status}, ${out.body?.length ?: 0}B${out.error?.let { " err=$it" } ?: ""}${snippet?.let { " body=[$it]" } ?: ""}" }
+            // A 403/503 mid-run is usually a stale cf_clearance / @waf re-challenge after a burst. Re-warm the
+            // solver session once (throttled per host so a fail-burst can't thrash) and retry before giving up.
+            if (rewarm && (out.status == 403 || out.status == 503)) {
+                val host = request.url.host
+                val now = System.currentTimeMillis()
+                if (now - (lastRewarm[host] ?: 0L) > REWARM_COOLDOWN_MS) {
+                    lastRewarm[host] = now
+                    log.info { "solver ${out.status} on $host → re-warming session + retrying once" }
+                    reset()
+                    return doFetch(request, rewarm = false)
+                }
+            }
             return null
         }
         // Toast ONLY when the solver actually did work — a fresh /@waf captcha solve or a fresh Cloudflare
