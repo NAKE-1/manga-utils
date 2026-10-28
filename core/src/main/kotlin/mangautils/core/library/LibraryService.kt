@@ -230,6 +230,10 @@ object LibraryService {
         }
         entry.lastCheckedAt = now
         LibraryStore.upsert(entry)
+        // Per-series INFO line (like a download logs per chapter), so a scan shows its work live, not just a
+        // final summary. Failures already log at WARN in updateOne.
+        val found = newChapters.size + newVersions.size
+        log.info("SCAN '{}' - {} chapters{}", entry.title, currentRefs.size, if (found > 0) ", $found new" else "")
         // Both are returned so auto-download still pulls every version - the split is for the badge, not
         // for what gets fetched. newlyUnlocked rides along so just-unlocked chapters download too.
         return UpdateResult(entry, newChapters, newVersions, newlyUnlocked = newlyUnlocked)
