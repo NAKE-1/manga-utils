@@ -496,6 +496,7 @@ private data class SettingsDto(
     val webviewEngine: String,
     val workerDispatch: Boolean,
     val workerNode: String,
+    val workerUpdateChecking: Boolean,
 )
 
 @Serializable
@@ -612,6 +613,7 @@ private data class SettingsPatch(
     val webviewEngine: String? = null,
     val workerDispatch: Boolean? = null,
     val workerNode: String? = null,
+    val workerUpdateChecking: Boolean? = null,
 )
 
 @Serializable
@@ -700,7 +702,7 @@ private fun settingsDto(s: mangautils.core.config.Settings) = SettingsDto(
     s.autoBackupEnabled, s.autoBackupHour, s.autoBackupKeep,
     s.flareSolverrEnabled, s.flareSolverrUrl, s.flareSolverrSession, s.flareSolverrSessionTtlMinutes, s.flareSolverrTimeoutMs,
     s.usbBackupDir, s.discordWebhookUrl, s.notify, s.verboseLogging, s.autoSolveCaptcha, s.webviewEngine,
-    s.workerDispatch, s.workerNode,
+    s.workerDispatch, s.workerNode, s.workerUpdateChecking,
 )
 
 @Serializable
@@ -1687,7 +1689,7 @@ fun Application.module() {
                 libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0; libUpdateSummary = null
                 libUpdateExec.submit {
                     try {
-                        val results = LibraryService.update(
+                        val results = ScanDispatch.update(
                             onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total },
                             isOnline = { NetMonitor.online },
                             onFailure = { NetMonitor.reportPossibleOutage() },
@@ -2317,6 +2319,7 @@ fun Application.module() {
             body.webviewEngine?.let { e -> s = s.copy(webviewEngine = if (e == "chrome") "chrome" else "jcef") }
             body.workerDispatch?.let { s = s.copy(workerDispatch = it) }
             body.workerNode?.let { s = s.copy(workerNode = it) }
+            body.workerUpdateChecking?.let { s = s.copy(workerUpdateChecking = it) }
             withContext(Dispatchers.IO) { SettingsStore.save(s) }
             AppConfig.downloadDirOverride = s.downloadDir?.takeIf { it.isNotBlank() }?.let { java.nio.file.Path.of(it) }
             applyFlareSolverr(s) // live-apply the Cloudflare-bypass config

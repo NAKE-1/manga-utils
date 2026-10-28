@@ -126,6 +126,9 @@ object LibraryService {
         // probe interval. Both default to "online, no-op" for callers that don't care (CLI/tests).
         isOnline: () -> Boolean = { true },
         onFailure: (() -> Unit)? = null,
+        // Worker-assisted scan: pre-fetched chapter refs for an entry (fetched by a worker node). Returns
+        // null -> this entry is fetched locally as usual (so a worker miss falls back, never drops a title).
+        prefetch: ((LibraryEntry) -> List<ChapterRef>?)? = null,
     ): List<UpdateResult> {
         val total = entries.size
         val results = mutableListOf<UpdateResult>()
@@ -136,7 +139,7 @@ object LibraryService {
                 entries.drop(i).forEach { results.add(UpdateResult(it, emptyList(), failed = true)) }
                 break
             }
-            val res = updateOne(entry).also { onProgress?.invoke(i + 1, total) }
+            val res = updateOne(entry, prefetch).also { onProgress?.invoke(i + 1, total) }
             results.add(res)
             // A failed title is corroborating evidence of an outage — probe now (throttled) so the very next
             // isOnline() check can short-circuit the rest of the run instead of timing out on each.
@@ -168,7 +171,7 @@ object LibraryService {
         for ((idx, res) in failed) {
             val host = hostOf(res.entry.sourceId)
             if (host != null && HumanCheckState.isPending(host)) continue // still blocked → leave it failed
-            val retry = updateOne(res.entry)
+            val retry = updateOne(res.entry, null)
             if (!retry.failed) { results[idx] = retry; recovered++ }
         }
         if (recovered > 0) log.info("Update recovered {} title(s) after the captcha cleared", recovered)
@@ -178,23 +181,39 @@ object LibraryService {
         (SourceManager.loadSource(sourceId) as? HttpSource)?.baseUrl?.let { java.net.URI(it).host }
     }.getOrNull()
 
-    private fun updateOne(entry: LibraryEntry): UpdateResult {
-        val source = SourceManager.loadSource(entry.sourceId) ?: run {
-            log.warn("Source {} for '{}' not installed; skipping", entry.sourceId, entry.title)
-            return UpdateResult(entry, emptyList())
-        }
-        val current =
-            runCatching { runBlocking { source.getChapterList(seed(entry.mangaUrl)) } }
+    /** Fetch a series' current chapter list from its source, as refs - the expensive network step, isolated
+     *  so a worker node can run it for main (see /worker/scan). Throws on a source/network failure. */
+    fun fetchRefs(sourceId: Long, mangaUrl: String): List<ChapterRef> {
+        val source = SourceManager.loadSource(sourceId) ?: error("source $sourceId not installed")
+        return runBlocking { source.getChapterList(seed(mangaUrl)) }.map { it.toRef() }
+    }
+
+    private fun updateOne(entry: LibraryEntry, prefetch: ((LibraryEntry) -> List<ChapterRef>?)? = null): UpdateResult {
+        // Use the worker's pre-fetched refs when it supplied them; otherwise fetch locally (also the fallback
+        // for any entry a worker failed on, so a worker miss never drops a title from the update).
+        val refs = prefetch?.invoke(entry) ?: run {
+            if (SourceManager.loadSource(entry.sourceId) == null) {
+                log.warn("Source {} for '{}' not installed; skipping", entry.sourceId, entry.title)
+                return UpdateResult(entry, emptyList())
+            }
+            runCatching { fetchRefs(entry.sourceId, entry.mangaUrl) }
                 .getOrElse {
                     log.warn("Update failed for '{}': {}", entry.title, it.message)
                     return UpdateResult(entry, emptyList(), failed = true)
                 }
+        }
+        return diffEntry(entry, refs)
+    }
+
+    /** Diff a freshly-fetched chapter list against the entry's snapshot: find new chapters/versions, newly
+     *  unlocked, update the stored snapshot. Pure data - no network - whether the refs came from main or a worker. */
+    private fun diffEntry(entry: LibraryEntry, currentRefs: List<ChapterRef>): UpdateResult {
         val knownUrls = entry.knownChapters.map { it.url }.toSet()
         // Group by chapter number so a new URL can be told apart: a number we've never had (a real new
         // chapter) vs another scan of one we already track. Same number-keying the download counts use.
         val knownNumbers = entry.knownChapters.map { it.number }.toSet()
         val now = System.currentTimeMillis()
-        val fresh = current.filter { it.url !in knownUrls }.map { it.toRef() }
+        val fresh = currentRefs.filter { it.url !in knownUrls }
         // A locked/scheduled chapter arrives with a placeholder number (Tapas gives 0), which would wrongly
         // match an already-known number and get tagged "new version". A future-dated chapter is a genuinely
         // new chapter, so classify it as one regardless of its placeholder number.
@@ -202,7 +221,6 @@ object LibraryService {
         val newVersions = fresh.filter { it.number in knownNumbers && it.dateUpload <= now } // another scan; list marker only
         // newlyUnlocked: chapters known AND locked at the last check that have since unlocked. Sources like
         // Tapas list a scheduled chapter with a FUTURE date_upload; once it passes we auto-download it.
-        val currentRefs = current.map { it.toRef() }
         val newlyUnlocked = computeNewlyUnlocked(entry.knownChapters, currentRefs, entry.lastCheckedAt, now)
         entry.knownChapters = currentRefs.toMutableList()
         // Accumulate unseen urls (only after the first snapshot exists, so a first sync isn't all "new").

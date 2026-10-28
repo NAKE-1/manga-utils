@@ -8,7 +8,14 @@ import io.ktor.server.request.receive
 import io.ktor.server.request.receiveStream
 import io.ktor.server.response.respond
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import mangautils.core.library.ChapterRef
+import mangautils.core.library.LibraryService
 import mangautils.core.extension.ExtensionInstaller
 import mangautils.core.extension.InstalledStore
 import io.ktor.server.response.respondBytes
@@ -96,6 +103,12 @@ object WorkerMode {
     @Serializable data class SetExitReq(val node: String = "") // ip or MagicDNS name; "" = none (normal egress)
     @Serializable data class OkDto(val ok: Boolean, val error: String? = null)
     @Serializable data class ExtInfo(val pkg: String, val name: String, val version: String, val beta: Boolean, val sources: Int)
+    // Distributed library scan: main hands a batch of series, the worker fetches each source's current chapter
+    // list (the expensive network step) and ships back the refs - main does the diff against its library.
+    @Serializable data class ScanItem(val source: String, val manga: String)
+    @Serializable data class ScanReqDto(val series: List<ScanItem>)
+    @Serializable data class ScanResItem(val manga: String, val chapters: List<ChapterRef>? = null, val error: String? = null)
+    @Serializable data class ScanResDto(val results: List<ScanResItem>)
 
     // ---- job model ----
     private class ChapterRec(val url: String, val name: String) {
@@ -291,6 +304,30 @@ object WorkerMode {
         get("/worker/jobs") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
             call.respond(jobs.values.map { JobRow(it.id, it.clientTaskId, it.state) })
+        }
+        // Distributed update scan: fetch each series' current chapter list (bounded-parallel) and return refs.
+        // Per-series errors are reported (not thrown), so main can fall back to a local fetch for those.
+        post("/worker/scan") {
+            if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
+            val req = runCatching { call.receive<ScanReqDto>() }.getOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, Err("bad body"))
+            val results = withContext(Dispatchers.IO) {
+                coroutineScope {
+                    val sem = Semaphore(8)
+                    req.series.map { item ->
+                        async {
+                            sem.withPermit {
+                                runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
+                                    .fold(
+                                        onSuccess = { ScanResItem(item.manga, chapters = it) },
+                                        onFailure = { ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
+                                    )
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+            call.respond(ScanResDto(results))
         }
         post("/worker/download") {
             if (!call.authed()) return@post call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))

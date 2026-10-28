@@ -44,6 +44,9 @@ data class Settings(
     /** Which worker to use when [workerDispatch] is on. "" = Auto (any enabled + online node); otherwise
      *  the chosen node's name. */
     val workerNode: String = "",
+    /** Use worker nodes to help check the library for updates (split the scan across main + worker). Off by
+     *  default - scanning hits sources harder than downloads, so this is a deliberate opt-in. */
+    val workerUpdateChecking: Boolean = false,
     /** Override where downloads are saved (absolute path). Null = default `<dataDir>/downloads`. */
     val downloadDir: String? = null,
     /** Languages whose sources are shown in the web UI (codes like "en", "fr"). Empty = all;

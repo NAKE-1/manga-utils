@@ -70,7 +70,7 @@ object UpdateScheduler {
 
     /** Run one update pass over the whole library now (used by the scheduler). */
     fun runNow(): List<UpdateResult> {
-        val results = LibraryService.update(
+        val results = ScanDispatch.update(
             isOnline = { NetMonitor.online },
             onFailure = { NetMonitor.reportPossibleOutage() },
         )
