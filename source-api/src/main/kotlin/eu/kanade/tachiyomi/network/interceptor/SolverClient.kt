@@ -69,12 +69,19 @@ object SolverClient {
             // first thread resets + re-clears CF while holding the lock, the rest block then retry against the
             // now-warm session instead of failing. The reset itself is still throttled (a persistently-blocked
             // host re-warms at most once per window), so a hard block can't reset in a tight loop.
-            if (rewarm && (out.status == 403 || out.status == 503)) {
+            // 403/503 = stale cf_clearance / CF re-challenge. status 0 + "no cf_clearance" = the solver's
+            // FlareSolverr was momentarily cold and couldn't get a clearance (a transient at scan start). Both
+            // recover the same way: re-warm + retry once through the now-warm solver, rather than returning null
+            // and falling to the token-less FlareSolverr path (which hands back MangaFire "Missing token" = an
+            // empty 0-chapter scan result).
+            val cfStale = out.status == 403 || out.status == 503 ||
+                (out.error?.contains("cf_clearance", ignoreCase = true) == true)
+            if (rewarm && cfStale) {
                 val host = request.url.host
                 synchronized(rewarmLocks.computeIfAbsent(host) { Any() }) {
                     if (System.currentTimeMillis() - (lastRewarm[host] ?: 0L) > REWARM_COOLDOWN_MS) {
                         lastRewarm[host] = System.currentTimeMillis()
-                        log.info { "solver ${out.status} on $host → re-warming session + retrying" }
+                        log.info { "solver ${out.status}${out.error?.let { " ($it)" } ?: ""} on $host → re-warming session + retrying" }
                         reset()
                     }
                     return doFetch(request, rewarm = false)

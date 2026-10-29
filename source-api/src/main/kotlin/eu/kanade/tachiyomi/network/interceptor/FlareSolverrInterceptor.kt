@@ -147,7 +147,8 @@ class FlareSolverrInterceptor(
                 // body back to the extension. Not usable for images (a browser returns HTML, not binary).
                 if (request.method.equals("GET", true) && !isImageUrl(request.url)) {
                     val rendered = runCatching { solve(request, returnOnlyCookies = false) }.getOrNull()
-                    if (!rendered?.response.isNullOrBlank()) {
+                    val rbody = rendered?.response
+                    if (!rbody.isNullOrBlank() && !isTokenlessStub(rbody)) {
                         FlareSolverrConfig.recordSolveDone(host, cookies.size)
                         log.info { "FlareSolverr: cookie replay still blocked on $host — returning its rendered response body instead" }
                         return flareResponse(request, rendered!!)
@@ -334,6 +335,13 @@ class FlareSolverrInterceptor(
      * cf_clearance + the site's session cookie), then `request.get`s the exact URL (vrf already in it) and
      * returns the body — JSON extracted from Chrome's `<pre>` wrapper for API calls. Null on any failure.
      */
+    /** MangaFire's XHR API behind a FlareSolverr navigation returns a tiny app-error stub ("Missing token")
+     *  because FS can't supply the same-origin vrf context the API needs — only the solver sidecar can. Treat
+     *  that as a FAILURE, not a valid (empty) body, so the scan flags the title and its re-warm/retry pass
+     *  re-runs it through the (now warm) solver instead of silently committing a 0-chapter result. */
+    private fun isTokenlessStub(body: String?): Boolean =
+        body != null && body.length < 2000 && body.contains("Missing token", ignoreCase = true)
+
     private fun fetchThrough(request: Request): Response? {
         val host = request.url.host
         // NOTE: the solver (Plan #3) is invoked from JcefFetchInterceptor (a network interceptor, so it has
@@ -348,6 +356,7 @@ class FlareSolverrInterceptor(
         // A suspiciously tiny body means MangaFire returned an empty/stub (its /api is an XHR endpoint that
         // won't serve a bare navigation). Log the raw so we can see exactly what came back.
         if (len < 2000) log.info { "FS fetch-through SMALL body for $host — raw: ${sol.response!!.take(500).replace("\n", " ")}" }
+        if (isTokenlessStub(sol.response)) { log.info { "FS fetch-through token-less stub for $host — failing so it retries via the solver" }; return null }
         return flareResponse(request, sol)
     }
 
