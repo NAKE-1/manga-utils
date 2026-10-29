@@ -124,25 +124,41 @@ function ExitNodeControl({ name, onChanged }: { name: string; onChanged?: () => 
   useEffect(() => { load() }, [name])
   if (!data) return <div className="set-hint" style={{ marginTop: 10 }}>Exit node: checking…</div>
   if (!data.available) return <div className="set-hint" style={{ marginTop: 10 }}>Exit node: Tailscale not available on this node</div>
-  const currentIp = data.nodes.find((n) => n.current)?.ip ?? ''
-  async function choose(ip: string) {
+  async function choose(val: string) {
     setBusy(true)
     // workerSetExit returns only after the node has switched + re-probed egress, so refresh both the
     // exit-node list and the parent worker card (new egress IP) right away - no page reload needed.
-    try { await api.workerSetExit(name, ip); await load(); onChanged?.() } finally { setBusy(false) }
+    try { await api.workerSetExit(name, val); await load(); onChanged?.() } finally { setBusy(false) }
   }
-  const value = data.auto ? 'auto' : currentIp
+  // Pick a STATE; the worker rotates among that state's servers and fails over wg-001 -> wg-002 on its own.
+  const value = data.currentCity ? `city:${data.currentCity}` : data.auto ? 'auto' : ''
+  const cities = data.cities ?? []
+  const onlineCount = data.nodes.filter((n) => n.online).length
   return (
     <div style={{ marginTop: 10 }}>
-      <div className="set-row-label">Exit node (egress IP)</div>
+      <div className="set-row-label">Exit node (egress state)</div>
       <select className="set-input" value={value} disabled={busy} onChange={(e) => choose(e.target.value)}>
         <option value="">Off (direct egress)</option>
-        <option value="auto">Auto (nearby, fail over)</option>
-        {data.nodes.map((n) => <option key={n.ip} value={n.ip}>{n.name}{n.online ? '' : ' (offline)'}</option>)}
+        <option value="auto">Auto (nearest state, fail over)</option>
+        {cities.map((c) => <option key={c.code} value={`city:${c.code}`}>{c.label} ({c.online}/{c.total} up)</option>)}
       </select>
       {data.current
         ? <div className="set-hint" style={{ marginTop: 4 }}>On: {data.current}</div>
-        : data.auto && <div className="set-hint" style={{ marginTop: 4 }}>Auto: no nearby node up - normal egress</div>}
+        : (data.auto || data.currentCity)
+          ? <div className="set-hint" style={{ marginTop: 4 }}>acquiring a node…</div>
+          : null}
+      {data.nodes.length > 0 && (
+        <details style={{ marginTop: 6 }}>
+          <summary className="set-hint" style={{ cursor: 'pointer' }}>Available nodes ({onlineCount} online)</summary>
+          <div style={{ marginTop: 4, fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+            {data.nodes.map((n) => (
+              <div key={n.ip} style={{ color: n.online ? 'inherit' : 'var(--muted)', fontWeight: n.current ? 700 : 400 }}>
+                {n.current ? '● ' : ''}{n.name}{n.online ? '' : ' (offline)'}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   )
 }

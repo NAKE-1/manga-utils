@@ -77,7 +77,8 @@ object WorkerMode {
     @Volatile private var lastServeAt = 0L // last manifest/file served to main (= shipping a chapter back)
     @Volatile private var lastExtAt = 0L   // last extension jar received from main (= syncing)
     @Volatile private var exitActive = false // an exit node we set is live — the watchdog guards it
-    @Volatile private var autoMode = false   // auto nearby-exit mode: the watchdog fails over between nodes
+    @Volatile private var autoMode = false   // broad auto nearby-exit mode: fail over across all nearby states
+    @Volatile private var cityPin = ""       // pinned state (city code): fail over among THAT state's servers only
     @Volatile private var currentExit = ""   // the specific exit node (tailnet ip) we last applied; "" = direct
     private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
     @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
@@ -103,8 +104,11 @@ object WorkerMode {
     )
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false)
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
-    @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null, val auto: Boolean = false)
-    @Serializable data class SetExitReq(val node: String = "") // ip or MagicDNS name; "" = none (normal egress)
+    @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean)
+    // nodes = the individual servers (for the "available nodes" list + current display); cities = the pickable
+    // states; currentCity = the pinned state ("" if off/broad-auto/manual); current = the active server's label.
+    @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null, val auto: Boolean = false, val cities: List<ExitCity> = emptyList(), val currentCity: String = "")
+    @Serializable data class SetExitReq(val node: String = "") // "" = off, "auto" = nearby, "city:<code>" = pin a state, else ip/name
     @Serializable data class OkDto(val ok: Boolean, val error: String? = null)
     @Serializable data class ExtInfo(val pkg: String, val name: String, val version: String, val beta: Boolean, val sources: Int)
     // Distributed library scan: main hands a batch of series, the worker fetches each source's current chapter
@@ -489,9 +493,9 @@ object WorkerMode {
 
     private fun exitNodes(): ExitNodesDto {
         val (code, out) = runCmd("tailscale", "status", "--json")
-        if (code != 0) return ExitNodesDto(false, "", emptyList(), out.trim().take(200).ifBlank { "tailscale unavailable" }, autoMode)
+        if (code != 0) return ExitNodesDto(false, "", emptyList(), out.trim().take(200).ifBlank { "tailscale unavailable" }, autoMode, currentCity = cityPin)
         val st = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()
-            ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status", autoMode)
+            ?: return ExitNodesDto(false, "", emptyList(), "could not parse tailscale status", autoMode, currentCity = cityPin)
         val peers = st.Peer.values.filter { it.ExitNodeOption }
         val result = ArrayList<ExitNode>()
         // Your own (non-Mullvad) exit nodes: shown as-is, never filtered.
@@ -499,16 +503,17 @@ object WorkerMode {
             val name = p.HostName.ifBlank { p.DNSName.substringBefore('.') }.ifBlank { p.TailscaleIPs.firstOrNull() ?: "?" }
             result.add(ExitNode(name, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode))
         }
-        // Mullvad: list the INDIVIDUAL allowed-city servers (vpn id shown next to the city), not collapsed, so
-        // you can see exactly which node a worker is on and pick a specific one.
+        // Mullvad: the individual allowed-state servers (so the UI can show the available-node list + the exact
+        // current node), grouped into pickable STATES (the dropdown picks a state; the worker rotates among its
+        // servers and fails over wg-001 -> wg-002 -> ... on its own).
         val pri = MULLVAD_CITIES.keys.withIndex().associate { (i, c) -> c to i }
-        peers.mapNotNull { p ->
-            if ("mullvad" !in (p.HostName + p.DNSName).lowercase()) return@mapNotNull null
-            val c = cityOf(p)?.takeIf { it in MULLVAD_CITIES } ?: return@mapNotNull null
-            Triple(p, c, "${MULLVAD_CITIES.getValue(c)} · ${p.HostName}")
-        }.sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName }))
-            .forEach { (p, _, label) -> result.add(ExitNode(label, p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode)) }
-        return ExitNodesDto(true, result.firstOrNull { it.current }?.name.orEmpty(), result, auto = autoMode)
+        val mv = peers.mapNotNull { p -> cityOf(p)?.takeIf { it in MULLVAD_CITIES }?.takeIf { "mullvad" in (p.HostName + p.DNSName).lowercase() }?.let { p to it } }
+            .sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName }))
+        mv.forEach { (p, c) -> result.add(ExitNode("${MULLVAD_CITIES.getValue(c)} · ${p.HostName}", p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode)) }
+        val cities = mv.groupBy { it.second }.map { (c, servers) ->
+            ExitCity(c, MULLVAD_CITIES.getValue(c), servers.count { it.first.Online }, servers.size, c == cityPin)
+        }.sortedBy { pri[it.code] ?: 99 }
+        return ExitNodesDto(true, result.firstOrNull { it.current }?.name.orEmpty(), result, auto = autoMode, cities = cities, currentCity = cityPin)
     }
 
     private fun applyExit(node: String): Pair<Int, String> =
@@ -521,38 +526,44 @@ object WorkerMode {
             .newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { it.isSuccessful }
     }.getOrDefault(false)
 
-    /**
-     * Auto nearby-exit mode: from the allowed-city pool (rotated by a stable per-worker offset so multiple
-     * workers spread across DIFFERENT servers), skip [avoid], and try each ONLINE candidate until egress
-     * verifies. All nearby down -> normal egress (last resort, never strands the worker); the watchdog keeps
-     * retrying so it re-acquires a node when one comes back.
-     */
-    private fun autoSelect(avoid: String? = null): String? {
-        autoMode = true
-        val pool = mullvadCandidates().rotated(selfOffset).filter { it.Online }
-        for (p in pool) {
+    /** Try each ONLINE candidate in [pool] (rotated per-worker so workers spread out), skipping [avoid], until
+     *  egress verifies. All down -> normal egress (last resort, never strands the worker). Shared by broad-auto
+     *  and per-state pin; the watchdog re-runs it to fail over / re-acquire. */
+    private fun selectFrom(pool: List<TsPeer>, avoid: String?) {
+        for (p in pool.rotated(selfOffset).filter { it.Online }) {
             val ip = p.TailscaleIPs.firstOrNull() ?: continue
             if (ip == avoid) continue
             val (code, _) = applyExit(ip)
             if (code == 0 && verifyEgress()) {
                 currentExit = ip; exitActive = true
-                log.info("auto exit node -> {} ({})", p.HostName, ip)
-                return null
+                log.info("exit node -> {} ({})", p.HostName, ip)
+                return
             }
         }
-        log.warn("auto exit: no nearby node connected - using normal egress for now")
+        log.warn("exit: no eligible node connected - using normal egress for now")
         applyExit(""); currentExit = ""; exitActive = false; egressIp = null
-        return null
+    }
+
+    /** Broad auto: fail over across ALL nearby states. */
+    private fun autoSelect(avoid: String? = null): String? {
+        autoMode = true; cityPin = ""; selectFrom(mullvadCandidates(), avoid); return null
+    }
+
+    /** Pin to one STATE and fail over among ITS servers only (wg-001 dies -> wg-002 -> ...). */
+    private fun citySelect(code: String, avoid: String? = null): String? {
+        autoMode = false; cityPin = code
+        selectFrom(mullvadCandidates().filter { cityOf(it) == code }, avoid); return null
     }
 
     /**
-     * Set the exit node: "" = off (normal egress), "auto" = auto nearby mode with failover, else a specific
-     * ip/name (manual pin). A manual pin is SELF-REVERTING - if it can't connect it drops back to normal
-     * egress so a dead node never strands the worker. Auto mode fails over to the next nearby node instead.
+     * Set the exit node: "" = off, "auto" = broad nearby failover, "city:<code>" = pin a state (fail over among
+     * its servers), else a specific ip/name (manual pin). Auto/state fail over to another node; a manual pin is
+     * SELF-REVERTING (drops to normal egress if it can't connect) so a dead node never strands the worker.
      */
     private fun setExitNode(node: String): String? {
         if (node == "auto") return autoSelect()
-        autoMode = false
+        if (node.startsWith("city:")) return citySelect(node.removePrefix("city:"))
+        autoMode = false; cityPin = ""
         val (code, out) = applyExit(node)
         if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
         if (node.isBlank()) { exitActive = false; currentExit = ""; return null } // normal egress - nothing to verify
@@ -709,10 +720,13 @@ object WorkerMode {
             var strikes = 0
             while (true) {
                 Thread.sleep(60_000)
-                if (autoMode) {
-                    if (!exitActive) { autoSelect(); strikes = 0; continue } // re-acquire a nearby node when one is back
+                // Managed = broad auto OR a pinned state: the watchdog re-acquires / fails over on its own,
+                // staying within the pinned state when one is set, else across all nearby states.
+                if (autoMode || cityPin.isNotEmpty()) {
+                    val reselect = { avoid: String? -> if (cityPin.isNotEmpty()) citySelect(cityPin, avoid) else autoSelect(avoid) }
+                    if (!exitActive) { reselect(null); strikes = 0; continue } // re-acquire when a node comes back
                     if (egressWorks()) { strikes = 0; continue }
-                    if (++strikes >= 3) { strikes = 0; log.warn("auto exit {} dead - failing over to next nearby node", currentExit); autoSelect(avoid = currentExit) }
+                    if (++strikes >= 3) { strikes = 0; log.warn("exit {} dead - failing over to next node", currentExit); reselect(currentExit) }
                     continue
                 }
                 if (!exitActive) { strikes = 0; continue }
