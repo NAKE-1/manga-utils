@@ -511,10 +511,15 @@ object WorkerMode {
         val mv = peers.mapNotNull { p -> cityOf(p)?.takeIf { it in MULLVAD_CITIES }?.takeIf { "mullvad" in (p.HostName + p.DNSName).lowercase() }?.let { p to it } }
             .sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName }))
         mv.forEach { (p, c) -> result.add(ExitNode("${MULLVAD_CITIES.getValue(c)} · ${p.HostName}", p.TailscaleIPs.firstOrNull().orEmpty(), p.Online, p.ExitNode)) }
+        // The dropdown must reflect REALITY: if Tailscale already has an exit node live (e.g. it was set before
+        // this worker process started - our mode flags are in-memory and reset on restart), show that state,
+        // not "Off". Auto shows as Auto; else a pinned city; else fall back to the active node's own city.
+        val activeCity = mv.firstOrNull { it.first.ExitNode }?.second
+        val reportedCity = when { autoMode -> ""; cityPin.isNotEmpty() -> cityPin; else -> activeCity ?: "" }
         val cities = mv.groupBy { it.second }.map { (c, servers) ->
-            ExitCity(c, MULLVAD_CITIES.getValue(c), servers.count { it.first.Online }, servers.size, c == cityPin)
+            ExitCity(c, MULLVAD_CITIES.getValue(c), servers.count { it.first.Online }, servers.size, c == reportedCity)
         }.sortedBy { pri[it.code] ?: 99 }
-        return ExitNodesDto(true, result.firstOrNull { it.current }?.name.orEmpty(), result, auto = autoMode, cities = cities, currentCity = cityPin)
+        return ExitNodesDto(true, result.firstOrNull { it.current }?.name.orEmpty(), result, auto = autoMode, cities = cities, currentCity = reportedCity)
     }
 
     private fun applyExit(node: String): Pair<Int, String> =
@@ -718,6 +723,19 @@ object WorkerMode {
         // fallen back to normal egress). For a MANUAL pin it reverts to normal egress so a dead node can never
         // strand the worker. Tailnet comms with main bypass the exit anyway.
         Thread {
+            // Adopt an exit node Tailscale already has active from before this process started (our mode flags
+            // are in-memory and reset on restart): pin it to that node's state so the UI shows the right thing
+            // AND the watchdog manages failover, instead of leaving it an unmanaged leftover shown as "Off".
+            runCatching {
+                if (!autoMode && cityPin.isEmpty()) {
+                    mullvadCandidates().firstOrNull { it.ExitNode }?.let { active ->
+                        cityPin = cityOf(active).orEmpty()
+                        currentExit = active.TailscaleIPs.firstOrNull().orEmpty()
+                        exitActive = true
+                        log.info("adopted pre-existing exit node {} (state '{}') at startup", active.HostName, cityPin)
+                    }
+                }
+            }
             var strikes = 0
             while (true) {
                 Thread.sleep(60_000)
