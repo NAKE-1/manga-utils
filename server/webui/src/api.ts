@@ -233,6 +233,11 @@ export const api = {
     fetch(`/api/position?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&frac=${frac}`, { method: 'POST' }),
   setRead: (id: string, manga: string, chapter: string, read: boolean) =>
     fetch(`/api/read?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&read=${read}`, { method: 'POST' }),
+  // Bulk mark read/unread in ONE request (vs one /api/read per chapter) — the mark-all path.
+  setReadBulk: (id: string, manga: string, chapters: string[], read: boolean) =>
+    fetch(`/api/read/bulk?source=${id}&manga=${encodeURIComponent(manga)}&read=${read}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chapters }),
+    }),
   setBookmark: (id: string, manga: string, chapter: string, on: boolean) =>
     fetch(`/api/bookmarks?source=${id}&manga=${encodeURIComponent(manga)}&chapter=${encodeURIComponent(chapter)}&on=${on}`, { method: 'POST' }),
 

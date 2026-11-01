@@ -93,12 +93,15 @@ object DownloadQueue {
     private val sourceCooldownUntil = ConcurrentHashMap<Long, Long>()
     private const val SOURCE_COOLDOWN_MS = 3 * 60_000L
 
-    // Worker nodes currently handling a delegated task — one task per worker at a time, so a second
-    // concurrent task runs locally (true parallelism: main + a worker both downloading at once).
-    private val busyWorkers = ConcurrentHashMap.newKeySet<String>()
+    // Worker load: which SOURCES each worker is currently downloading. A worker runs at most ONE task per
+    // source (its own session/egress per source), up to MAX_PER_WORKER total — so main + a worker both run
+    // a given source at once, AND one worker runs several DIFFERENT sources at once (Atsumaru + MangaFire + …
+    // on the Pi simultaneously), instead of the old one-task-total-per-worker.
+    private const val MAX_PER_WORKER = 4 // ponytail: ceiling so a modest node (Pi) isn't swamped; raise for beefy nodes
+    private val workerLoad = HashMap<String, MutableSet<Long>>() // worker name -> sourceIds in flight; guarded by itself
 
-    /** Reserve a free, online, enabled worker for [task], or null to download locally. No lock held during
-     *  the health probe: the worker NAME is reserved atomically first, and freed again if it's offline. */
+    /** Reserve an online, enabled worker NOT already running [task]'s source (and under its cap), or null to
+     *  download locally. The (worker, source) slot is reserved atomically; freed again if the node is offline. */
     private fun reserveWorker(task: Task): WorkerNode? {
         val s = runCatching { SettingsStore.get() }.getOrNull()
         if (s?.workerDispatch != true) return null // master toggle off -> always download locally
@@ -106,28 +109,38 @@ object DownloadQueue {
         val candidates = runCatching {
             WorkerStore.list().filter { it.enabled && (pick.isBlank() || it.name == pick) }
         }.getOrDefault(emptyList())
-        if (candidates.isEmpty()) return null
         for (node in candidates) {
-            if (!busyWorkers.add(node.name)) continue // already handling a task
+            val reserved = synchronized(workerLoad) {
+                val set = workerLoad.getOrPut(node.name) { mutableSetOf() }
+                if (task.sourceId in set || set.size >= MAX_PER_WORKER) false else { set.add(task.sourceId); true }
+            }
+            if (!reserved) continue // already running this source here, or at cap
             if (Workers.onlineNow(node)) return node
-            busyWorkers.remove(node.name) // offline — unreserve and try the next
+            synchronized(workerLoad) { workerLoad[node.name]?.remove(task.sourceId) } // offline — unreserve, try next
         }
         return null
     }
-    private fun releaseWorker(name: String) { busyWorkers.remove(name) }
+    private fun releaseWorker(name: String, sourceId: Long) {
+        synchronized(workerLoad) { workerLoad[name]?.remove(sourceId) }
+    }
 
-    /** Enabled workers not already handling a task. Each can run ONE more same-source download in its OWN
-     *  session + egress, so it adds to the per-source budget: to a source, a worker looks like a separate
-     *  client, so running the same source on a worker and on main at once is safe (and the whole point of
-     *  the pool). 0 when dispatch is off. No health probe here (that would block the pump lock on the
-     *  network) — an offline one just means reserveWorker returns null and the task runs locally instead. */
-    private fun freeWorkerCount(): Int {
-        val s = runCatching { SettingsStore.get() }.getOrNull() ?: return 0
-        if (s.workerDispatch != true) return 0
+    /** A pump-time projection of worker load. [tryWorker] returns true (and marks a slot) when some eligible
+     *  worker can take [source] — not already running it, under cap. Mirrors reserveWorker so pump doesn't
+     *  over-flag preferWorker. No health probe (that would block the pump lock); an offline pick just falls
+     *  back to local when reserveWorker later returns null. */
+    private class WorkerProjection(private val names: List<String>, private val load: MutableMap<String, MutableSet<Long>>) {
+        fun tryWorker(source: Long): Boolean {
+            val w = names.firstOrNull { source !in (load[it] ?: emptySet()) && (load[it]?.size ?: 0) < MAX_PER_WORKER } ?: return false
+            load.getOrPut(w) { mutableSetOf() }.add(source); return true
+        }
+    }
+    private fun workerProjection(): WorkerProjection {
+        val s = runCatching { SettingsStore.get() }.getOrNull()
+        if (s?.workerDispatch != true) return WorkerProjection(emptyList(), mutableMapOf())
         val pick = s.workerNode
-        return runCatching {
-            WorkerStore.list().count { it.enabled && (pick.isBlank() || it.name == pick) && it.name !in busyWorkers }
-        }.getOrDefault(0)
+        val names = runCatching { WorkerStore.list().filter { it.enabled && (pick.isBlank() || it.name == pick) }.map { it.name } }.getOrDefault(emptyList())
+        val snap = synchronized(workerLoad) { names.associateWithTo(HashMap()) { (workerLoad[it] ?: emptySet()).toMutableSet() } }
+        return WorkerProjection(names, snap)
     }
 
     // Fires parked (retrywait) tasks once their cooldown elapses. Cheap 10s tick; a parked task holds no
@@ -183,7 +196,7 @@ object DownloadQueue {
             .groupingBy { it.sourceId }.eachCount().toMutableMap()
         // Each free worker can take one task (any source). Dispatch is MAIN-FIRST: the first download of a
         // source runs locally on main; only additional same-source downloads overflow to a free worker.
-        var workerBudget = freeWorkerCount()
+        val wp = workerProjection()
         val now = System.currentTimeMillis()
         for (task in tasks.values.sortedBy { it.order }) {
             if (slots <= 0) break
@@ -193,15 +206,16 @@ object DownloadQueue {
             if ((sourceCooldownUntil[task.sourceId] ?: 0) > now) continue
             when {
                 // A task mid-flight on a worker before a restart reconnects to its job on a worker.
-                task.remoteJobId.isNotBlank() && workerBudget > 0 -> { workerBudget--; task.preferWorker = true }
+                task.remoteJobId.isNotBlank() && wp.tryWorker(task.sourceId) -> { task.preferWorker = true }
                 // Main first: run locally while this source has headroom on main (perSourceCap, 1 by default).
                 (localPerSource[task.sourceId] ?: 0) < perSourceCap -> {
                     localPerSource[task.sourceId] = (localPerSource[task.sourceId] ?: 0) + 1
                     task.preferWorker = false
                 }
-                // Main is at its per-source cap: overflow this same-source download to a free worker.
-                workerBudget > 0 -> { workerBudget--; task.preferWorker = true }
-                else -> continue // main full for this source and no free worker; wait for a slot
+                // Main at its per-source cap: overflow to a worker NOT already running this source (so one
+                // worker can carry Atsumaru + MangaFire + ... at once, one task per source).
+                wp.tryWorker(task.sourceId) -> { task.preferWorker = true }
+                else -> continue // main at cap for this source and no worker slot for it; wait for a slot
             }
             task.state = "running"
             slots--
@@ -229,7 +243,7 @@ object DownloadQueue {
                 } catch (e: Exception) {
                     log.warn("worker delegation of '{}' failed, falling back to local: {}", task.mangaTitle, e.message)
                 } finally {
-                    releaseWorker(worker.name); task.assignedWorker = ""; task.remoteJobId = ""
+                    releaseWorker(worker.name, task.sourceId); task.assignedWorker = ""; task.remoteJobId = ""
                 }
             }
             val s = SettingsStore.get()

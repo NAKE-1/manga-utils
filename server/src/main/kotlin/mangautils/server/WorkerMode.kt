@@ -69,8 +69,9 @@ object WorkerMode {
     /** Worker routes are live only when a token is configured (so a plain main server never exposes them). */
     fun enabled(): Boolean = token.isNotEmpty()
 
-    // One download job at a time is plenty for a single node; a small pool lets a couple overlap if asked.
-    private val pool = Executors.newFixedThreadPool(2)
+    // Up to 4 delegated jobs at once (main sends one per source), matching DownloadQueue.MAX_PER_WORKER, so a
+    // worker can download Atsumaru + MangaFire + ... in parallel. Each job's own page concurrency is separate.
+    private val pool = Executors.newFixedThreadPool(4)
     private val jobs = ConcurrentHashMap<String, DlJob>()
     private var seq = 0L
     @Volatile private var egressIp: String? = null

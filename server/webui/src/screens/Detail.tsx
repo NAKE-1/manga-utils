@@ -284,12 +284,17 @@ export function Detail() {
     downloadChapters(missing)
   }
   function bulkSetRead(urls: string[], read: boolean) {
+    if (urls.length === 0) return
     const next = new Set(readSet)
-    urls.forEach((u) => { if (read) next.add(u); else next.delete(u); api.setRead(sourceId, url, u, read) })
+    urls.forEach((u) => { if (read) next.add(u); else next.delete(u) })
+    setReadSet(next) // optimistic: UI updates instantly
+    // ONE request + one write per store server-side, instead of a /api/read per chapter (which rewrote the
+    // whole read.json/library/positions under a lock each time - the mark-all freeze).
+    api.setReadBulk(sourceId, url, urls, read)
     // Unread means "I want to read this again", so the saved resume point has to go with it - otherwise
-    // reopening the chapter jumps you back to where you left off in the read you just discarded.
+    // reopening the chapter jumps you back to where you left off in the read you just discarded. (Local
+    // per-device cache; the server's copy is cleared by the bulk call above.)
     if (!read) clearPositions(sourceId, urls)
-    setReadSet(next)
   }
   function toggleSelect(chUrl: string) {
     setSelected((s) => { const n = new Set(s); if (n.has(chUrl)) n.delete(chUrl); else n.add(chUrl); return n })

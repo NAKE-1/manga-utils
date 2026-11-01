@@ -277,6 +277,15 @@ object LibraryService {
         }
     }
 
+    /** Drop MANY chapters from the "new" set in ONE library write (bulk mark-read) — avoids N full-file
+     *  rewrites of library.json when marking a whole series read. */
+    fun markChaptersSeen(sourceId: Long, mangaUrl: String, chapterUrls: Collection<String>) {
+        if (chapterUrls.isEmpty()) return
+        val entry = LibraryStore.find(sourceId, mangaUrl) ?: return
+        val urls = chapterUrls.toSet()
+        if (entry.newChapters.removeAll(urls) or entry.newVersions.removeAll(urls)) LibraryStore.upsert(entry)
+    }
+
     /** Drop one chapter from the "new" set (called when it's read) — the badge clears once none remain. */
     fun markChapterSeen(sourceId: Long, mangaUrl: String, chapterUrl: String) {
         val entry = LibraryStore.find(sourceId, mangaUrl) ?: return

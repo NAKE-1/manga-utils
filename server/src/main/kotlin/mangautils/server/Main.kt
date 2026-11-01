@@ -286,6 +286,7 @@ private data class LibraryDto(
 
 // Reading stats page.
 @Serializable private data class StatSeriesDto(val title: String, val count: Int, val sourceId: String = "", val mangaUrl: String = "", val thumbnailUrl: String? = null)
+@Serializable private data class BulkReadDto(val chapters: List<String> = emptyList())
 @Serializable private data class StatRecentDto(val title: String, val chapter: String, val readAt: Long, val sourceId: String, val mangaUrl: String, val thumbnailUrl: String? = null)
 @Serializable private data class StatsDto(
     val chaptersRead: Int,
@@ -2214,6 +2215,28 @@ fun Application.module() {
                 if (read) LibraryService.markChapterSeen(id, manga, chapter)
             }
             if (read) log.info("READ     chapter {}", chapter) // one clean line per chapter opened
+            call.respond(HttpStatusCode.OK)
+        }
+
+        // Bulk mark read/unread: ONE request + ONE write per store, replacing the old mark-all path that
+        // fired a separate /api/read per chapter (each rewriting the whole read.json / library / positions
+        // under a lock - the "mark all read/unread freezes everything" bug).
+        post("/api/read/bulk") {
+            val id = call.querySourceId() ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val manga = call.queryParam("manga") ?: return@post call.respond(HttpStatusCode.BadRequest)
+            val read = call.queryParam("read")?.toBoolean() ?: true
+            val chapters = runCatching { call.receive<BulkReadDto>().chapters }.getOrDefault(emptyList())
+            if (chapters.isEmpty()) return@post call.respond(HttpStatusCode.OK)
+            withContext(Dispatchers.IO) {
+                if (read) {
+                    ReadStore.markRead(id, manga, chapters)       // one load+save
+                    LibraryService.markChaptersSeen(id, manga, chapters) // one library upsert
+                } else {
+                    ReadStore.markUnread(id, manga, chapters)     // one load+save
+                    PositionStore.clearMany(id, manga, chapters)  // one load+save
+                }
+            }
+            log.info("READ     bulk {} chapter(s) {} - {}", chapters.size, if (read) "read" else "unread", manga)
             call.respond(HttpStatusCode.OK)
         }
 

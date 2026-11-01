@@ -92,4 +92,21 @@ object PositionStore {
         if (forManga.isEmpty()) map.remove(key(sourceId, mangaUrl))
         save(map)
     }
+
+    /** Clear many chapters' resume points in ONE load+save (bulk mark-unread). */
+    @Synchronized
+    fun clearMany(
+        sourceId: Long,
+        mangaUrl: String,
+        chapterUrls: Collection<String>,
+    ) {
+        if (chapterUrls.isEmpty()) return
+        val map = load()
+        val forManga = map[key(sourceId, mangaUrl)] ?: return
+        var changed = false
+        for (u in chapterUrls) if (forManga.remove(u) != null) changed = true
+        if (!changed) return
+        if (forManga.isEmpty()) map.remove(key(sourceId, mangaUrl))
+        save(map)
+    }
 }

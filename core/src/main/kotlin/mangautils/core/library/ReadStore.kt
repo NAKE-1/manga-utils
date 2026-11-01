@@ -75,6 +75,22 @@ object ReadStore {
         save(map)
     }
 
+    /** Bulk-mark chapters UNREAD (one load+save) — the mark-all/selection unread path. */
+    @Synchronized
+    fun markUnread(
+        sourceId: Long,
+        mangaUrl: String,
+        chapterUrls: Collection<String>,
+    ) {
+        if (chapterUrls.isEmpty()) return
+        val map = load()
+        val set = map[key(sourceId, mangaUrl)] ?: return
+        if (set.removeAll(chapterUrls.toSet())) {
+            if (set.isEmpty()) map.remove(key(sourceId, mangaUrl))
+            save(map)
+        }
+    }
+
     /** Mark every chapter of a manga unread (drop its read set). */
     @Synchronized
     fun clear(
