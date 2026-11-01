@@ -240,8 +240,7 @@ export default function Workers() {
       </div>
 
       <div className="set-hint" style={{ margin: '0 0 14px' }}>
-        Headless nodes (run with <code>WORKER=1</code>) that fetch page images from their own IP. Add one
-        by its tailnet URL and token; downloads route through online nodes automatically.
+        Headless nodes that fetch from their own IP. Add one by tailnet URL + token.
       </div>
 
       {/* Master toggle + node selector */}
@@ -267,7 +266,7 @@ export default function Workers() {
         <button className="set-toggle" onClick={toggleUpdChk} style={{ marginTop: 10 }}>
           <div>
             <div className="set-row-label">Use workers to check for updates</div>
-            <div className="set-hint">Off = main checks the whole library. On = split the update scan across main + online workers (faster). Separate from downloads above.</div>
+            <div className="set-hint">Split the update scan across main + online workers (faster). Separate from downloads.</div>
           </div>
           <span className={'switch' + (updChk ? ' on' : '')}><span className="knob" /></span>
         </button>
@@ -282,7 +281,7 @@ export default function Workers() {
 
       {/* Add / test */}
       <div className="wh-card">
-        <div className="set-row-label">Add a worker</div>
+        <div className="set-row-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 18, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker</div>
         <input className="set-input" placeholder="Name (e.g. orangepi-1)" value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} autoCapitalize="off" />
         <input className="set-input" placeholder="URL (e.g. http://100.x.y.z:8790)" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" style={{ marginTop: 8 }} />
         <input className="set-input" type="password" placeholder="Token (WORKER_TOKEN, blank if none)" value={token} onChange={(e) => setToken(e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" style={{ marginTop: 8 }} />
