@@ -450,16 +450,23 @@ object WorkerMode {
     @Serializable private class TsStatus(val Peer: Map<String, TsPeer> = emptyMap())
     private val tsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
-    // Mullvad exit nodes we allow: Florida + surrounding southeast states + New York. Keyed by Mullvad's
-    // city code (from hostnames like "us-mia-wg-001") -> friendly label. Only codes Mullvad actually offers
-    // appear (verified present on-tailnet: mia, atl, rag, nyc); the rest are future-proofing (shown if added).
+    // Mullvad exit nodes we allow: Florida + nearby South/Southeast states + New York. Keyed by Mullvad's
+    // city code (from hostnames like "us-mia-wg-001") -> friendly label, roughly nearest-to-FL first (that
+    // order sets auto-pick priority). The picker only SHOWS a code when Mullvad actually runs it AND it's on
+    // the tailnet, so codes for states Mullvad doesn't serve are harmless no-ops (future-proofing).
+    // Confirmed real US POPs in these states: Miami(mia), Atlanta(atl), Raleigh(rag), Ashburn VA(was),
+    // Dallas(dal), Houston(hou), New York(nyc). The rest only appear if/when Mullvad adds a server there.
     private val MULLVAD_CITIES = linkedMapOf(
         "mia" to "Miami, FL",
         "atl" to "Atlanta, GA",
         "bham" to "Birmingham, AL",
         "cae" to "Columbia, SC", "chs" to "Charleston, SC",
-        "rag" to "Raleigh, NC", "clt" to "Charlotte, NC", "rdu" to "Raleigh, NC",
+        "clt" to "Charlotte, NC", "rag" to "Raleigh, NC", "rdu" to "Raleigh, NC",
         "bna" to "Nashville, TN", "mem" to "Memphis, TN",
+        "msy" to "New Orleans, LA",
+        "lit" to "Little Rock, AR",
+        "hou" to "Houston, TX", "dal" to "Dallas, TX",
+        "was" to "Ashburn, VA",
         "nyc" to "New York, NY",
     )
     private val mullvadCodeRe = Regex("""-([a-z]+)-wg""")
