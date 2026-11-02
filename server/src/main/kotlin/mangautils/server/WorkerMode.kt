@@ -345,6 +345,7 @@ object WorkerMode {
             }
             val ok = results.count { it.chapters != null }
             log.info("scan batch: {}/{} series in {}s", ok, results.size, (System.currentTimeMillis() - t0) / 1000)
+            scanTotal = 0; scanProgress.set(0) // idle after a batch: an early poll of the NEXT run reads 0, not this batch's stale count (fixes the ~50% flash on main's update bar)
             call.respond(ScanResDto(results))
         }
         get("/worker/scan/progress") {
