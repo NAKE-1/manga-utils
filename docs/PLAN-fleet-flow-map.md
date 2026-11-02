@@ -17,11 +17,18 @@ tailnet -> main), which is the useful thing to see. A worker egressing "Off" (di
 collapses onto main's location - handle that case (short/degenerate arc or a badge).
 
 ### What each animation means (surface this in a small legend)
-- **Travelling pulses** on an arc = individual chapters in flight, one per `inflight`.
-- **Flowing dashed stream** = an active transfer; dash speed is proportional to MB/s.
+- **Travelling dots** on an arc = individual chapters in flight, one per `inflight`.
+- **Flowing dashed stream** = an active transfer.
 - **Pulsing ring on main** = main actively receiving / committing.
 - **Worker halo** = online. No halo / greyed = offline.
 - **Red dashed arc + x** = that worker's egress check is failing (downloads stalled).
+
+### Colour model (two palettes, two meanings)
+- **Each worker owns a line colour** (muted) used for its arc + location dot - that's the "which box" channel.
+- **Each source owns a colour** (vivid) used for the **moving dots** - that's the "which site" channel. A worker
+  pulls several sources at once, so one line can carry mixed-colour packets simultaneously. Moving dots get a
+  white core so a bright packet never reads as part of a dim line. Keep the two palettes clear of red (failing)
+  and the main's purple.
 
 ### Data - mostly already have
 | | source |
