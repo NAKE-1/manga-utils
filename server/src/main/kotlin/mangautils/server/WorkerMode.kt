@@ -564,6 +564,13 @@ object WorkerMode {
         if (node.isBlank()) runCmd("tailscale", "set", "--exit-node=")
         else runCmd("tailscale", "set", "--exit-node=$node", "--exit-node-allow-lan-access")
 
+    // Persist the chosen exit MODE so a worker restart restores it (off / auto / city:<code> / a manual node),
+    // instead of forgetting it. "off" is stored distinctly from "" (no file yet) so an explicit Off isn't
+    // mistaken for "never set" and re-adopted from a stale Tailscale exit.
+    private val exitStateFile get() = AppConfig.dataDir.resolve("worker-exit.state")
+    private fun persistExitMode(mode: String) { runCatching { Files.writeString(exitStateFile, mode) } }
+    private fun loadExitMode(): String = runCatching { Files.readString(exitStateFile).trim() }.getOrDefault("")
+
     /** Quick one-shot egress check (the watchdog's probe; verifyEgress is the slower retrying one for a set). */
     private fun egressWorks(): Boolean = runCatching {
         OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
@@ -613,6 +620,7 @@ object WorkerMode {
      * SELF-REVERTING (drops to normal egress if it can't connect) so a dead node never strands the worker.
      */
     private fun setExitNode(node: String): String? {
+        persistExitMode(if (node.isBlank()) "off" else node) // remember the choice across restarts
         if (node == "auto") return autoSelect()
         if (node.startsWith("city:")) return citySelect(node.removePrefix("city:"))
         autoMode = false; cityPin = ""
@@ -777,12 +785,16 @@ object WorkerMode {
         // fallen back to normal egress). For a MANUAL pin it reverts to normal egress so a dead node can never
         // strand the worker. Tailnet comms with main bypass the exit anyway.
         Thread {
-            // Adopt an exit node Tailscale already has active from before this process started (our mode flags
-            // are in-memory and reset on restart): pin it to that node's state so the UI shows the right thing
-            // AND the watchdog manages failover, instead of leaving it an unmanaged leftover shown as "Off".
+            // Restore the exit mode saved before this process restarted (our mode flags are in-memory). An
+            // explicit "off" is honoured (stay direct); "auto"/"city:<code>"/a node is re-applied and the
+            // watchdog then manages it. With no saved mode, fall back to adopting whatever exit Tailscale still
+            // has live so the UI matches reality instead of showing a stray leftover as "Off".
             runCatching {
-                if (!autoMode && cityPin.isEmpty()) {
-                    mullvadCandidates().firstOrNull { it.ExitNode }?.let { active ->
+                val saved = loadExitMode()
+                when {
+                    saved == "off" -> log.info("exit: restored saved mode OFF (direct egress)")
+                    saved.isNotBlank() -> { log.info("exit: restoring saved mode '{}'", saved); setExitNode(saved) }
+                    !autoMode && cityPin.isEmpty() -> mullvadCandidates().firstOrNull { it.ExitNode }?.let { active ->
                         cityPin = cityOf(active).orEmpty()
                         currentExit = active.TailscaleIPs.firstOrNull().orEmpty()
                         currentExitCity = cityPin
