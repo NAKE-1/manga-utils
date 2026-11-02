@@ -493,7 +493,7 @@ export const api = {
 
 export interface WorkerExt { pkg: string; name: string; version: string; beta: boolean; sources: number }
 export interface ExitNode { name: string; ip: string; online: boolean; current: boolean }
-export interface ExitCity { code: string; label: string; online: number; total: number; current: boolean }
+export interface ExitCity { code: string; label: string; online: number; total: number; current: boolean; ping?: number | null }
 export interface ExitNodesDto { available: boolean; current: string; nodes: ExitNode[]; error?: string; auto?: boolean; cities?: ExitCity[]; currentCity?: string }
 
 export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; memUsedGb: number | null; memTotalGb: number | null; tempC: number | null; diskFreeGb: number | null; diskTotalGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }

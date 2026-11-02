@@ -140,7 +140,11 @@ function ExitNodeControl({ name, onChanged }: { name: string; onChanged?: () => 
       <select className="set-input" value={value} disabled={busy} onChange={(e) => choose(e.target.value)}>
         <option value="">Off (direct egress)</option>
         <option value="auto">Auto (nearest state, fail over)</option>
-        {cities.map((c) => <option key={c.code} value={`city:${c.code}`}>{c.label} ({c.online}/{c.total} up)</option>)}
+        {cities.map((c) => (
+          <option key={c.code} value={`city:${c.code}`}>
+            {c.label}{c.ping != null ? ` · ${c.ping}ms${c.ping > 300 ? ' (slow)' : ''}` : ''} ({c.online}/{c.total} up)
+          </option>
+        ))}
       </select>
       {data.current
         ? <div className="set-hint" style={{ marginTop: 4 }}>On: {data.current}</div>

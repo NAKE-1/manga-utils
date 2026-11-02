@@ -105,7 +105,7 @@ object WorkerMode {
     )
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false)
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
-    @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean)
+    @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean, val ping: Int? = null)
     // nodes = the individual servers (for the "available nodes" list + current display); cities = the pickable
     // states; currentCity = the pinned state ("" if off/broad-auto/manual); current = the active server's label.
     @Serializable data class ExitNodesDto(val available: Boolean, val current: String, val nodes: List<ExitNode>, val error: String? = null, val auto: Boolean = false, val cities: List<ExitCity> = emptyList(), val currentCity: String = "")
@@ -470,6 +470,29 @@ object WorkerMode {
         "nyc" to "New York, NY",
     )
     private val mullvadCodeRe = Regex("""-([a-z]+)-wg""")
+    private val pingRe = Regex("""in ([0-9]+(?:\.[0-9]+)?)ms""")
+    private val PING_BAD_MS = 300 // over this = "slow": sorted to the bottom and skipped by auto
+
+    // Per-state tailnet latency (ms) to one representative Mullvad server, refreshed in the background. Drives
+    // the picker's ordering (fastest first) and keeps auto off far/slow servers. Absent = unknown/unreachable.
+    @Volatile private var cityPing: Map<String, Int> = emptyMap()
+
+    /** One tailnet ping to [ip] (a few tries so it can settle on a direct path); min RTT in ms, null if dead. */
+    private fun pingPeer(ip: String): Int? {
+        if (ip.isBlank()) return null
+        val (code, out) = runCmd("tailscale", "ping", "--c", "3", "--timeout", "3s", ip)
+        if (code != 0) return null
+        return pingRe.findAll(out).mapNotNull { it.groupValues[1].toFloatOrNull()?.toInt() }.minOrNull()
+    }
+    /** Ping one online server per allowed state and cache the RTT. Cheap: a single probe per state. */
+    private fun refreshCityPings() {
+        val next = HashMap<String, Int>()
+        mullvadCandidates().filter { it.Online }.groupBy { cityOf(it) }.forEach { (c, servers) ->
+            if (c == null) return@forEach
+            servers.firstNotNullOfOrNull { pingPeer(it.TailscaleIPs.firstOrNull().orEmpty()) }?.let { next[c] = it }
+        }
+        cityPing = next
+    }
 
     private fun runCmd(vararg cmd: String): Pair<Int, String> = runCatching {
         val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
@@ -487,16 +510,21 @@ object WorkerMode {
         if (isEmpty()) this else Math.floorMod(by, size).let { k -> drop(k) + take(k) }
     private fun cityOf(p: TsPeer): String? = mullvadCodeRe.find(p.HostName.lowercase())?.groupValues?.getOrNull(1)
 
-    /** Allowed-city Mullvad exit peers, ordered by our city priority then hostname (auto's candidate pool). */
+    /** Allowed-state Mullvad exit peers, fastest-ping first (auto's candidate pool). Until the first ping sweep
+     *  lands, falls back to nearest-FL order rotated per-worker so multiple workers still spread their egress. */
     private fun mullvadCandidates(): List<TsPeer> {
         val (code, out) = runCmd("tailscale", "status", "--json")
         if (code != 0) return emptyList()
         val peers = runCatching { tsJson.decodeFromString<TsStatus>(out) }.getOrNull()?.Peer?.values ?: return emptyList()
         val pri = MULLVAD_CITIES.keys.withIndex().associate { (i, c) -> c to i }
-        return peers.filter { it.ExitNodeOption && "mullvad" in (it.HostName + it.DNSName).lowercase() }
+        val pings = cityPing
+        val allowed = peers.filter { it.ExitNodeOption && "mullvad" in (it.HostName + it.DNSName).lowercase() }
             .mapNotNull { p -> cityOf(p)?.takeIf { it in MULLVAD_CITIES }?.let { p to it } }
-            .sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName }))
-            .map { it.first }
+        return if (pings.isEmpty())
+            allowed.sortedWith(compareBy({ pri[it.second] ?: 99 }, { it.first.HostName })).map { it.first }.rotated(selfOffset)
+        else // measured states first (lowest RTT), then unknown by geography; hostname breaks ties within a state
+            allowed.sortedWith(compareBy({ pings[it.second] == null }, { pings[it.second] ?: Int.MAX_VALUE }, { pri[it.second] ?: 99 }, { it.first.HostName }))
+                .map { it.first }
     }
 
     private fun exitNodes(): ExitNodesDto {
@@ -523,9 +551,10 @@ object WorkerMode {
         // not "Off". Auto shows as Auto; else a pinned city; else fall back to the active node's own city.
         val activeCity = mv.firstOrNull { it.first.ExitNode }?.second
         val reportedCity = when { autoMode -> ""; cityPin.isNotEmpty() -> cityPin; else -> activeCity ?: "" }
+        val pings = cityPing
         val cities = mv.groupBy { it.second }.map { (c, servers) ->
-            ExitCity(c, MULLVAD_CITIES.getValue(c), servers.count { it.first.Online }, servers.size, c == reportedCity)
-        }.sortedBy { pri[it.code] ?: 99 }
+            ExitCity(c, MULLVAD_CITIES.getValue(c), servers.count { it.first.Online }, servers.size, c == reportedCity, pings[c])
+        }.sortedWith(compareBy({ it.ping == null }, { it.ping ?: (pri[it.code] ?: 99) })) // fastest first, unknown last
         return ExitNodesDto(true, result.firstOrNull { it.current }?.name.orEmpty(), result, auto = autoMode, cities = cities, currentCity = reportedCity)
     }
 
@@ -543,7 +572,9 @@ object WorkerMode {
      *  egress verifies. All down -> normal egress (last resort, never strands the worker). Shared by broad-auto
      *  and per-state pin; the watchdog re-runs it to fail over / re-acquire. */
     private fun selectFrom(pool: List<TsPeer>, avoid: String?) {
-        for (p in pool.rotated(selfOffset).filter { it.Online }) {
+        // ponytail: pool is already ping-ordered, so take it in order (no rotation) and get the genuinely
+        // fastest reachable server. Per-worker egress spread lives in mullvadCandidates' pre-ping fallback.
+        for (p in pool.filter { it.Online }) {
             val ip = p.TailscaleIPs.firstOrNull() ?: continue
             if (ip == avoid) continue
             val (code, _) = applyExit(ip)
@@ -559,7 +590,13 @@ object WorkerMode {
 
     /** Broad auto: fail over across ALL nearby states. */
     private fun autoSelect(avoid: String? = null): String? {
-        autoMode = true; cityPin = ""; selectFrom(mullvadCandidates(), avoid); return null
+        autoMode = true; cityPin = ""
+        val pings = cityPing
+        val all = mullvadCandidates()
+        // Skip states with an insane ping (unknown counts as OK so the boot window isn't starved); if that
+        // leaves nothing, fall back to the full pool so a slow node still beats stranding the worker.
+        val good = all.filter { (pings[cityOf(it)] ?: 0) <= PING_BAD_MS }
+        selectFrom(good.ifEmpty { all }, avoid); return null
     }
 
     /** Pin to one STATE and fail over among ITS servers only (wg-001 dies -> wg-002 -> ...). */
@@ -725,6 +762,14 @@ object WorkerMode {
                 jobs.entries.removeIf { (_, j) -> j.state != "running" && j.createdAt < cutoff }
             }
         }.apply { isDaemon = true; name = "worker-job-reaper" }.start()
+        // Measure tailnet latency to each allowed state (one probe per state) so the picker lists them
+        // fastest-first and auto skips far/slow servers. First sweep runs now; refresh every 10 min.
+        Thread {
+            while (true) {
+                runCatching { refreshCityPings() }
+                Thread.sleep(600_000)
+            }
+        }.apply { isDaemon = true; name = "worker-exit-ping" }.start()
         // Exit-node watchdog (checks every ~60s, 3 strikes / ~3 min so a transient blip doesn't act). In AUTO
         // mode it fails over to the next nearby node when the current one dies (and re-acquires one if it had
         // fallen back to normal egress). For a MANUAL pin it reverts to normal egress so a dead node can never
