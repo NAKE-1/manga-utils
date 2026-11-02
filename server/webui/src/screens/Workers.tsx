@@ -196,6 +196,7 @@ export default function Workers() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [test, setTest] = useState<WorkerStatus | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
   const [dispatch, setDispatch] = useState(false) // master toggle: route downloads through a worker
   const [updChk, setUpdChk] = useState(false) // use workers to help check the library for updates
   const [parScan, setParScan] = useState(true) // fetch chapter lists in parallel during an update scan
@@ -219,12 +220,20 @@ export default function Workers() {
     setErr(''); setBusy(true)
     try {
       await api.addWorker(name.trim(), url.trim(), token.trim())
-      setName(''); setUrl(''); setToken(''); setTest(null)
+      setName(''); setUrl(''); setToken(''); setTest(null); setShowAdd(false)
       await load()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not add worker')
     } finally { setBusy(false) }
   }
+  const openAdd = () => { setErr(''); setTest(null); setShowAdd(true) }
+  const closeAdd = () => { setShowAdd(false); setName(''); setUrl(''); setToken(''); setErr(''); setTest(null) }
+  useEffect(() => {
+    if (!showAdd) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAdd() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAdd])
   async function doTest() {
     if (!url.trim()) return
     setErr(''); setBusy(true); setTest(null)
@@ -283,25 +292,10 @@ export default function Workers() {
         </button>
       </div>
 
-      {/* Add / test */}
-      <div className="wh-card">
-        <div className="set-row-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 18, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker</div>
-        <input className="set-input" placeholder="Name (e.g. orangepi-1)" value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} autoCapitalize="off" />
-        <input className="set-input" placeholder="URL (e.g. http://100.x.y.z:8790)" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" style={{ marginTop: 8 }} />
-        <input className="set-input" type="password" placeholder="Token (WORKER_TOKEN, blank if none)" value={token} onChange={(e) => setToken(e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" style={{ marginTop: 8 }} />
-        <div className="set-actions" style={{ gap: 8 }}>
-          <button className="btn" disabled={busy || !url.trim()} onClick={doTest}>Test</button>
-          <button className="btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={add}>Add worker</button>
-        </div>
-        {err && <div className="set-hint" style={{ color: 'var(--danger, #e5484d)' }}>{err}</div>}
-        {test && (
-          <div className="set-hint" style={{ marginTop: 4 }}>
-            {test.online
-              ? `✓ Online · egress ${test.egressIp || '?'}${test.version ? ` · v${test.version}` : ''}`
-              : `✗ Offline · ${test.error || 'unreachable'}`}
-          </div>
-        )}
-      </div>
+      {/* Add a worker - opens a modal, keeps the screen clean */}
+      <button className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 4 }} onClick={openAdd}>
+        <span style={{ fontSize: 17, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker
+      </button>
 
       {/* List */}
       {loaded && workers.length === 0 && <div className="center-msg" style={{ marginTop: 24 }}>No workers yet. Add one above.</div>}
@@ -376,6 +370,31 @@ export default function Workers() {
           </div>
         </div>
       ))}
+
+      {showAdd && (
+        <div className="modal-scrim" onClick={closeAdd}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Add a worker">
+            <div className="modal-title">Add a worker</div>
+            <div className="modal-msg">Headless node that fetches from its own IP. Enter its tailnet URL and token.</div>
+            <input className="set-input" placeholder="Name (e.g. orangepi-1)" value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} autoCapitalize="off" autoFocus style={{ marginTop: 14 }} />
+            <input className="set-input" placeholder="URL (e.g. http://100.x.y.z:8790)" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" style={{ marginTop: 8 }} />
+            <input className="set-input" type="password" placeholder="Token (WORKER_TOKEN, blank if none)" value={token} onChange={(e) => setToken(e.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" style={{ marginTop: 8 }} />
+            {err && <div className="set-hint" style={{ color: 'var(--danger, #e5484d)', marginTop: 8 }}>{err}</div>}
+            {test && (
+              <div className="set-hint" style={{ marginTop: 8 }}>
+                {test.online
+                  ? `✓ Online · egress ${test.egressIp || '?'}${test.version ? ` · v${test.version}` : ''}`
+                  : `✗ Offline · ${test.error || 'unreachable'}`}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button className="modal-btn" onClick={closeAdd}>Cancel</button>
+              <button className="modal-btn" disabled={busy || !url.trim()} onClick={doTest}>{busy ? '…' : 'Test'}</button>
+              <button className="modal-btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={add}>Add</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
