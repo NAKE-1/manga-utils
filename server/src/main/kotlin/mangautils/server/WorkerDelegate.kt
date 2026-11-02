@@ -36,6 +36,10 @@ object WorkerDelegate {
     private const val POLL_MS = 1500L
     private const val STALL_MS = 180_000L // give up on a worker that makes no progress for 3 min
     private const val FILE_RETRIES = 3
+    private const val MAX_HARVEST_TRIES = 2 // per-chapter: after this many real failures, hand it to local
+
+    /** Outcome of one harvest attempt. gone = the worker no longer has it (freed/orphaned) -> never retry. */
+    private data class HResult(val ok: Boolean, val gone: Boolean = false, val reason: String = "")
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -65,6 +69,8 @@ object WorkerDelegate {
         }
 
         val harvested = HashSet<String>()
+        val fails = HashMap<String, Int>()      // per-chapter real-failure count
+        val abandoned = HashSet<String>()       // chapters we've written off to local (gone, or too many fails)
         var lastProgress = System.currentTimeMillis()
         try {
         while (true) {
@@ -89,13 +95,14 @@ object WorkerDelegate {
             for (ch in st.chapters) {
                 if (isStopped()) break
                 if (ch.state != "done" || ch.folder == null) continue
-                if (ch.url in harvested) continue
+                if (ch.url in harvested || ch.url in abandoned) continue
                 // Main may already hold this chapter (idempotent resume) — ack and skip.
                 if (runCatching { ChapterIdentity.hasVersion(title, ch.url) }.getOrDefault(false)) {
                     harvested.add(ch.url); ackChapter(node, jobId, ch.folder); continue
                 }
                 task.currentChapter = ch.name
-                if (harvestChapter(node, jobId, title, ch.folder)) {
+                val hr = harvestChapter(node, jobId, title, ch.folder)
+                if (hr.ok) {
                     harvested.add(ch.url)
                     task.finishedUrls.add(ch.url)
                     task.doneCount = task.finishedUrls.size
@@ -104,12 +111,18 @@ object WorkerDelegate {
                     lastProgress = System.currentTimeMillis()
                     onChange()
                 } else {
-                    log.warn("worker {} chapter '{}' failed to harvest; will retry locally", node.name, ch.name)
+                    // Give up fast on a chapter the worker no longer has (gone) or that keeps failing, so a
+                    // re-adopted/orphaned job can't spin forever re-trying the same chapters every poll.
+                    val n = (fails[ch.url] ?: 0) + 1; fails[ch.url] = n
+                    val giveUp = hr.gone || n >= MAX_HARVEST_TRIES
+                    if (giveUp) abandoned.add(ch.url)
+                    log.warn("worker {} chapter '{}' harvest failed ({}) [{}/{}]{}", node.name, ch.name, hr.reason, n, MAX_HARVEST_TRIES,
+                        if (giveUp) " - handing to local" else " - will retry")
                 }
             }
 
             val allDone = st.chapters.all { it.state != "pending" }
-            val nothingLeft = st.chapters.none { it.state == "done" && it.url !in harvested }
+            val nothingLeft = st.chapters.none { it.state == "done" && it.url !in harvested && it.url !in abandoned }
             if (st.state != "running" && allDone && nothingLeft) break
             if (System.currentTimeMillis() - lastProgress > STALL_MS) { log.warn("worker {} stalled on job {}", node.name, jobId); return Result(harvested, workerGone = true) }
             Thread.sleep(POLL_MS)
@@ -154,15 +167,18 @@ object WorkerDelegate {
         runCatching { client.newCall(req(node, Request.Builder().url(url).post(ByteArray(0).toRequestBody()))).execute().close() }
     }
 
-    /** Pull one chapter into a staging folder, verify it fully, then atomically commit it. Returns success. */
-    private fun harvestChapter(node: WorkerNode, jobId: String, title: String, folder: String): Boolean {
+    /** Pull one chapter into a staging folder, verify it fully, then atomically commit it. The result carries
+     *  WHY it failed, and whether the worker no longer has it (gone = don't bother retrying). */
+    private fun harvestChapter(node: WorkerNode, jobId: String, title: String, folder: String): HResult {
+        // A missing/empty manifest means the worker has already freed this chapter (e.g. a re-adopted job after
+        // a main restart) - there is nothing to pull, so mark it gone and let local handle it, don't retry.
         val manifest = runCatching {
             client.newCall(req(node, Request.Builder().url("${base(node)}/worker/download/$jobId/manifest?chapter=${enc(folder)}"))).execute().use { r ->
                 if (!r.isSuccessful) return@use null
                 json.decodeFromString<WorkerMode.ManifestDto>(r.body?.string().orEmpty())
             }
-        }.getOrNull() ?: return false
-        if (manifest.files.isEmpty()) return false
+        }.getOrNull() ?: return HResult(false, gone = true, reason = "manifest unavailable (worker already freed it?)")
+        if (manifest.files.isEmpty()) return HResult(false, gone = true, reason = "empty manifest")
 
         val seriesDir = AppConfig.downloadsDir.resolve(DownloadManager.sanitize(title))
         val staging = seriesDir.resolve(".staging-$jobId-$folder")
@@ -170,19 +186,19 @@ object WorkerDelegate {
             if (Files.exists(staging)) deleteRecursively(staging)
             Files.createDirectories(staging)
             for (fe in manifest.files) {
-                val bytes = pullFileVerified(node, jobId, folder, fe) ?: return false
+                val bytes = pullFileVerified(node, jobId, folder, fe)
+                    ?: return HResult(false, reason = "transfer/sha failed on '${fe.path}'")
                 // Content gate: a page must be a real image (not 0 bytes / an error page). ComicInfo.xml is XML, skip it.
                 if (!fe.path.equals("ComicInfo.xml", ignoreCase = true)) {
                     if (bytes.isEmpty() || !ImageFormat.looksLikeImage(bytes)) {
-                        log.warn("worker harvest: '{}/{}' is not a valid image ({} bytes) - rejecting chapter", folder, fe.path, bytes.size)
-                        return false
+                        return HResult(false, reason = "invalid image '${fe.path}' (${bytes.size} bytes)")
                     }
                 }
                 Files.write(staging.resolve(fe.path), bytes)
             }
             // All files present and valid? (count gate)
             val got = Files.list(staging).use { it.filter { p -> Files.isRegularFile(p) }.count() }
-            if (got.toInt() != manifest.files.size) return false
+            if (got.toInt() != manifest.files.size) return HResult(false, reason = "file count ${got.toInt()}/${manifest.files.size}")
 
             // Commit atomically: rename staging into the real chapter folder.
             val finalDir = seriesDir.resolve(folder)
@@ -191,10 +207,9 @@ object WorkerDelegate {
             runCatching { Files.move(staging, finalDir, StandardCopyOption.ATOMIC_MOVE) }
                 .recoverCatching { Files.move(staging, finalDir) } // same-store fallback if ATOMIC unsupported
                 .getOrThrow()
-            return true
+            return HResult(true)
         } catch (e: Exception) {
-            log.warn("worker harvest of '{}' failed: {}", folder, e.message)
-            return false
+            return HResult(false, reason = "commit failed: ${e.message}")
         } finally {
             runCatching { if (Files.exists(staging)) deleteRecursively(staging) }
         }
