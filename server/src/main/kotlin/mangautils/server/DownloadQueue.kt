@@ -277,10 +277,13 @@ object DownloadQueue {
                     }
                 },
             )
-            val allUrls = task.chapters.map { it.url }.toSet()
+            // Skip chapters main already recorded as done (durable across restarts) so a re-adopted job
+            // doesn't locally re-download what a prior session already got - don't rely on on-disk recognition.
+            val pending = task.chapters.filter { it.url !in task.finishedUrls }
+            val allUrls = pending.map { it.url }.toSet()
             // Numbers the queued chapters were recorded under, so a chapter the source re-slugged (url
             // changed since enqueue) can still be recovered by number at download time (see ChapterSelect.Urls).
-            val wantNums = task.chapters.mapNotNull { numFromName(it.name) }.toSet()
+            val wantNums = pending.mapNotNull { numFromName(it.name) }.toSet()
             val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls, wantNums), titleOverride = task.mangaTitle)
             // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
             // Reconcile by URL, not by chapter name: several scanlations of a chapter share a name, so

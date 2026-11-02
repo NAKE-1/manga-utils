@@ -68,7 +68,9 @@ object WorkerDelegate {
             persistJob(jobId)
         }
 
-        val harvested = HashSet<String>()
+        // Seed from main's durable record (task.finishedUrls survives a restart) so a re-adopted job doesn't
+        // re-process - or fail to harvest (worker already freed them) - chapters a prior session already got.
+        val harvested = HashSet<String>(task.finishedUrls)
         val fails = HashMap<String, Int>()      // per-chapter real-failure count
         val abandoned = HashSet<String>()       // chapters we've written off to local (gone, or too many fails)
         var lastProgress = System.currentTimeMillis()
