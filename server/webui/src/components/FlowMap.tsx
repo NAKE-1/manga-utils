@@ -43,19 +43,30 @@ const path = (arr: [number, number][]) => 'M' + arr.map((p) => px(p[0]).toFixed(
 
 export default function FlowMap({ data }: { data: FleetDto | null }) {
   const ref = useRef<SVGSVGElement | null>(null)
-  useEffect(() => { if (ref.current) build(ref.current, data) }, [data])
+  const seen = useRef<Record<string, number>>({})   // per-worker max shipment seq already shown as a dot
+  useEffect(() => { if (ref.current) build(ref.current, data, seen.current) }, [data])
   return <svg ref={ref} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Fleet flow map" style={{ width: '100%', height: 'auto', display: 'block' }} />
 }
 
-function build(svg: SVGSVGElement, data: FleetDto | null) {
-  while (svg.firstChild) svg.removeChild(svg.firstChild)
-  svg.appendChild(el('path', { d: path(LAND), fill: 'var(--card-2, #17171d)', stroke: 'var(--border, #33333d)', 'stroke-width': 1.5, 'stroke-linejoin': 'round' }))
+type Pos = FleetWorker & { _x: number; _y: number }
+
+function build(svg: SVGSVGElement, data: FleetDto | null, seen: Record<string, number>) {
+  // Two layers: static (rebuilt each poll) + ships (one-shot shipment dots that persist and self-remove).
+  let gS = svg.querySelector('g.fm-static') as SVGGElement | null
+  let gP = svg.querySelector('g.fm-ships') as SVGGElement | null
+  if (!gS || !gP) {
+    while (svg.firstChild) svg.removeChild(svg.firstChild)
+    gS = el('g', { class: 'fm-static' }) as SVGGElement
+    gP = el('g', { class: 'fm-ships' }) as SVGGElement
+    svg.appendChild(gS); svg.appendChild(gP)
+  }
+  while (gS.firstChild) gS.removeChild(gS.firstChild)
+  gS.appendChild(el('path', { d: path(LAND), fill: 'var(--card-2, #17171d)', stroke: 'var(--border, #33333d)', 'stroke-width': 1.5, 'stroke-linejoin': 'round' }))
   const mainLat = data?.mainLat ?? 28.4, mainLon = data?.mainLon ?? -81.3
   const M = { x: px(mainLon), y: py(mainLat) }
   const compact = svg.clientWidth > 0 && svg.clientWidth < 440
 
   const ws = (data?.workers ?? []).filter((w) => w.online)
-  type Pos = FleetWorker & { _x: number; _y: number }
   const pts: Pos[] = ws.map((w) => ({ ...w, _x: px(w.lon ?? mainLon), _y: py(w.lat ?? mainLat) }))
   // decluster: off main, then off each other, so co-located nodes don't stack
   pts.forEach((w) => { let dx = w._x - M.x, dy = w._y - M.y, d = Math.hypot(dx, dy) || 1; if (d < 30) { const f = 30 - d + 6; w._x += dx / d * f; w._y += dy / d * f } })
@@ -63,14 +74,42 @@ function build(svg: SVGSVGElement, data: FleetDto | null) {
     let dx = pts[b]._x - pts[a]._x, dy = pts[b]._y - pts[a]._y, d = Math.hypot(dx, dy) || 1
     if (d < 26) { const f = (26 - d) / 2 + 3; dx /= d; dy /= d; pts[a]._x -= dx * f; pts[a]._y -= dy * f; pts[b]._x += dx * f; pts[b]._y += dy * f }
   }
-  pts.forEach((w, i) => drawWorker(svg, w, i, pts.length, M, compact))
-  drawMain(svg, M)
+  const names = new Set(pts.map((w) => w.name))
+  for (const k of Object.keys(seen)) if (!names.has(k)) delete seen[k]
+  pts.forEach((w, i) => {
+    const bow = (i - (pts.length - 1) / 2) * 0.2
+    const d = arc(w._x, w._y, M, bow)
+    drawWorker(gS!, w, i, M, d, compact)
+    spawnShips(gP!, w, d, seen)
+  })
+  drawMain(gS, M)
 
   if (ws.length === 0) {
     const t = el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: 'var(--muted, #8b8b93)', 'font-size': 15 })
     t.textContent = 'No online workers'
-    svg.appendChild(t)
+    gS.appendChild(t)
   }
+}
+
+// Fire one dot per NEW shipment (a seq we haven't shown). First time a worker appears we prime - no replay of
+// history - so only chapters that ship from now on animate.
+function spawnShips(g: SVGGElement, w: Pos, d: string, seen: Record<string, number>) {
+  const maxSeq = w.ships.reduce((m, s) => Math.max(m, s.seq), 0)
+  if (!(w.name in seen)) { seen[w.name] = maxSeq; return }
+  let k = 0
+  for (const s of w.ships) if (s.seq > seen[w.name]) spawnShip(g, d, srcColor(s.source), (k++) * 0.25)
+  seen[w.name] = Math.max(seen[w.name], maxSeq)
+}
+function spawnShip(g: SVGGElement, d: string, color: string, delay: number) {
+  const grp = el('g')
+  grp.appendChild(el('circle', { r: 5.5, fill: color }))
+  grp.appendChild(el('circle', { r: 2.4, fill: '#fff' }))
+  const am = el('animateMotion', { dur: '2.2s', path: d, repeatCount: '1', fill: 'remove', begin: delay + 's' })
+  grp.appendChild(am)
+  const done = () => grp.remove()
+  am.addEventListener('endEvent', done)
+  g.appendChild(grp)
+  setTimeout(done, 2600 + delay * 1000) // fallback if endEvent doesn't fire (e.g. backgrounded tab)
 }
 
 function arc(x: number, y: number, M: { x: number; y: number }, bow: number) {
@@ -80,70 +119,60 @@ function arc(x: number, y: number, M: { x: number; y: number }, bow: number) {
   return `M${x.toFixed(1)},${y.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${M.x.toFixed(1)},${M.y.toFixed(1)}`
 }
 
-function drawWorker(svg: SVGSVGElement, w: FleetWorker & { _x: number; _y: number }, i: number, n: number, M: { x: number; y: number }, compact: boolean) {
-  const x = w._x, y = w._y, wc = WCOL[i % WCOL.length], id = 'flow' + i
-  const bow = (i - (n - 1) / 2) * 0.2, d = arc(x, y, M, bow)
-  svg.appendChild(el('path', { id, d, fill: 'none', stroke: wc, 'stroke-width': 1.6, 'stroke-opacity': 0.4 }))
-  const stream = el('path', { d, fill: 'none', stroke: wc, 'stroke-width': 1.6, 'stroke-opacity': 0.26, 'stroke-dasharray': '2 12', 'stroke-linecap': 'round' })
+function drawWorker(g: SVGGElement, w: Pos, i: number, M: { x: number; y: number }, d: string, compact: boolean) {
+  const x = w._x, y = w._y, wc = WCOL[i % WCOL.length]
+  g.appendChild(el('path', { d, fill: 'none', stroke: wc, 'stroke-width': 1.6, 'stroke-opacity': 0.4 }))
+  // faint flowing underlay so the path reads even between shipments; the moving dots are the real shipments
+  const stream = el('path', { d, fill: 'none', stroke: wc, 'stroke-width': 1.6, 'stroke-opacity': 0.22, 'stroke-dasharray': '2 12', 'stroke-linecap': 'round' })
   stream.appendChild(el('animate', { attributeName: 'stroke-dashoffset', from: '28', to: '0', dur: '1.6s', repeatCount: 'indefinite' }))
-  svg.appendChild(stream)
-  // harvest dots: one per source the worker is downloading (1 download/source), coloured by source
-  w.sources.forEach((s, k) => {
-    const sc = srcColor(s.name), begin = ((k / Math.max(1, w.sources.length)) * 2.4).toFixed(2) + 's'
-    for (const [r, fill] of [[5.5, sc], [2.4, '#fff']] as [number, string][]) {
-      const node = el('circle', { r, fill })
-      const am = el('animateMotion', { dur: '2.4s', repeatCount: 'indefinite', begin })
-      am.appendChild(el('mpath', { href: '#' + id }))
-      node.appendChild(am); svg.appendChild(node)
-    }
-  })
-  // download pulse ring while anything is downloading
+  g.appendChild(stream)
+  // download pulse ring while anything is downloading (source -> exit; NOT travelling the line)
   if (w.inflight > 0) {
     const ring = el('circle', { cx: x, cy: y, r: 7, fill: 'none', stroke: wc, 'stroke-width': 1.5 })
     ring.appendChild(el('animate', { attributeName: 'r', values: '7;16;7', dur: '1.8s', repeatCount: 'indefinite' }))
     ring.appendChild(el('animate', { attributeName: 'stroke-opacity', values: '.75;0;.75', dur: '1.8s', repeatCount: 'indefinite' }))
-    svg.appendChild(ring)
+    g.appendChild(ring)
   }
-  svg.appendChild(el('circle', { cx: x, cy: y, r: 10, fill: wc, 'fill-opacity': 0.18 }))
-  svg.appendChild(el('circle', { cx: x, cy: y, r: 6, fill: wc, stroke: 'var(--card, #141418)', 'stroke-width': 2 }))
-  svg.appendChild(el('circle', { cx: x, cy: y, r: 6, fill: 'none', stroke: 'rgba(255,255,255,.45)', 'stroke-width': 1 }))
+  g.appendChild(el('circle', { cx: x, cy: y, r: 10, fill: wc, 'fill-opacity': 0.18 }))
+  g.appendChild(el('circle', { cx: x, cy: y, r: 6, fill: wc, stroke: 'var(--card, #141418)', 'stroke-width': 2 }))
+  g.appendChild(el('circle', { cx: x, cy: y, r: 6, fill: 'none', stroke: 'rgba(255,255,255,.45)', 'stroke-width': 1 }))
   const right = x < M.x, ax = x + (right ? 14 : -14), anchor = right ? 'start' : 'end'
   if (w.inflight > 0) {
     const bx = x + (right ? -8 : 8)
-    svg.appendChild(el('circle', { cx: bx, cy: y - 8, r: 7, fill: wc, stroke: 'var(--card, #141418)', 'stroke-width': 1.5 }))
+    g.appendChild(el('circle', { cx: bx, cy: y - 8, r: 7, fill: wc, stroke: 'var(--card, #141418)', 'stroke-width': 1.5 }))
     const bt = el('text', { x: bx, y: y - 4.8, 'text-anchor': 'middle', fill: '#0a0a0c', 'font-size': 9.5, 'font-weight': 800 })
-    bt.textContent = String(w.inflight); svg.appendChild(bt)
+    bt.textContent = String(w.inflight); g.appendChild(bt)
   }
   const ty = y - 6
   const t1 = el('text', { x: ax, y: ty, 'text-anchor': anchor, fill: 'var(--text, #e8e8ec)', 'font-size': 13, 'font-weight': 700 })
-  t1.textContent = w.name; svg.appendChild(t1)
+  t1.textContent = w.name; g.appendChild(t1)
   const many = w.sources.length > 2
   if (compact && many) {
     const line = el('text', { x: ax, y: ty + 14, 'text-anchor': anchor, fill: 'var(--muted, #8b8b93)', 'font-size': 11, 'font-weight': 600 })
-    line.textContent = w.sources.length + ' sources · ' + w.inflight + ' dl'; svg.appendChild(line)
+    line.textContent = w.sources.length + ' sources · ' + w.inflight + ' dl'; g.appendChild(line)
   } else {
     w.sources.forEach((s, k) => {
       const ry = ty + 14 + k * 14, sc = srcColor(s.name)
       const tileX = anchor === 'start' ? ax : ax - 9
-      svg.appendChild(el('rect', { x: tileX, y: ry - 8.5, width: 9, height: 9, rx: 2, fill: sc }))
+      g.appendChild(el('rect', { x: tileX, y: ry - 8.5, width: 9, height: 9, rx: 2, fill: sc }))
       const gl = el('text', { x: tileX + 4.5, y: ry - 1.5, 'text-anchor': 'middle', fill: '#0a0a0c', 'font-size': 7, 'font-weight': 800 })
-      gl.textContent = abbrev(s.name)[0]; svg.appendChild(gl)
+      gl.textContent = abbrev(s.name)[0]; g.appendChild(gl)
       const row = el('text', { x: anchor === 'start' ? ax + 14 : ax - 14, y: ry, 'text-anchor': anchor, fill: sc, 'font-size': 11, 'font-weight': 700 })
-      row.textContent = abbrev(s.name); svg.appendChild(row)
+      row.textContent = abbrev(s.name); g.appendChild(row)
     })
     const cap = el('text', { x: ax, y: ty + 14 + w.sources.length * 14, 'text-anchor': anchor, fill: 'var(--muted, #8b8b93)', 'font-size': 10.5 })
-    cap.textContent = (CITY[w.exitCity] || w.exitCity || 'direct') + ' · ' + w.inflight + ' downloading'; svg.appendChild(cap)
+    cap.textContent = (CITY[w.exitCity] || w.exitCity || 'direct') + ' · ' + w.inflight + ' downloading'; g.appendChild(cap)
   }
 }
 
-function drawMain(svg: SVGSVGElement, M: { x: number; y: number }) {
+function drawMain(g: SVGGElement, M: { x: number; y: number }) {
   const ring = el('circle', { cx: M.x, cy: M.y, r: 10, fill: 'none', stroke: 'var(--accent, #7c6cff)', 'stroke-width': 2 })
   ring.appendChild(el('animate', { attributeName: 'r', values: '10;22;10', dur: '2.4s', repeatCount: 'indefinite' }))
   ring.appendChild(el('animate', { attributeName: 'stroke-opacity', values: '.8;0;.8', dur: '2.4s', repeatCount: 'indefinite' }))
-  svg.appendChild(ring)
-  svg.appendChild(el('rect', { x: M.x - 8, y: M.y - 8, width: 16, height: 16, fill: 'var(--accent, #7c6cff)', stroke: 'var(--card, #141418)', 'stroke-width': 2, transform: `rotate(45 ${M.x} ${M.y})`, rx: 2 }))
+  g.appendChild(ring)
+  g.appendChild(el('rect', { x: M.x - 8, y: M.y - 8, width: 16, height: 16, fill: 'var(--accent, #7c6cff)', stroke: 'var(--card, #141418)', 'stroke-width': 2, transform: `rotate(45 ${M.x} ${M.y})`, rx: 2 }))
   const t = el('text', { x: M.x + 14, y: M.y + 2, 'text-anchor': 'start', fill: 'var(--text, #e8e8ec)', 'font-size': 13, 'font-weight': 800 })
-  t.textContent = 'MAIN'; svg.appendChild(t)
+  t.textContent = 'MAIN'; g.appendChild(t)
   const t2 = el('text', { x: M.x + 14, y: M.y + 16, 'text-anchor': 'start', fill: 'var(--muted, #8b8b93)', 'font-size': 11 })
-  t2.textContent = 'harvests'; svg.appendChild(t2)
+  t2.textContent = 'harvests'; g.appendChild(t2)
 }

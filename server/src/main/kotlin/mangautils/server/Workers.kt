@@ -21,6 +21,31 @@ import java.util.concurrent.TimeUnit
  * card (online, egress IP, metrics, in-flight jobs). Config lives in WorkerStore; this only reads.
  * The dispatch client (routing downloadPage's image GET through a node) is the next step on top of this.
  */
+/**
+ * Recent per-worker chapter-shipment events (worker -> main harvests), so the fleet map can fire ONE moving
+ * dot per actual chapter shipped instead of a steady loop. Each event has a monotonic seq; the UI spawns a
+ * one-shot dot for every seq it hasn't shown yet. Kept small (last 60s / 30 events per worker).
+ */
+object ShipLog {
+    private class Ev(val seq: Long, val sourceId: Long, val at: Long)
+    private val byWorker = java.util.concurrent.ConcurrentHashMap<String, ArrayDeque<Ev>>()
+    private val seq = java.util.concurrent.atomic.AtomicLong(0)
+
+    fun record(worker: String, sourceId: Long) {
+        val dq = byWorker.getOrPut(worker) { ArrayDeque() }
+        val now = System.currentTimeMillis()
+        synchronized(dq) {
+            dq.addLast(Ev(seq.incrementAndGet(), sourceId, now))
+            while (dq.isNotEmpty() && (dq.first().at < now - 60_000 || dq.size > 30)) dq.removeFirst()
+        }
+    }
+    /** (seq, sourceId) pairs for a worker's recent shipments, oldest first. */
+    fun recent(worker: String): List<Pair<Long, Long>> {
+        val dq = byWorker[worker] ?: return emptyList()
+        return synchronized(dq) { dq.map { it.seq to it.sourceId } }
+    }
+}
+
 object Workers {
     private val json = Json { ignoreUnknownKeys = true }
     private val client = OkHttpClient.Builder()
@@ -286,9 +311,11 @@ object Workers {
 
     // ---- Fleet flow map (webui): each worker at its egress city, with the sources it's downloading. ----
     @Serializable data class FleetSource(val id: Long, val name: String)
+    @Serializable data class FleetShip(val seq: Long, val source: String) // a chapter shipped home (worker -> main)
     @Serializable data class FleetWorker(
         val name: String, val online: Boolean, val egressIp: String? = null, val exitCity: String = "",
         val lat: Double? = null, val lon: Double? = null, val inflight: Int = 0, val sources: List<FleetSource> = emptyList(),
+        val ships: List<FleetShip> = emptyList(),
     )
     @Serializable data class FleetDto(val mainLat: Double, val mainLon: Double, val workers: List<FleetWorker>)
 
@@ -313,7 +340,8 @@ object Workers {
             val city = c?.exitCity.orEmpty()
             val ll = CITY_LL[city]
             val srcs = (load[n.name] ?: emptyList()).map { FleetSource(it, DownloadQueue.sourceName(it)) }
-            FleetWorker(n.name, c?.online ?: false, c?.egressIp, city, ll?.first, ll?.second, c?.inflight ?: 0, srcs)
+            val ships = runCatching { ShipLog.recent(n.name) }.getOrDefault(emptyList()).map { (sq, sid) -> FleetShip(sq, DownloadQueue.sourceName(sid)) }
+            FleetWorker(n.name, c?.online ?: false, c?.egressIp, city, ll?.first, ll?.second, c?.inflight ?: 0, srcs, ships)
         }
         return FleetDto(28.4, -81.3, workers) // main = central FL (direct egress); make configurable later if a box moves
     }

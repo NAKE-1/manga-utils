@@ -493,7 +493,8 @@ export const api = {
 }
 
 export interface FleetSource { id: number; name: string }
-export interface FleetWorker { name: string; online: boolean; egressIp?: string | null; exitCity: string; lat?: number | null; lon?: number | null; inflight: number; sources: FleetSource[] }
+export interface FleetShip { seq: number; source: string }
+export interface FleetWorker { name: string; online: boolean; egressIp?: string | null; exitCity: string; lat?: number | null; lon?: number | null; inflight: number; sources: FleetSource[]; ships: FleetShip[] }
 export interface FleetDto { mainLat: number; mainLon: number; workers: FleetWorker[] }
 
 export interface WorkerExt { pkg: string; name: string; version: string; beta: boolean; sources: number }

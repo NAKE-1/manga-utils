@@ -100,6 +100,7 @@ object WorkerDelegate {
                     task.finishedUrls.add(ch.url)
                     task.doneCount = task.finishedUrls.size
                     ackChapter(node, jobId, ch.folder)
+                    ShipLog.record(node.name, task.sourceId) // a chapter was just shipped home -> fleet-map dot
                     lastProgress = System.currentTimeMillis()
                     onChange()
                 } else {
