@@ -243,8 +243,8 @@ export default function Workers() {
         <span className="ext-title">Worker nodes</span>
       </div>
 
-      <div className="set-hint" style={{ margin: '0 0 14px' }}>
-        Headless nodes that fetch from their own IP.
+      <div className="set-hint" style={{ margin: '0 0 14px', padding: '0 12px' }}>
+        Headless nodes fetch from their own IP.
       </div>
 
       {/* Master toggle + node selector */}
