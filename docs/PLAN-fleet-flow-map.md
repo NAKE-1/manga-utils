@@ -40,6 +40,14 @@ colour-chip-with-initial stand-in in the mockup, since the artifact CSP blocks l
 code + x1** (downloading) **+N** (queued, muted) - e.g. `AT x1 +3`. Coloured by source. Scales vertically; a
 `city - N downloading` caption closes the stack. 7-source worker is the stress test.
 
+### Rendering polish (in the mockup, carry to the real component)
+- **Fan the arcs**: each worker's curve gets a per-worker bow so lines sharing a corridor (e.g. NY + Ashburn
+  down to FL) separate instead of overlapping.
+- **Decluster nodes**: nudge a worker off MAIN or off another worker when they'd draw on top of each other
+  (handles the Miami-worker-vs-FL-main case automatically); it's a display offset, data position is unchanged.
+- **Bright rim** on each worker dot so the muted per-worker colours stay findable on the dark landmass.
+- **Dim the dashed stream** under the moving dots so the coloured packets read first.
+
 ### Label placement / collisions
 Nearby workers (e.g. NY + Ashburn) collide when both expand tall stacks. Mockup handles it with a per-worker
 `side` override (throw a crowded node's stack into open space) + putting the count badge on the side opposite
