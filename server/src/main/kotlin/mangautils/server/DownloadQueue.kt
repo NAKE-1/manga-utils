@@ -284,12 +284,15 @@ object DownloadQueue {
             // Numbers the queued chapters were recorded under, so a chapter the source re-slugged (url
             // changed since enqueue) can still be recovered by number at download time (see ChapterSelect.Urls).
             val wantNums = pending.mapNotNull { numFromName(it.name) }.toSet()
-            val job = dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls, wantNums), titleOverride = task.mangaTitle)
+            // Nothing left for main - the worker already harvested every chapter. Skip the local download
+            // (an empty selection throws "No chapters matched the selection"); reconcile straight from finishedUrls.
+            val job = if (allUrls.isEmpty()) null
+                      else dm.download(SourceRef(task.sourceId, task.mangaUrl), select = ChapterSelect.Urls(allUrls, wantNums), titleOverride = task.mangaTitle)
             // Reconcile from the per-chapter attempt trace: a chapter is done if any candidate ok/skipped.
             // Reconcile by URL, not by chapter name: several scanlations of a chapter share a name, so
             // grouping attempts by name merges them and undercounts a versioned download.
             val doneUrls = task.finishedUrls.toMutableSet()
-            val attempts = job.attempts.toMutableList() // accumulates across auto-retry passes
+            val attempts = (job?.attempts ?: emptyList()).toMutableList() // accumulates across auto-retry passes
             // A chapter already on disk finishes without emitting progress, so it needs adding by hand.
             // Deliberately narrow: a skip because the source gave up ("source unavailable") is NOT done,
             // it just never ran — treating it as done is what hid 55 chapters from Retry.
@@ -331,8 +334,8 @@ object DownloadQueue {
                     task.state = "done"
                     sourceCooldownUntil.remove(task.sourceId) // source is clearly healthy again
                 } else {
-                    task.error = explainFailure(task, attempts, job.error)
-                    task.failClass = classifyFailures(task, attempts, job.error)
+                    task.error = explainFailure(task, attempts, job?.error ?: "")
+                    task.failClass = classifyFailures(task, attempts, job?.error ?: "")
                     // Blocked on an interactive human-check (MangaFire's "click the shapes"): don't fail and
                     // don't burn retry passes on a timer — no amount of waiting clears a captcha. Park it as
                     // "waitvf" and resume the moment the user solves it in the WebView (HumanCheckState.onCleared
