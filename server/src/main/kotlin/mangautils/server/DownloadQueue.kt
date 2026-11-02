@@ -544,6 +544,9 @@ object DownloadQueue {
     /** Human source name for a task (for the Downloads per-source tabs). */
     fun sourceName(id: Long): String = srcName(id)
 
+    /** Snapshot of which sources each worker is currently downloading (for the fleet-flow map). */
+    fun workerSources(): Map<String, List<Long>> = synchronized(workerLoad) { workerLoad.mapValues { it.value.toList() } }
+
     /** Epoch ms this source is resting until after a rate-limit (0 = not resting) — for the queued-row label. */
     fun sourceRestUntil(id: Long): Long = sourceCooldownUntil[id] ?: 0
 

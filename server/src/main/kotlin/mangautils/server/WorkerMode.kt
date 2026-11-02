@@ -81,6 +81,7 @@ object WorkerMode {
     @Volatile private var autoMode = false   // broad auto nearby-exit mode: fail over across all nearby states
     @Volatile private var cityPin = ""       // pinned state (city code): fail over among THAT state's servers only
     @Volatile private var currentExit = ""   // the specific exit node (tailnet ip) we last applied; "" = direct
+    @Volatile private var currentExitCity = "" // its Mullvad state code (for the fleet map); "" = direct/unknown
     private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
     @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
@@ -103,7 +104,7 @@ object WorkerMode {
         val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
-    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false)
+    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false, val exitCity: String = "")
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
     @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean, val ping: Int? = null)
     // nodes = the individual servers (for the "available nodes" list + current display); cities = the pickable
@@ -309,7 +310,7 @@ object WorkerMode {
             val inflight = jobs.values.count { it.state == "running" }
             val now = System.currentTimeMillis()
             call.respond(Health(VERSION, (now - started) / 1000, egress(), inflight, inflight == 0, metrics(),
-                shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000))
+                shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000, exitCity = currentExitCity))
         }
         get("/worker/jobs") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
@@ -579,13 +580,13 @@ object WorkerMode {
             if (ip == avoid) continue
             val (code, _) = applyExit(ip)
             if (code == 0 && verifyEgress()) {
-                currentExit = ip; exitActive = true
+                currentExit = ip; currentExitCity = cityOf(p).orEmpty(); exitActive = true
                 log.info("exit node -> {} ({})", p.HostName, ip)
                 return
             }
         }
         log.warn("exit: no eligible node connected - using normal egress for now")
-        applyExit(""); currentExit = ""; exitActive = false; egressIp = null
+        applyExit(""); currentExit = ""; currentExitCity = ""; exitActive = false; egressIp = null
     }
 
     /** Broad auto: fail over across ALL nearby states. */
@@ -616,11 +617,11 @@ object WorkerMode {
         autoMode = false; cityPin = ""
         val (code, out) = applyExit(node)
         if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
-        if (node.isBlank()) { exitActive = false; currentExit = ""; return null } // normal egress - nothing to verify
-        if (verifyEgress()) { exitActive = true; currentExit = node; return null }
+        if (node.isBlank()) { exitActive = false; currentExit = ""; currentExitCity = ""; return null } // normal egress - nothing to verify
+        if (verifyEgress()) { exitActive = true; currentExit = node; currentExitCity = ""; return null } // manual pin: city unknown
         // The exit node didn't give us a working path out. Revert to normal egress so downloads keep working.
         log.warn("exit node '{}' failed connectivity check - reverting to normal egress", node)
-        applyExit(""); exitActive = false; currentExit = ""; egressIp = null
+        applyExit(""); exitActive = false; currentExit = ""; currentExitCity = ""; egressIp = null
         return "exit node didn't connect - reverted to normal egress"
     }
 
@@ -744,7 +745,7 @@ object WorkerMode {
                     val inflight = jobs.values.count { it.state == "running" }
                     val nowH = System.currentTimeMillis()
                     val h = Health(VERSION, (nowH - started) / 1000, egress(), inflight, inflight == 0, metrics(),
-                        shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000)
+                        shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000, exitCity = currentExitCity)
                     val body = hbJson.encodeToString(Workers.CheckinDto(token, h)).toRequestBody("application/json".toMediaType())
                     client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
                 }
@@ -783,6 +784,7 @@ object WorkerMode {
                     mullvadCandidates().firstOrNull { it.ExitNode }?.let { active ->
                         cityPin = cityOf(active).orEmpty()
                         currentExit = active.TailscaleIPs.firstOrNull().orEmpty()
+                        currentExitCity = cityPin
                         exitActive = true
                         log.info("adopted pre-existing exit node {} (state '{}') at startup", active.HostName, cityPin)
                     }
@@ -804,7 +806,7 @@ object WorkerMode {
                 if (egressWorks()) { strikes = 0; continue }
                 if (++strikes >= 3) {
                     log.warn("exit node egress dead {} checks - reverting to normal egress", strikes)
-                    applyExit(""); exitActive = false; currentExit = ""; egressIp = null; strikes = 0
+                    applyExit(""); exitActive = false; currentExit = ""; currentExitCity = ""; egressIp = null; strikes = 0
                 }
             }
         }.apply { isDaemon = true; name = "worker-exit-watchdog" }.start()

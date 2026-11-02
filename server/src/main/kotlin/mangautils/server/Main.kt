@@ -1893,6 +1893,9 @@ fun Application.module() {
             val body = withContext(Dispatchers.IO) { Workers.setExit(node, exit) } ?: return@post call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
             call.respondText(body, io.ktor.http.ContentType.Application.Json)
         }
+        // Fleet flow map: each worker at its egress city + the sources it's downloading. Reads the status cache
+        // + the download queue's per-worker load, so it's instant (no live probe).
+        get("/api/fleet/flows") { call.respond(Workers.fleetFlows()) }
         // Dev/demo: inject display-only fake download tasks to preview the badges/states. Not persisted,
         // never executed. Clear removes them (and the two demo workers).
         post("/api/dev/fake-downloads") {

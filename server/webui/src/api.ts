@@ -489,7 +489,12 @@ export const api = {
     const r = await fetch(`/api/workers/exit-node?name=${encodeURIComponent(name)}&node=${encodeURIComponent(node)}`, { method: 'POST' })
     return r.json() as Promise<{ ok: boolean; error?: string }>
   },
+  fleetFlows: () => getJson<FleetDto>('/api/fleet/flows', 1, 15000),
 }
+
+export interface FleetSource { id: number; name: string }
+export interface FleetWorker { name: string; online: boolean; egressIp?: string | null; exitCity: string; lat?: number | null; lon?: number | null; inflight: number; sources: FleetSource[] }
+export interface FleetDto { mainLat: number; mainLon: number; workers: FleetWorker[] }
 
 export interface WorkerExt { pkg: string; name: string; version: string; beta: boolean; sources: number }
 export interface ExitNode { name: string; ip: string; online: boolean; current: boolean }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage } from '../api'
+import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage, type FleetDto } from '../api'
 import { IconArrowLeft } from '../components/icons'
+import FlowMap from '../components/FlowMap'
 
 // View a worker's installed extensions (name, version, BETA for sideloads).
 function ExtList({ name }: { name: string }) {
@@ -201,13 +202,17 @@ export default function Workers() {
   const [updChk, setUpdChk] = useState(false) // use workers to help check the library for updates
   const [parScan, setParScan] = useState(true) // fetch chapter lists in parallel during an update scan
   const [pick, setPick] = useState('') // "" = Auto, else a node name
+  const [flows, setFlows] = useState<FleetDto | null>(null)
+  const [mapOpen, setMapOpen] = useState(() => { try { return localStorage.getItem('fleetMapOpen') !== '0' } catch { return true } })
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
+  const loadFlows = () => api.fleetFlows().then(setFlows).catch(() => {})
+  const toggleMap = () => setMapOpen((v) => { const n = !v; try { localStorage.setItem('fleetMapOpen', n ? '1' : '0') } catch {} return n })
   useEffect(() => {
-    load()
+    load(); loadFlows()
     api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode); setUpdChk(s.workerUpdateChecking); setParScan(s.parallelUpdateScan) }).catch(() => {})
-    timer.current = setInterval(load, 5000) // live health; workers are polled server-side each call
+    timer.current = setInterval(() => { load(); loadFlows() }, 5000) // live health; workers are polled server-side each call
     return () => clearInterval(timer.current)
   }, [])
 
@@ -296,6 +301,17 @@ export default function Workers() {
       <button className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 4 }} onClick={openAdd}>
         <span style={{ fontSize: 17, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker
       </button>
+
+      {/* Fleet flow map - lives right above the node list */}
+      {workers.length > 0 && (
+        <div className="wh-card">
+          <button onClick={toggleMap} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 0, cursor: 'pointer', padding: 0, color: 'inherit' }}>
+            <span className="set-row-label">Fleet map</span>
+            <span style={{ color: 'var(--muted)', fontSize: 13 }}>{mapOpen ? '▾ hide' : '▸ show'}</span>
+          </button>
+          {mapOpen && <div style={{ marginTop: 8 }}><FlowMap data={flows} /></div>}
+        </div>
+      )}
 
       {/* List */}
       {loaded && workers.length === 0 && <div className="center-msg" style={{ marginTop: 24 }}>No workers yet. Add one above.</div>}

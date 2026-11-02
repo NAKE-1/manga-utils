@@ -41,6 +41,7 @@ object Workers {
         val uptimeS: Long? = null,
         val error: String? = null,
         val checking: Boolean = false, // never heard from yet (grey dot) - distinct from confirmed offline
+        val exitCity: String? = null,  // the worker's current Mullvad egress state code (for the fleet map)
     )
 
     @Serializable data class AddReq(val name: String, val url: String, val token: String = "")
@@ -59,7 +60,7 @@ object Workers {
                         error = if (resp.code == 401) "unauthorized (check token)" else "HTTP ${resp.code}")
                 }
                 val h = json.decodeFromString<WorkerMode.Health>(bodyText)
-                WorkerStatus(node.name, base, node.enabled, true, h.egressIp, h.inflight, h.metrics, h.version, h.uptimeS)
+                WorkerStatus(node.name, base, node.enabled, true, h.egressIp, h.inflight, h.metrics, h.version, h.uptimeS, exitCity = h.exitCity)
             }
         } catch (e: Exception) {
             WorkerStatus(node.name, base, node.enabled, false, error = e.message ?: "unreachable")
@@ -163,6 +164,7 @@ object Workers {
         val st = WorkerStatus(
             node.name, node.url.trimEnd('/'), node.enabled, online = true,
             egressIp = h?.egressIp, inflight = h?.inflight, metrics = h?.metrics, version = h?.version, uptimeS = h?.uptimeS,
+            exitCity = h?.exitCity,
         )
         cache[node.name] = Cached(now, st)
         lastUp[node.name] = now; lastHealth[node.name] = st
@@ -280,5 +282,39 @@ object Workers {
                 syncClient.newCall(rb.build()).execute().use { it.isSuccessful }
             }
         }.apply { isDaemon = true; name = "ext-propagate" }.start()
+    }
+
+    // ---- Fleet flow map (webui): each worker at its egress city, with the sources it's downloading. ----
+    @Serializable data class FleetSource(val id: Long, val name: String)
+    @Serializable data class FleetWorker(
+        val name: String, val online: Boolean, val egressIp: String? = null, val exitCity: String = "",
+        val lat: Double? = null, val lon: Double? = null, val inflight: Int = 0, val sources: List<FleetSource> = emptyList(),
+    )
+    @Serializable data class FleetDto(val mainLat: Double, val mainLon: Double, val workers: List<FleetWorker>)
+
+    // Lat/long for each allowed Mullvad state code (mirrors WorkerMode.MULLVAD_CITIES). Used to place a worker
+    // at its egress city on the map; a worker with no/unknown exit collapses onto the main marker.
+    private val CITY_LL = mapOf(
+        "mia" to (25.76 to -80.19), "atl" to (33.75 to -84.39), "bham" to (33.52 to -86.80),
+        "cae" to (34.00 to -81.03), "chs" to (32.78 to -79.93), "clt" to (35.23 to -80.84),
+        "rag" to (35.78 to -78.64), "rdu" to (35.78 to -78.64), "bna" to (36.16 to -86.78),
+        "mem" to (35.15 to -90.05), "msy" to (29.95 to -90.07), "lit" to (34.75 to -92.29),
+        "hou" to (29.76 to -95.37), "dal" to (32.78 to -96.80), "was" to (39.04 to -77.49),
+        "nyc" to (40.71 to -74.01),
+    )
+
+    /** Assemble the fleet view from the status cache + the download queue's per-worker source load. */
+    fun fleetFlows(): FleetDto {
+        val nodes = runCatching { WorkerStore.list().filter { it.enabled } }.getOrDefault(emptyList())
+        val cards = cachedStatuses(nodes).associateBy { it.name }
+        val load = runCatching { DownloadQueue.workerSources() }.getOrDefault(emptyMap())
+        val workers = nodes.map { n ->
+            val c = cards[n.name]
+            val city = c?.exitCity.orEmpty()
+            val ll = CITY_LL[city]
+            val srcs = (load[n.name] ?: emptyList()).map { FleetSource(it, DownloadQueue.sourceName(it)) }
+            FleetWorker(n.name, c?.online ?: false, c?.egressIp, city, ll?.first, ll?.second, c?.inflight ?: 0, srcs)
+        }
+        return FleetDto(28.4, -81.3, workers) // main = central FL (direct egress); make configurable later if a box moves
     }
 }
