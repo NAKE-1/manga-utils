@@ -1,7 +1,10 @@
 # PLAN: Fleet flow map + Add-worker modal (Worker nodes screen)
 
-Status: **MOCKUP ONLY** - not wired. Interactive mockups published as Claude artifacts
-(flow map + Add-worker popup). This doc is the spec for when we build it for real.
+Status: **BUILT (v1 live)**. Add-worker modal + fleet flow map are wired on the Worker screen.
+Backend: `GET /api/fleet/flows` (Workers.fleetFlows) + Health.exitCity. Frontend: components/FlowMap.tsx.
+v1 gaps left as follow-ups: queued `+N` counts (endpoint returns active sources only), "by rate" dot mode,
+real source favicons (uses colour-tile + initials), and a configurable main-node position (hardcoded FL now).
+The interactive mockup (fuller: queued counts, toggles, by-rate) stays as the design reference.
 
 ## 1. Fleet flow map
 
