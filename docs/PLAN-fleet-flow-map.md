@@ -1,9 +1,11 @@
 # PLAN: Fleet flow map + Add-worker modal (Worker nodes screen)
 
 Status: **BUILT (v1 live)**. Add-worker modal + fleet flow map are wired on the Worker screen.
-Backend: `GET /api/fleet/flows` (Workers.fleetFlows) + Health.exitCity + ShipLog (per-chapter shipment events
-recorded in WorkerDelegate.harvestChapter). Frontend: components/FlowMap.tsx. Moving dots fire per ACTUAL
-chapter shipped (worker->main), one short-lived dot per shipment, coloured by source - not a steady loop.
+Backend: `GET /api/fleet/flows` (Workers.fleetFlows) + Health.exitCity. Frontend: components/FlowMap.tsx.
+Moving dots = one per ACTIVE source (a job downloading now), looping home continuously while the job runs,
+coloured by source - chosen over per-shipment dots (always visible vs easy to miss). ShipLog (per-chapter
+shipment events in WorkerDelegate) + `flows.ships[]` are kept but unused by the map, available for a future
+per-shipment stat/animation.
 v1 gaps left as follow-ups: queued `+N` counts (rows show active sources only), "by rate" dot mode,
 real source favicons (uses colour-tile + initials), and a configurable main-node position (hardcoded FL now).
 The interactive mockup (fuller: queued counts, toggles, by-rate) stays as the design reference.
