@@ -16,12 +16,25 @@ everything on Florida. The arc is the **logical fetch path** (source -> Mullvad 
 tailnet -> main), which is the useful thing to see. A worker egressing "Off" (direct)
 collapses onto main's location - handle that case (short/degenerate arc or a badge).
 
-### What each animation means (surface this in a small legend)
-- **Travelling dots** on an arc = individual chapters in flight, one per `inflight`.
-- **Flowing dashed stream** = an active transfer.
+### Two stages, kept visually distinct
+- **Download** (source -> exit, happens AT the worker): a **pulse ring + a count badge** on the worker marker.
+  Ring = "is downloading", badge number = how many chapters are downloading right now. This traffic does NOT
+  travel the line (it goes source -> Mullvad exit, not toward main).
+- **Harvest** (worker -> main): **moving dots travel the line home**, one spawning as each chapter finishes.
+  Default granularity = **one dot per in-flight chapter**; alternatives (one-per-source, rate-based) kept behind
+  a "Dots" control in the mockup so we can pick - decide final before building.
+
+### Other animation cues (surface in a small legend)
+- **Flowing dashed stream** under the dots = an active transfer on that worker's line.
 - **Pulsing ring on main** = main actively receiving / committing.
 - **Worker halo** = online. No halo / greyed = offline.
 - **Red dashed arc + x** = that worker's egress check is failing (downloads stalled).
+
+### Per-source rows (the "worker is pulling many sources" case)
+Stack one row per source next to the worker: a small **source icon** (the real extension/favicon in-app; a
+colour-chip-with-initial stand-in in the mockup, since the artifact CSP blocks live favicons) **+ a 2-letter
+code + x count** (e.g. `MD x2`), coloured by source. Scales vertically; a `city - N downloading` caption closes
+the stack. 7-source worker is the stress test in the mockup.
 
 ### Colour model (two palettes, two meanings)
 - **Each worker owns a line colour** (muted) used for its arc + location dot - that's the "which box" channel.
