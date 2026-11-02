@@ -240,7 +240,7 @@ export default function Workers() {
       </div>
 
       <div className="set-hint" style={{ margin: '0 0 14px' }}>
-        Headless nodes that fetch from their own IP. Add one by tailnet URL + token.
+        Headless nodes that fetch from their own IP.
       </div>
 
       {/* Master toggle + node selector */}
