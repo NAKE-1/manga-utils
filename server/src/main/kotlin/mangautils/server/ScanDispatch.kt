@@ -90,7 +90,12 @@ object ScanDispatch {
         val poller = pool.submit {
             runCatching {
                 while (futures.any { !it.second.isDone }) {
-                    workerDone.set(nodes.sumOf { pollScanProgress(it) }); publish()
+                    // Progress only climbs within a run. A worker zeroes its counter the instant its batch
+                    // finishes (before its HTTP response lands, so its future isn't done yet), so a late poll
+                    // can read 0 - take the max, never let the bar dip to ~50% then snap back to 100.
+                    val polled = nodes.sumOf { pollScanProgress(it) }
+                    if (polled > workerDone.get()) workerDone.set(polled)
+                    publish()
                     Thread.sleep(700)
                 }
             }
