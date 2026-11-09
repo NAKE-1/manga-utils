@@ -10,8 +10,6 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 
@@ -120,18 +118,18 @@ object SourceBrowser {
     suspend fun latestAsync(sourceId: Long, page: Int = 1): MangasPage =
         catalogue(sourceId).getLatestUpdates(page)
 
-    suspend fun detailsAsync(sourceId: Long, url: String): MangaDetails = coroutineScope {
+    suspend fun detailsAsync(sourceId: Long, url: String): MangaDetails {
         val source = SourceManager.loadSource(sourceId) ?: error("Source $sourceId is not installed")
         val seed = SManga.create().apply { this.url = url; title = url }
         log.debug("details source={} url={}", sourceId, url)
-        // getChapterList takes only `seed` (the url), never the details result, so the two upstream fetches
-        // are independent - run them concurrently so the detail call costs max(details, chapters), not the sum.
-        val detailsD = async { source.getMangaDetails(seed) }
-        val chaptersD = async { source.getChapterList(seed) }
-        val details = detailsD.await()
+        // Keep these SEQUENTIAL. Under ext-lib 1.6 both getMangaDetails and getChapterList delegate to the
+        // source's getMangaUpdate, which forbids concurrent calls for the same manga (throws "must not be
+        // called concurrently"). Parallelizing them 502s every open.
+        val details = source.getMangaDetails(seed)
         if (runCatching { details.url }.getOrNull().isNullOrBlank()) details.url = url
         if (runCatching { details.title }.getOrNull().isNullOrBlank()) details.title = seed.title
-        MangaDetails(details, chaptersD.await())
+        val chapters = source.getChapterList(seed)
+        return MangaDetails(details, chapters)
     }
 
     /** Human-readable status label for an [SManga.status] code. */
