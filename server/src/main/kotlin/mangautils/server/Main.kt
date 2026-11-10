@@ -1893,13 +1893,23 @@ fun Application.module() {
             val name = call.queryParam("name") ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
             val node = WorkerStore.find(name) ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
             val body = withContext(Dispatchers.IO) { Workers.exitNodes(node) } ?: return@get call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
-            call.respondText(body, io.ktor.http.ContentType.Application.Json)
+            // If the user's setting for this worker is "Auto", keep reporting auto=true even though main pinned
+            // it a specific Mullvad state under the hood - so the dropdown keeps showing "Auto". The "On: <node>"
+            // line still shows where it actually is.
+            val out = if (Workers.isAutoManaged(name)) runCatching {
+                val j = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+                val dto = j.decodeFromString(WorkerMode.ExitNodesDto.serializer(), body).copy(auto = true, currentCity = "")
+                j.encodeToString(WorkerMode.ExitNodesDto.serializer(), dto)
+            }.getOrDefault(body) else body
+            call.respondText(out, io.ktor.http.ContentType.Application.Json)
         }
         post("/api/workers/exit-node") {
             val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
             val exit = call.queryParam("node") ?: ""
             val node = WorkerStore.find(name) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
+            Workers.markAuto(name, exit == "auto") // remember Auto-vs-manual, so the UI keeps showing Auto + the loop manages it
             val body = withContext(Dispatchers.IO) { Workers.setExit(node, exit) } ?: return@post call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
+            if (exit == "auto") Workers.nudgeAutoSpread() // distribute right away instead of waiting for the 30s loop
             call.respondText(body, io.ktor.http.ContentType.Application.Json)
         }
         // Auto-spread: give each enabled+online worker a DISTINCT Mullvad exit city so no two share an egress IP.

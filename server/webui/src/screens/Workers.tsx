@@ -132,20 +132,27 @@ function ExitNodeControl({ name, onChanged }: { name: string; onChanged?: () => 
     try { await api.workerSetExit(name, val); await load(); onChanged?.() } finally { setBusy(false) }
   }
   // Pick a STATE; the worker rotates among that state's servers and fails over wg-001 -> wg-002 on its own.
-  const value = data.currentCity ? `city:${data.currentCity}` : data.auto ? 'auto' : ''
+  const currentNode = !data.currentCity && !data.auto ? data.nodes.find((n) => n.current) : undefined
+  const value = data.currentCity ? `city:${data.currentCity}` : data.auto ? 'auto' : currentNode ? currentNode.ip : ''
   const cities = data.cities ?? []
+  const ownNodes = data.nodes.filter((n) => n.online && !n.name.includes('·')) // your own exit nodes (not Mullvad)
   const onlineCount = data.nodes.filter((n) => n.online).length
   return (
     <div style={{ marginTop: 10 }}>
       <div className="set-row-label">Exit node (egress state)</div>
       <select className="set-input" value={value} disabled={busy} onChange={(e) => choose(e.target.value)}>
         <option value="">Off (direct egress)</option>
-        <option value="auto">Auto (nearest state, fail over)</option>
+        <option value="auto">Auto (main spreads the fleet)</option>
         {cities.map((c) => (
           <option key={c.code} value={`city:${c.code}`}>
             {c.label}{c.ping != null ? ` · ${c.ping}ms${c.ping > 300 ? ' (slow)' : ''}` : ''} ({c.online}/{c.total} up)
           </option>
         ))}
+        {ownNodes.length > 0 && (
+          <optgroup label="Your exit nodes (manual only)">
+            {ownNodes.map((n) => <option key={n.ip} value={n.ip}>{n.name}</option>)}
+          </optgroup>
+        )}
       </select>
       {data.current
         ? <div className="set-hint" style={{ marginTop: 4 }}>On: {data.current}</div>

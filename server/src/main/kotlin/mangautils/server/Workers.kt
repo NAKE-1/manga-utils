@@ -256,30 +256,46 @@ object Workers {
     @Volatile var egressAlert: String? = null
         private set
     private val collisionDisabled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // Workers whose user-chosen exit SETTING is "Auto" = let main coordinate a distinct state for them. The UI
+    // keeps showing "Auto" for these even after main assigns an actual city (see the exit-nodes route override).
+    private val autoWorkers = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val autoFile get() = mangautils.core.config.AppConfig.dataDir.resolve("worker-auto.txt")
+    /** Record the user's per-worker exit SETTING: on=true means "Auto" (let main manage a distinct exit). */
+    fun markAuto(name: String, on: Boolean) {
+        if (on) autoWorkers += name else autoWorkers -= name
+        runCatching { java.nio.file.Files.writeString(autoFile, autoWorkers.joinToString("\n")) }
+    }
+    fun isAutoManaged(name: String) = name in autoWorkers
+    private fun loadAuto() = runCatching { java.nio.file.Files.readAllLines(autoFile).filter { it.isNotBlank() }.forEach { autoWorkers += it } }
+    private fun exitKey(w: WorkerStatus): String? = w.exitCity?.ifBlank { null } ?: w.egressIp?.ifBlank { null }
 
-    /** Coordinated AUTO: a background loop keeps every enabled+online worker on its OWN distinct exit. Instead
-     *  of each worker independently picking the nearest state (which makes them all converge on one city/IP -
-     *  e.g. all Atlanta), main watches for a shared exit and re-runs spreadExits so no two workers share an
-     *  egress IP. If there are genuinely fewer usable states than workers, it disables the extras and alerts
-     *  rather than let them dupe. Idle (no reassignment) whenever exits are already distinct. */
+    /** Coordinated AUTO: a 30s loop keeps every worker whose setting is "Auto" on its OWN distinct exit. If an
+     *  auto worker shares a state/IP with any other worker, main re-runs spreadExits over just the auto workers
+     *  (reserving the manually-pinned ones' cities) so no two share an egress IP. Too few states -> disable the
+     *  extra auto ones + alert. Manually-pinned workers are never touched. */
     fun startAutoSpread() {
+        loadAuto()
         Thread {
             while (true) runCatching { Thread.sleep(30_000); kotlinx.coroutines.runBlocking { autoSpreadTick() } }
         }.apply { isDaemon = true; name = "worker-auto-spread" }.start()
     }
-    private fun dupeGroups(live: List<WorkerStatus>): Map<String, List<WorkerStatus>> =
-        live.filter { it.enabled && it.online }
-            .mapNotNull { w -> (w.exitCity?.ifBlank { null } ?: w.egressIp?.ifBlank { null })?.let { it to w } }
-            .groupBy({ it.first }, { it.second }).filterValues { it.size > 1 }
+    /** Kick an immediate coordinated-auto pass (e.g. right after a worker is switched to Auto). */
+    fun nudgeAutoSpread() = Thread { runCatching { kotlinx.coroutines.runBlocking { autoSpreadTick() } } }
+        .apply { isDaemon = true; name = "auto-spread-nudge" }.start()
+    private fun autoDupes(l: List<WorkerStatus>) = l.filter { it.enabled && it.online }
+        .mapNotNull { w -> exitKey(w)?.let { it to w } }
+        .groupBy({ it.first }, { it.second }).values.filter { g -> g.size > 1 && g.any { it.name in autoWorkers } }
     private suspend fun autoSpreadTick() {
-        if (dupeGroups(statuses(WorkerStore.list())).isEmpty()) { egressAlert = null; return }
-        spreadExits()                                       // coordinate: give each worker a distinct exit
-        kotlinx.coroutines.delay(6000)                      // let the new exits connect before re-checking
-        val still = dupeGroups(statuses(WorkerStore.list()))
-        if (still.isEmpty()) { egressAlert = null; return }  // healed - everyone on a distinct exit
-        val extras = still.values.flatMap { it.drop(1) }     // too few states: keep one per exit, disable the rest
+        if (autoWorkers.isEmpty()) { egressAlert = null; return }
+        if (autoDupes(statuses(WorkerStore.list())).isEmpty()) { egressAlert = null; return }
+        spreadExits(only = autoWorkers)                      // reassign just the auto workers to distinct exits
+        kotlinx.coroutines.delay(6000)                       // let the new exits connect before re-checking
+        val still = autoDupes(statuses(WorkerStore.list()))
+        if (still.isEmpty()) { egressAlert = null; return }   // healed - every auto worker on a distinct exit
+        val extras = still.flatMap { g -> g.filter { it.name in autoWorkers } }.distinctBy { it.name }.drop(1)
         extras.forEach { WorkerStore.setEnabled(it.name, false); collisionDisabled += it.name }
-        egressAlert = "Not enough distinct exits for every worker — disabled ${extras.joinToString(", ") { it.name }} to avoid a shared egress IP. Add more Mullvad states, or re-enable + Spread manually."
+        egressAlert = if (extras.isEmpty()) null
+            else "Not enough distinct exits for the Auto workers — disabled ${extras.joinToString(", ") { it.name }} to avoid a shared egress IP. Add more Mullvad states."
     }
 
     /** Auto-assign a DISTINCT Mullvad exit city to each enabled+online worker so no two share an egress IP
@@ -291,7 +307,7 @@ object Workers {
      *  whole thing, and a worker with in-flight downloads keeps its current exit (its city is reserved so idle
      *  workers still avoid it). Greedy: each assignable worker pins its lowest-ping free city; one with no
      *  distinct city left falls back to "auto". Called by the Spread-exits button and auto on a worker joining. */
-    suspend fun spreadExits(skipBusy: Boolean = true): SpreadResult {
+    suspend fun spreadExits(skipBusy: Boolean = true, only: Set<String>? = null): SpreadResult {
         if (skipBusy && ScanDispatch.running)
             return SpreadResult(emptyList(), "Deferred: a library scan is running — exits aren't reassigned mid-scan.")
         // One-tap recovery: re-enable any workers the collision guard auto-disabled, then spread them out.
@@ -306,15 +322,19 @@ object Workers {
         val taken = HashSet<String>()
         val out = ArrayList<SpreadAssign>()
         val assignable = ArrayList<WorkerNode>()
-        // A worker with in-flight downloads keeps its current exit; reserve its city so idle ones don't collide.
         for (w in online) {
             val inflight = stats[w.name]?.inflight ?: 0
             val city = stats[w.name]?.exitCity.orEmpty()
-            if (skipBusy && inflight > 0) {
+            // `only` != null (auto loop): leave workers NOT in the set alone - just reserve their exit so the
+            // managed ones avoid it. A worker with in-flight downloads also keeps its current exit (reserved).
+            if ((only != null && w.name !in only) || (skipBusy && inflight > 0)) {
                 if (city.isNotEmpty()) taken += city
-                out += SpreadAssign(w.name, city.ifEmpty { null }, null, null, false, "busy ($inflight downloading) — kept current exit")
+                else stats[w.name]?.egressIp?.ifBlank { null }?.let { taken += it }
+                if (only == null || w.name in only)
+                    out += SpreadAssign(w.name, city.ifEmpty { null }, null, null, false, "busy ($inflight downloading) — kept current exit")
             } else assignable += w
         }
+        // Assign each from `cities` = MULLVAD states only. The user's own exit nodes are never auto-assigned.
         for (w in assignable) {
             val cities = runCatching { spreadJson.decodeFromString(WorkerMode.ExitNodesDto.serializer(), exitNodes(w) ?: "") }
                 .getOrNull()?.cities.orEmpty().filter { it.online > 0 }.sortedBy { it.ping ?: Int.MAX_VALUE }
@@ -329,10 +349,11 @@ object Workers {
                     if (cities.isEmpty()) "no exits reachable" else "no distinct city left → auto")
             }
         }
+        val managed = if (only == null) online.size else online.count { it.name in only }
         val msg = when {
-            assignable.isEmpty() -> "All online workers busy — exits left unchanged."
+            assignable.isEmpty() -> "All targeted workers busy — exits left unchanged."
             out.none { it.applied && it.city != null } -> "No Mullvad exits available yet — enable them on the tailnet first."
-            else -> "${online.size} workers across ${taken.size} distinct ${if (taken.size == 1) "city" else "cities"}."
+            else -> "$managed workers across ${taken.size} distinct ${if (taken.size == 1) "city" else "cities"}."
         }
         if (out.any { it.applied && it.city != null }) egressAlert = null // cleared the collision
         return SpreadResult(out, msg)
