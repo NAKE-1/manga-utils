@@ -48,6 +48,13 @@ object ScanDispatch {
         .connectTimeout(3, TimeUnit.SECONDS).callTimeout(3, TimeUnit.SECONDS).build()
     private val pool = Executors.newCachedThreadPool { Thread(it, "scan-worker").apply { isDaemon = true } }
 
+    // Cost-weight for the progress bar: sources whose per-title scan costs ~an order of magnitude more (a
+    // Cloudflare challenge + the captcha solver) are weighted heavier, so the bar tracks TIME, not title count.
+    // MangaFire is the dominant slow one; add other heavy sources here, or lower SLOW_WEIGHT, if the mix changes.
+    private val SLOW_SOURCES = setOf(6084907896154116083L) // MangaFire
+    private const val SLOW_WEIGHT = 8
+    private fun weightOf(e: LibraryEntry): Int = if (e.sourceId in SLOW_SOURCES) SLOW_WEIGHT else 1
+
     fun update(
         entries: List<LibraryEntry> = LibraryStore.list(),
         onProgress: ((done: Int, total: Int) -> Unit)? = null,
@@ -59,10 +66,14 @@ object ScanDispatch {
         // No worker (off / none / all down) or a tiny library: scan it all on main - parallel if enabled
         // (fast even with zero workers), else the old one-at-a-time sequential scan.
         if (nodes.isEmpty() || entries.size < 4) {
-            val total = entries.size
+            val weights = entries.map(::weightOf).sorted()   // ascending: main clears its fastest titles first
+            val total = weights.sum()                         // weighted total (cost-weighted, see weightOf)
             onProgress?.invoke(0, total)
             val done = AtomicInteger(0)
-            val res = scanLocal(entries, parallel, isOnline, onFailure) { onProgress?.invoke(done.incrementAndGet(), total) }
+            val res = scanLocal(entries, parallel, isOnline, onFailure) {
+                val k = done.incrementAndGet(); var s = 0; for (i in 0 until minOf(k, weights.size)) s += weights[i]
+                onProgress?.invoke(s.coerceAtMost(total), total)
+            }
             log.info("scan done: {} checked on main{}, {} new, {} failed",
                 res.size, if (parallel) " (parallel)" else "", res.sumOf { it.newChapters.size }, res.count { it.failed })
             return res
@@ -73,50 +84,51 @@ object ScanDispatch {
         val buckets = Array(nodes.size + 1) { ArrayList<LibraryEntry>() }
         entries.forEachIndexed { i, e -> buckets[i % buckets.size].add(e) }
 
-        val total = entries.size
+        // Cost-weight the progress so the bar tracks TIME, not title COUNT. A library is ~half instant JSON-API
+        // titles (Atsumaru/MangaDex) and ~half Cloudflare+solver titles (MangaFire) that cost ~10x more each, so
+        // a title-linear bar races to ~50% then crawls. Weight each title by its source's rough scan cost.
+        val bucketWeights = buckets.map { b -> b.map(::weightOf).sorted() } // per-bucket weights, ascending
+        val total = entries.sumOf(::weightOf)                               // weighted total
         onProgress?.invoke(0, total) // publish the total up front so the bar shows 0/total, not a stuck 0/0
-        // Progress tracks the FETCHES (where the time is), split so BOTH halves climb the bar live: main ticks
-        // per local fetch; each worker's share is polled from its /worker/scan/progress while its batch runs.
-        val mainDone = AtomicInteger(0)
-        val workerDone = AtomicInteger(0)
-        val publish = { onProgress?.invoke((mainDone.get() + workerDone.get()).coerceAtMost(total), total) }
+        // Each node clears its LIGHTEST (fastest) titles first (8-wide parallel), so once it has finished k of
+        // its titles the work done is ~the sum of its k smallest title-weights. Track per-node completed counts
+        // (main = bucket 0, workers = 1..N), convert to weight at publish time.
+        val mainCount = AtomicInteger(0)
+        val workerCounts = IntArray(nodes.size)
+        fun weightedDone(bucketIdx: Int, k: Int): Int {
+            val w = bucketWeights[bucketIdx]; var s = 0
+            for (i in 0 until minOf(k, w.size)) s += w[i]; return s
+        }
+        val publish = {
+            val wd = weightedDone(0, mainCount.get()) + nodes.indices.sumOf { weightedDone(it + 1, workerCounts[it]) }
+            onProgress?.invoke(wd.coerceAtMost(total), total)
+        }
 
         // Kick off every worker's fetch up front so they run in parallel with main's own local scan.
         val futures = nodes.mapIndexed { idx, node ->
             node to pool.submit<Map<String, List<ChapterRef>>> { fetchFromWorker(node, buckets[idx + 1]) }
         }
-        // Poll the workers' live scan progress so the bar climbs during their (single-remote-call) fetch,
-        // instead of jumping only when each batch returns. Stops once every worker future is done.
-        // A worker that HANGS on its share (can't fetch - e.g. unseeded/cold, bad egress) would otherwise
-        // freeze the whole scan: the per-series local fallback only kicks in once that worker's future
-        // RETURNS, and a hung worker doesn't return until the 15-min callTimeout. So watch each worker's live
-        // scan progress; if one makes NO progress for STALL_MS, cancel its future - fut.get() then throws, its
-        // bucket falls back to a local fetch, and the scan moves on instead of stalling at ~50%.
+        // Poll the workers' live scan progress so the bar climbs during their fetch. Also the STALL GUARD: a
+        // worker that HANGS on its share (unseeded/cold, bad egress) would otherwise freeze the whole scan -
+        // the per-series local fallback only kicks in once its future RETURNS, which for a hung worker is the
+        // 15-min callTimeout. So if a worker makes NO progress for STALL_MS, cancel its future - fut.get() then
+        // throws and its bucket falls back to a local fetch, and the scan moves on instead of stalling at ~50%.
         val STALL_MS = 45_000L
-        val lastDone = HashMap<String, Int>()
-        val lastAdvance = HashMap<String, Long>()
+        val lastAdvance = HashMap<String, Long>().apply { val t0 = System.currentTimeMillis(); nodes.forEach { put(it.name, t0) } }
         val poller = pool.submit {
             runCatching {
                 while (futures.any { !it.second.isDone }) {
                     val now = System.currentTimeMillis()
-                    var polled = 0
-                    for ((node, fut) in futures) {
+                    futures.forEachIndexed { idx, pair ->
+                        val (node, fut) = pair
                         val d = pollScanProgress(node)
-                        polled += d
-                        val prev = lastDone[node.name] ?: -1
-                        when {
-                            d > prev -> { lastDone[node.name] = d; lastAdvance[node.name] = now }
-                            !fut.isDone && now - (lastAdvance[node.name] ?: now) > STALL_MS -> {
-                                log.warn("scan via {} stalled {}s with no progress - giving up, its share falls back local",
-                                    node.name, STALL_MS / 1000)
-                                fut.cancel(true)
-                            }
+                        if (d > workerCounts[idx]) { workerCounts[idx] = d; lastAdvance[node.name] = now } // monotonic
+                        else if (!fut.isDone && now - (lastAdvance[node.name] ?: now) > STALL_MS) {
+                            log.warn("scan via {} stalled {}s with no progress - giving up, its share falls back local",
+                                node.name, STALL_MS / 1000)
+                            fut.cancel(true)
                         }
                     }
-                    // Monotonic: a worker zeroes its counter the instant its batch finishes (before its HTTP
-                    // response lands, so its future isn't done yet), so a late poll can read 0 - take the max,
-                    // never let the bar dip to ~50% then snap back to 100.
-                    if (polled > workerDone.get()) workerDone.set(polled)
                     publish()
                     Thread.sleep(700)
                 }
@@ -124,7 +136,7 @@ object ScanDispatch {
         }
         // Scan main's own bucket (parallel when enabled, else sequential) while the workers fetch theirs.
         val tMain = System.currentTimeMillis()
-        val mainResults = scanLocal(buckets[0], parallel, isOnline, onFailure) { mainDone.incrementAndGet(); publish() }
+        val mainResults = scanLocal(buckets[0], parallel, isOnline, onFailure) { mainCount.incrementAndGet(); publish() }
         val mainSec = (System.currentTimeMillis() - tMain) / 1000
         // Collect each worker's refs, then diff its bucket: prefetched where the worker succeeded, local fetch
         // for the rest (worker-failed or unreachable). Either way every entry in the bucket is processed.
@@ -139,7 +151,8 @@ object ScanDispatch {
             LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
         }
         poller.cancel(true)
-        workerDone.set(buckets.drop(1).sumOf { it.size }); publish() // finalize both halves to total
+        mainCount.set(buckets[0].size); for (i in workerCounts.indices) workerCounts[i] = buckets[i + 1].size
+        publish() // finalize to the weighted total
         val all = mainResults + workerResults
         log.info("scan done: {} checked - {} on main ({}s) + {} via {} worker(s) ({} fell back local), {} new, {} failed",
             all.size, buckets[0].size, mainSec, remote, nodes.size, entries.size - buckets[0].size - remote,
