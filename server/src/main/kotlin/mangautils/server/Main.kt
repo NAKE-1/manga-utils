@@ -1893,6 +1893,10 @@ fun Application.module() {
             val body = withContext(Dispatchers.IO) { Workers.setExit(node, exit) } ?: return@post call.respond(HttpStatusCode.BadGateway, ErrorDto("worker unreachable"))
             call.respondText(body, io.ktor.http.ContentType.Application.Json)
         }
+        // Auto-spread: give each enabled+online worker a DISTINCT Mullvad exit city so no two share an egress IP.
+        post("/api/workers/spread-exits") {
+            call.respond(withContext(Dispatchers.IO) { Workers.spreadExits() })
+        }
         // Fleet flow map: each worker at its egress city + the sources it's downloading. Reads the status cache
         // + the download queue's per-worker load, so it's instant (no live probe).
         get("/api/fleet/flows") { call.respond(Workers.fleetFlows()) }

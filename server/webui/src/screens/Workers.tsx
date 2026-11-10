@@ -204,6 +204,8 @@ export default function Workers() {
   const [pick, setPick] = useState('') // "" = Auto, else a node name
   const [flows, setFlows] = useState<FleetDto | null>(null)
   const [mapOpen, setMapOpen] = useState(() => { try { return localStorage.getItem('fleetMapOpen') !== '0' } catch { return true } })
+  const [spreading, setSpreading] = useState(false)
+  const [spreadMsg, setSpreadMsg] = useState('')
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
@@ -220,6 +222,12 @@ export default function Workers() {
   async function choose(n: string) { setPick(n); await api.saveSettings({ workerNode: n }).catch(() => {}) }
   async function toggleUpdChk() { const v = !updChk; setUpdChk(v); await api.saveSettings({ workerUpdateChecking: v }).catch(() => setUpdChk(!v)) }
   async function toggleParScan() { const v = !parScan; setParScan(v); await api.saveSettings({ parallelUpdateScan: v }).catch(() => setParScan(!v)) }
+  async function spreadExits() {
+    setSpreading(true); setSpreadMsg('')
+    try { const r = await api.spreadExits(); setSpreadMsg(r.message || 'Done'); await load() }
+    catch { setSpreadMsg('Could not spread exits') }
+    finally { setSpreading(false) }
+  }
 
   async function add() {
     setErr(''); setBusy(true)
@@ -298,9 +306,18 @@ export default function Workers() {
       </div>
 
       {/* Add a worker - opens a modal, keeps the screen clean */}
-      <button className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 4 }} onClick={openAdd}>
-        <span style={{ fontSize: 17, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+        <button className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={openAdd}>
+          <span style={{ fontSize: 17, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker
+        </button>
+        {workers.filter((w) => w.enabled).length >= 2 && (
+          <button className="btn" disabled={spreading} onClick={spreadExits}
+            title="Give each worker a different Mullvad exit so no two share one egress IP">
+            {spreading ? 'Spreading…' : 'Spread exits'}
+          </button>
+        )}
+        {spreadMsg && <span style={{ fontSize: 13, color: 'var(--muted)' }}>{spreadMsg}</span>}
+      </div>
 
       {/* Fleet flow map - lives right above the node list */}
       {workers.length > 0 && (

@@ -244,6 +244,44 @@ object Workers {
         exitClient.newCall(rb.build()).execute().use { it.body?.string() }
     }.getOrNull()
 
+    private val spreadJson = Json { ignoreUnknownKeys = true }
+
+    @Serializable data class SpreadAssign(
+        val worker: String, val city: String? = null, val label: String? = null,
+        val ping: Int? = null, val applied: Boolean = false, val note: String? = null,
+    )
+    @Serializable data class SpreadResult(val assignments: List<SpreadAssign>, val message: String = "")
+
+    /** Auto-assign a DISTINCT Mullvad exit city to each enabled+online worker so no two share an egress IP
+     *  (the whole point of running more than one worker). Greedy: each worker, in order, pins its lowest-ping
+     *  city not already claimed by another; a worker with no distinct city left falls back to "auto" (the
+     *  worker's own per-node spread). Pins via "city:<code>", which the worker fails over within on its own. */
+    fun spreadExits(): SpreadResult {
+        val workers = WorkerStore.list().filter { it.enabled && onlineNow(it) }
+        if (workers.isEmpty()) return SpreadResult(emptyList(), "No enabled, online workers.")
+        // Each worker's reachable cities, fastest ping first.
+        val byWorker = workers.map { w ->
+            val dto = runCatching { spreadJson.decodeFromString(WorkerMode.ExitNodesDto.serializer(), exitNodes(w) ?: "") }.getOrNull()
+            w to dto?.cities.orEmpty().filter { it.online > 0 }.sortedBy { it.ping ?: Int.MAX_VALUE }
+        }
+        if (byWorker.none { it.second.isNotEmpty() })
+            return SpreadResult(emptyList(), "No Mullvad exit nodes available yet — enable Mullvad exits on the tailnet first.")
+        val taken = HashSet<String>()
+        val out = byWorker.map { (w, cities) ->
+            val pick = cities.firstOrNull { it.code !in taken }
+            if (pick != null) {
+                taken += pick.code
+                val ok = setExit(w, "city:${pick.code}") != null
+                SpreadAssign(w.name, pick.code, pick.label, pick.ping, ok, if (ok) null else "set failed")
+            } else {
+                val ok = setExit(w, "auto") != null
+                SpreadAssign(w.name, null, "auto", null, ok,
+                    if (cities.isEmpty()) "no exits reachable" else "no distinct city left → auto")
+            }
+        }
+        return SpreadResult(out, "Spread across ${workers.size} workers: ${taken.size} distinct ${if (taken.size == 1) "city" else "cities"}.")
+    }
+
     @Serializable data class SyncResult(val synced: Int, val failed: Int, val total: Int, val errors: List<String> = emptyList())
     private val jarMedia = "application/java-archive".toMediaType()
     private val syncClient = OkHttpClient.Builder().connectTimeout(6, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()

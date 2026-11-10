@@ -474,6 +474,11 @@ export const api = {
   },
   removeWorker: (name: string) => fetch(`/api/workers?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
   enableWorker: (name: string, on: boolean) => fetch(`/api/workers/enable?name=${encodeURIComponent(name)}&on=${on}`, { method: 'POST' }),
+  spreadExits: async (): Promise<SpreadResult> => {
+    const r = await fetch('/api/workers/spread-exits', { method: 'POST' })
+    if (!r.ok) throw new Error('spread failed')
+    return r.json() as Promise<SpreadResult>
+  },
   testWorker: async (url: string, token: string) => {
     const r = await fetch('/api/workers/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token }) })
     return r.json() as Promise<WorkerStatus>
@@ -495,6 +500,8 @@ export const api = {
 export interface FleetSource { id: number; name: string }
 export interface FleetShip { seq: number; source: string }
 export interface FleetWorker { name: string; online: boolean; egressIp?: string | null; exitCity: string; lat?: number | null; lon?: number | null; inflight: number; sources: FleetSource[]; ships: FleetShip[] }
+export interface SpreadAssign { worker: string; city?: string | null; label?: string | null; ping?: number | null; applied: boolean; note?: string | null }
+export interface SpreadResult { assignments: SpreadAssign[]; message: string }
 export interface FleetDto { mainLat: number; mainLon: number; workers: FleetWorker[] }
 
 export interface WorkerExt { pkg: string; name: string; version: string; beta: boolean; sources: number }
