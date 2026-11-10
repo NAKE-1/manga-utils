@@ -168,7 +168,7 @@ object Workers {
         return if (h > 0) "${h}h ${m}m" else if (m > 0) "${m}m" else "${s}s"
     }
 
-    @Serializable data class CheckinDto(val token: String = "", val health: WorkerMode.Health? = null)
+    @Serializable data class CheckinDto(val token: String = "", val health: WorkerMode.Health? = null, val selfIp: String = "")
 
     /** A worker pushed a heartbeat. Match it to a registered node by the request's source IP (its tailscale
      *  address = the host in its registered URL) + token, then cache it online with the pushed health. */
@@ -178,11 +178,21 @@ object Workers {
         // tailscale IP. IP is only a tiebreaker when several nodes share a token, and the fallback for a
         // token-less node.
         val nodes = WorkerStore.list()
-        val node = if (dto.token.isNotBlank()) {
-            val byToken = nodes.filter { it.token == dto.token }
-            byToken.firstOrNull { nodeHost(it.url) == remoteHost } ?: byToken.firstOrNull()
-        } else {
-            nodes.firstOrNull { it.token.isBlank() && nodeHost(it.url) == remoteHost }
+        val node = when {
+            // Reliable: the worker reports its OWN tailscale IP (= the host in its registered URL). This is the
+            // only way to tell apart several workers that SHARE one token, since main sits behind Docker NAT so
+            // the connection source IP is the gateway, not the worker. (Without this, every worker's heartbeat
+            // matched byToken.firstOrNull() = the same node, so one card's exitCity flickered to all the others'.)
+            dto.selfIp.isNotBlank() ->
+                nodes.firstOrNull { nodeHost(it.url) == dto.selfIp && (dto.token.isBlank() || it.token == dto.token) }
+            dto.token.isNotBlank() -> {
+                val byToken = nodes.filter { it.token == dto.token }
+                // Older worker (no selfIp): accept it only if the source IP pins exactly one, or just one node
+                // has this token. If several share it ambiguously, SKIP - the per-URL background poll caches
+                // each correctly, rather than this heartbeat overwriting the wrong node's card.
+                byToken.firstOrNull { nodeHost(it.url) == remoteHost } ?: byToken.singleOrNull()
+            }
+            else -> nodes.firstOrNull { it.token.isBlank() && nodeHost(it.url) == remoteHost }
         } ?: return false
         val h = dto.health
         val now = System.currentTimeMillis()

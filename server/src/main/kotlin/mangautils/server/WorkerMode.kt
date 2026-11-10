@@ -756,6 +756,11 @@ object WorkerMode {
     /** Heartbeat: announce ourselves to main (token + health) every ~20s, so main knows we're online the
      *  instant we boot and marks us offline by a missed beat - no polling + connection-timeout on its side.
      *  Needs MAIN_URL (main's tailnet URL); absent -> off, and main falls back to polling us. */
+    // This worker's own tailscale IP (= the host in its registered URL). Sent in each heartbeat so main can tell
+    // workers apart even when they share one token (resolved once; tailnet IP is stable for the process life).
+    private val selfTsIp: String by lazy {
+        runCatching { runCmd("tailscale", "ip", "-4").second.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() }.orEmpty() }.getOrDefault("")
+    }
     fun startHeartbeat() {
         val mainUrl = System.getenv("MAIN_URL")?.trim()?.trimEnd('/').orEmpty()
         if (mainUrl.isBlank()) { log.info("heartbeat off (MAIN_URL not set)"); return }
@@ -768,7 +773,7 @@ object WorkerMode {
                     val nowH = System.currentTimeMillis()
                     val h = Health(VERSION, (nowH - started) / 1000, egress(), inflight, inflight == 0, metrics(),
                         shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000, exitCity = currentExitCity)
-                    val body = hbJson.encodeToString(Workers.CheckinDto(token, h)).toRequestBody("application/json".toMediaType())
+                    val body = hbJson.encodeToString(Workers.CheckinDto(token, h, selfTsIp)).toRequestBody("application/json".toMediaType())
                     client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
                 }
                 Thread.sleep(20_000)
