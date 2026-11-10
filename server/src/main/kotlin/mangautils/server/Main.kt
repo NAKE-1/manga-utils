@@ -270,6 +270,8 @@ private data class LibraryDto(
 @Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean, val titleDone: Int = 0, val titleTotal: Int = 0, val summary: UpdateSummaryDto? = null)
 @Serializable private data class WorkerAlertDto(val alert: String? = null)
 @Serializable private data class RestrictionDto(val source: String, val states: List<String>)
+@Serializable private data class NodeUpdateDto(val name: String, val commit: String, val behind: Int)
+@Serializable private data class UpdatesDto(val latest: String, val nodes: List<NodeUpdateDto>, val newCommits: List<String>)
 @Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
 // Mass-download: a per-series preview (downloaded/total + how many would queue) and the grand total.
@@ -2979,6 +2981,23 @@ fun Application.module() {
                     changelog = changelog,
                 ),
             )
+        }
+        // Update detection: which build each node (main + workers) runs vs origin/main on GitHub, and how far
+        // behind. Deploy stays manual (the 3 commands) - this just tells you WHEN a box is behind.
+        get("/api/updates") {
+            val commits = withContext(Dispatchers.IO) { Workers.latestCommits() }
+            val latest = commits.firstOrNull()?.first.orEmpty()
+            val props = java.util.Properties().apply { object {}.javaClass.getResourceAsStream("/build-info.properties")?.use { load(it) } }
+            val mainCommit = props.getProperty("commit", "unknown")
+            val nodes = ArrayList<NodeUpdateDto>()
+            nodes += NodeUpdateDto("main", mainCommit, Workers.behindOf(mainCommit, commits))
+            WorkerStore.list().forEach { w ->
+                val c = withContext(Dispatchers.IO) { Workers.commitOf(w) }.orEmpty()
+                nodes += NodeUpdateDto(w.name, c, if (c.isBlank()) -1 else Workers.behindOf(c, commits))
+            }
+            val mainBehind = Workers.behindOf(mainCommit, commits)
+            val newCommits = if (mainBehind > 0) commits.take(mainBehind).map { "${it.first}  ${it.second}" } else emptyList()
+            call.respond(UpdatesDto(latest, nodes, newCommits))
         }
         // TEST: make the app think a library manga got a new chapter — forgets its latest known
         // chapter so the next update re-detects it as new (setting the "!" badge, and auto-downloading

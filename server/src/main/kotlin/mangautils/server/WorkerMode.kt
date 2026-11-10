@@ -199,6 +199,13 @@ object WorkerMode {
             job.state = "done"
             val ready = job.chapters.count { it.folder != null }
             log.info("worker job {} DONE: {}/{} chapter(s) ready for main to pull", job.id, ready, job.chapters.size)
+            // Easy-to-spot block signal: chapters failed while on a Mullvad exit often means the source CDN is
+            // 403-ing this exit's IP. If a source CONSISTENTLY fails on one state, add it to the egress
+            // restrictions (Workers.seedRestrictions). Grep the worker logs for "EGRESS-BLOCK?".
+            val failed = job.chapters.size - ready
+            if (failed > 0 && currentExitCity.isNotEmpty())
+                log.warn("EGRESS-BLOCK? job {} - {}/{} chapter(s) FAILED for source {} on exit '{}' ({}). If this source always fails on this state, its Mullvad IP is likely CDN-blocked - add to egress restrictions.",
+                    job.id, failed, job.chapters.size, job.sourceId, currentExitCity, egress())
         } catch (e: Exception) {
             if (job.cancelled) log.info("worker job {} cancelled by main - stopping", job.id)
             else { log.warn("worker job {} FAILED: {}", job.id, e.message); runCatching { resolveFolders(job) } }

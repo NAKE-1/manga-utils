@@ -481,6 +481,7 @@ export const api = {
   },
   workersAlert: (): Promise<string | null> =>
     getJson<{ alert: string | null }>('/api/workers/alert').then((r) => r.alert).catch(() => null),
+  updates: () => getJson<UpdatesInfo>('/api/updates'),
   testWorker: async (url: string, token: string) => {
     const r = await fetch('/api/workers/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token }) })
     return r.json() as Promise<WorkerStatus>
@@ -502,6 +503,8 @@ export const api = {
 export interface FleetSource { id: number; name: string }
 export interface FleetShip { seq: number; source: string }
 export interface FleetWorker { name: string; online: boolean; egressIp?: string | null; exitCity: string; lat?: number | null; lon?: number | null; inflight: number; sources: FleetSource[]; ships: FleetShip[] }
+export interface NodeUpdate { name: string; commit: string; behind: number }
+export interface UpdatesInfo { latest: string; nodes: NodeUpdate[]; newCommits: string[] }
 export interface SpreadAssign { worker: string; city?: string | null; label?: string | null; ping?: number | null; applied: boolean; note?: string | null }
 export interface SpreadResult { assignments: SpreadAssign[]; message: string }
 export interface FleetDto { mainLat: number; mainLon: number; workers: FleetWorker[] }

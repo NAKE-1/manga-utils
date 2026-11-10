@@ -394,6 +394,39 @@ object Workers {
         return SpreadResult(out, msg)
     }
 
+    // ---- Update detection: compare each node's running commit to origin/main on GitHub ----
+    @Volatile private var ghCache: List<Pair<String, String>> = emptyList()
+    @Volatile private var ghAt = 0L
+    private val ghJson = Json { ignoreUnknownKeys = true }
+    @Serializable private data class GhCommit(val sha: String = "", val commit: GhMsg = GhMsg())
+    @Serializable private data class GhMsg(val message: String = "")
+    @Serializable private data class VerDto(val commit: String = "")
+    /** Recent commits on origin/main from GitHub (sha7 -> subject), cached 15m. Empty if GitHub is unreachable. */
+    fun latestCommits(): List<Pair<String, String>> {
+        if (ghCache.isNotEmpty() && System.currentTimeMillis() - ghAt < 900_000) return ghCache
+        val got = runCatching {
+            val rb = Request.Builder().url("https://api.github.com/repos/NAKE-1/manga-utils/commits?sha=main&per_page=40")
+                .header("User-Agent", "manga-utils").header("Accept", "application/vnd.github+json")
+            exitClient.newCall(rb.build()).execute().use { r ->
+                if (!r.isSuccessful) emptyList() else ghJson.decodeFromString<List<GhCommit>>(r.body?.string() ?: "[]")
+                    .map { it.sha.take(7) to it.commit.message.lineSequence().firstOrNull().orEmpty() }
+            }
+        }.getOrDefault(emptyList())
+        if (got.isNotEmpty()) { ghCache = got; ghAt = System.currentTimeMillis() }
+        return ghCache
+    }
+    /** How many commits a node is behind origin/main: 0 = up to date, N>0 = behind by N, -1 = unknown/too far. */
+    fun behindOf(commit: String, commits: List<Pair<String, String>>): Int {
+        if (commit.isBlank() || commit == "unknown" || commits.isEmpty()) return -1
+        return commits.indexOfFirst { it.first.startsWith(commit) || commit.startsWith(it.first) }
+    }
+    /** A worker's running commit (from its /api/version), or null if unreachable. */
+    fun commitOf(node: WorkerNode): String? = runCatching {
+        val rb = Request.Builder().url("${node.url.trimEnd('/')}/api/version")
+        if (node.token.isNotBlank()) rb.header("Authorization", "Bearer ${node.token}")
+        exitClient.newCall(rb.build()).execute().use { r -> if (!r.isSuccessful) null else ghJson.decodeFromString<VerDto>(r.body?.string() ?: "{}").commit.ifBlank { null } }
+    }.getOrNull()
+
     @Serializable data class SyncResult(val synced: Int, val failed: Int, val total: Int, val errors: List<String> = emptyList())
     private val jarMedia = "application/java-archive".toMediaType()
     private val syncClient = OkHttpClient.Builder().connectTimeout(6, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()

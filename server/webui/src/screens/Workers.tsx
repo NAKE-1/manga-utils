@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage, type FleetDto } from '../api'
+import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage, type FleetDto, type UpdatesInfo } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import FlowMap from '../components/FlowMap'
 
@@ -214,6 +214,7 @@ export default function Workers() {
   const [spreading, setSpreading] = useState(false)
   const [spreadMsg, setSpreadMsg] = useState('')
   const [alert, setAlert] = useState<string | null>(null)
+  const [updates, setUpdates] = useState<UpdatesInfo | null>(null)
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
@@ -222,6 +223,7 @@ export default function Workers() {
   const toggleMap = () => setMapOpen((v) => { const n = !v; try { localStorage.setItem('fleetMapOpen', n ? '1' : '0') } catch {} return n })
   useEffect(() => {
     load(); loadFlows(); loadAlert()
+    api.updates().then(setUpdates).catch(() => {}) // once on mount: hits GitHub + polls worker versions
     api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode); setUpdChk(s.workerUpdateChecking); setParScan(s.parallelUpdateScan) }).catch(() => {})
     timer.current = setInterval(() => { load(); loadFlows(); loadAlert() }, 5000) // live health; workers are polled server-side each call
     return () => clearInterval(timer.current)
@@ -318,6 +320,30 @@ export default function Workers() {
       {alert && (
         <div role="alert" style={{ background: 'rgba(229,72,77,0.12)', border: '1px solid #e5484d', color: '#e5484d', borderRadius: 10, padding: '10px 12px', marginBottom: 12, fontSize: 13, lineHeight: 1.45 }}>
           ⚠ {alert}
+        </div>
+      )}
+      {updates && updates.latest && (
+        <div className="wh-card" style={{ marginBottom: 12 }}>
+          <div className="set-row-label">Builds <span style={{ color: 'var(--muted)', fontWeight: 400, fontFamily: 'monospace', fontSize: 12 }}>· latest {updates.latest}</span></div>
+          <div style={{ marginTop: 6, display: 'grid', gap: 4, fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
+            {updates.nodes.map((n) => (
+              <div key={n.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                <span>{n.name} <span style={{ color: 'var(--muted)', fontFamily: 'monospace', fontSize: 12 }}>{n.commit || '?'}</span></span>
+                <span style={{ color: n.behind === 0 ? '#30a46c' : n.behind > 0 ? '#e5912f' : 'var(--muted)', fontWeight: n.behind > 0 ? 600 : 400 }}>
+                  {n.behind === 0 ? 'up to date' : n.behind > 0 ? `${n.behind} behind · update` : 'unknown'}
+                </span>
+              </div>
+            ))}
+          </div>
+          {updates.newCommits.length > 0 && (
+            <details style={{ marginTop: 8 }}>
+              <summary className="set-hint" style={{ cursor: 'pointer' }}>What's new on main ({updates.newCommits.length})</summary>
+              <div style={{ marginTop: 4, fontSize: 12, fontFamily: 'monospace', color: 'var(--muted)', display: 'grid', gap: 2 }}>
+                {updates.newCommits.map((c, i) => <div key={i} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c}</div>)}
+              </div>
+            </details>
+          )}
+          <div className="set-hint" style={{ marginTop: 8 }}>Detection only — deploy with your usual commands (main rebuild + mu-lxc-fleet.sh + the Pi).</div>
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
