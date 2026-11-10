@@ -294,10 +294,13 @@ object Workers {
         }
     }
     private fun seedRestrictionsOnce() {
-        if (restricted.isNotEmpty()) return
-        markRestricted(2327480808438768017L, "atl") // Atsumaru CDN blocks the 23.234.x Atlanta IPs
-        markRestricted(2327480808438768017L, "rag") // Atsumaru CDN blocks the 23.234.x Raleigh IPs
-        markRestricted(6084907896154116083L, "dal") // MangaFire blocks the 146.70.x Dallas IP
+        // Confirmed blocks (egress-tested 2026-11-10) - always applied; markRestricted dedupes against the
+        // durable file, so runtime-learned restrictions are additive, not overwritten.
+        // Atsumaru CDN blocks the whole 23.234.x provider range: Atlanta, Raleigh, LA, Salt Lake (+ Kansas
+        // City/Phoenix, which also fail MangaFire so they're left out of the pool entirely).
+        listOf("atl", "rag", "lax", "slc").forEach { markRestricted(2327480808438768017L, it) }
+        // MangaFire blocks Dallas (146.70.x) and Denver (37.19.210.x).
+        listOf("dal", "den").forEach { markRestricted(6084907896154116083L, it) }
     }
 
     /** Coordinated AUTO: a 30s loop keeps every worker whose setting is "Auto" on its OWN distinct exit. If an

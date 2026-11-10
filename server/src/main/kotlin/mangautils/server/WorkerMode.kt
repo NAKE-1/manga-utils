@@ -468,8 +468,14 @@ object WorkerMode {
         "msy" to "New Orleans, LA",
         "lit" to "Little Rock, AR",
         "hou" to "Houston, TX", "dal" to "Dallas, TX",
-        "was" to "Ashburn, VA",
+        "was" to "Washington DC",
         "nyc" to "New York, NY",
+        // Expanded 2026-11-10 after per-state egress testing (both sources download OK unless noted restricted).
+        "qas" to "Ashburn, VA", "sea" to "Seattle, WA", "sfo" to "San Francisco, CA",
+        "sjc" to "San Jose, CA", "txc" to "McAllen, TX", "uyk" to "Secaucus, NJ",
+        "den" to "Denver, CO",         // MangaFire-restricted (see Workers.seedRestrictions)
+        "lax" to "Los Angeles, CA",    // Atsumaru-restricted (23.234.x)
+        "slc" to "Salt Lake City, UT", // Atsumaru-restricted (23.234.x)
     )
     private val mullvadCodeRe = Regex("""-([a-z]+)-wg""")
     private val pingRe = Regex("""in ([0-9]+(?:\.[0-9]+)?)ms""")
