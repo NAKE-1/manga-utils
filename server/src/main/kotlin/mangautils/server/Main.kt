@@ -1085,6 +1085,7 @@ fun main() {
     // Restore + resume the download queue from disk (survives a crash/restart).
     Thread { runCatching { DownloadQueue.loadAndResume() } }.apply { isDaemon = true; name = "dl-resume" }.start()
     NetMonitor.start() // watch server internet reachability so the app can degrade gracefully offline
+    Workers.startAutoSpread() // coordinated AUTO: keep every worker on its own distinct egress exit (no dupe IPs)
     // Pause the download queue while offline (stop hammering doomed fetches); auto-resume on reconnect.
     NetMonitor.onChange { online -> if (online) DownloadQueue.resumeFromOffline() else DownloadQueue.pauseForOffline() }
     // A worker node does only delegated downloads — no autonomous scheduling (it must not auto-download
@@ -1831,11 +1832,7 @@ fun Application.module() {
         // ---- Worker pool (distributed IP-pool fetch nodes) ----
         // Reads the status cache (fed by worker heartbeats + a background poll), so the screen is instant -
         // an offline node shows at once instead of blocking on a connection timeout.
-        get("/api/workers") {
-            val st = Workers.cachedStatuses(WorkerStore.list())
-            Workers.guardEgressCollisions(st) // disable + alert if 2+ workers collapse onto one exit/IP
-            call.respond(st)
-        }
+        get("/api/workers") { call.respond(Workers.cachedStatuses(WorkerStore.list())) }
         get("/api/workers/alert") { call.respond(WorkerAlertDto(Workers.egressAlert)) }
         // Worker heartbeat: a node announces itself (token + health). Matched to a registered node by source
         // IP + token, then cached online - so main knows it's up the instant it boots, no poll/timeout.
@@ -1885,7 +1882,6 @@ fun Application.module() {
         post("/api/workers/enable") {
             val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
             val on = call.queryParam("on")?.toBoolean() ?: true
-            if (on) Workers.graceAfterEnable() // don't let the collision guard instantly re-disable a manual re-enable
             if (WorkerStore.setEnabled(name, on)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
         }
         post("/api/workers/test") {

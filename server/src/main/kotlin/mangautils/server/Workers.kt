@@ -252,34 +252,34 @@ object Workers {
     )
     @Serializable data class SpreadResult(val assignments: List<SpreadAssign>, val message: String = "")
 
-    // ---- Egress-collision safety net ----
+    // ---- Coordinated AUTO egress-spread + collision safety net ----
     @Volatile var egressAlert: String? = null
         private set
     private val collisionDisabled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var collisionGraceUntil = 0L
-    /** Give a just-enabled worker ~90s before the collision guard may disable it again, so a manual re-enable
-     *  has time to be re-spread onto a distinct exit instead of being instantly re-disabled. */
-    fun graceAfterEnable() { collisionGraceUntil = System.currentTimeMillis() + 90_000 }
 
-    /** Safety net: if 2+ enabled, online workers share the SAME exit (same Mullvad city) or the same egress IP
-     *  (e.g. they all fell back to Atlanta, or all to direct egress), that defeats running multiple workers and
-     *  risks getting that one IP throttled. Disable the colliding workers and set an alert the UI shows. Clears
-     *  the alert when there's no collision; during the post-enable grace window it warns but doesn't disable. */
-    fun guardEgressCollisions(live: List<WorkerStatus>) {
-        val groups = live.filter { it.enabled && it.online }
+    /** Coordinated AUTO: a background loop keeps every enabled+online worker on its OWN distinct exit. Instead
+     *  of each worker independently picking the nearest state (which makes them all converge on one city/IP -
+     *  e.g. all Atlanta), main watches for a shared exit and re-runs spreadExits so no two workers share an
+     *  egress IP. If there are genuinely fewer usable states than workers, it disables the extras and alerts
+     *  rather than let them dupe. Idle (no reassignment) whenever exits are already distinct. */
+    fun startAutoSpread() {
+        Thread {
+            while (true) runCatching { Thread.sleep(30_000); kotlinx.coroutines.runBlocking { autoSpreadTick() } }
+        }.apply { isDaemon = true; name = "worker-auto-spread" }.start()
+    }
+    private fun dupeGroups(live: List<WorkerStatus>): Map<String, List<WorkerStatus>> =
+        live.filter { it.enabled && it.online }
             .mapNotNull { w -> (w.exitCity?.ifBlank { null } ?: w.egressIp?.ifBlank { null })?.let { it to w } }
-            .groupBy({ it.first }, { it.second })
-            .filterValues { it.size > 1 }
-        if (groups.isEmpty()) { egressAlert = null; return }
-        val group = groups.values.first()
-        val names = group.map { it.name }
-        val shared = groups.keys.first()
-        if (System.currentTimeMillis() < collisionGraceUntil) {
-            egressAlert = "${names.joinToString(", ")} are on the same exit ($shared). Tap \"Spread exits\" to split them onto distinct exits."
-            return
-        }
-        group.forEach { WorkerStore.setEnabled(it.name, false); collisionDisabled += it.name }
-        egressAlert = "Disabled ${names.joinToString(", ")}: they share one exit/IP ($shared), which defeats running multiple workers and risks throttling. Tap \"Spread exits\" to re-enable and split them."
+            .groupBy({ it.first }, { it.second }).filterValues { it.size > 1 }
+    private suspend fun autoSpreadTick() {
+        if (dupeGroups(statuses(WorkerStore.list())).isEmpty()) { egressAlert = null; return }
+        spreadExits()                                       // coordinate: give each worker a distinct exit
+        kotlinx.coroutines.delay(6000)                      // let the new exits connect before re-checking
+        val still = dupeGroups(statuses(WorkerStore.list()))
+        if (still.isEmpty()) { egressAlert = null; return }  // healed - everyone on a distinct exit
+        val extras = still.values.flatMap { it.drop(1) }     // too few states: keep one per exit, disable the rest
+        extras.forEach { WorkerStore.setEnabled(it.name, false); collisionDisabled += it.name }
+        egressAlert = "Not enough distinct exits for every worker — disabled ${extras.joinToString(", ") { it.name }} to avoid a shared egress IP. Add more Mullvad states, or re-enable + Spread manually."
     }
 
     /** Auto-assign a DISTINCT Mullvad exit city to each enabled+online worker so no two share an egress IP
@@ -297,7 +297,7 @@ object Workers {
         // One-tap recovery: re-enable any workers the collision guard auto-disabled, then spread them out.
         if (collisionDisabled.isNotEmpty()) {
             collisionDisabled.forEach { WorkerStore.setEnabled(it, true) }
-            collisionDisabled.clear(); collisionGraceUntil = System.currentTimeMillis() + 90_000
+            collisionDisabled.clear()
         }
         val enabled = WorkerStore.list().filter { it.enabled }
         val stats = statuses(enabled).associateBy { it.name }
