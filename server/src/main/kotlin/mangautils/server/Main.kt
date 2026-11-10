@@ -269,6 +269,7 @@ private data class LibraryDto(
 )
 @Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean, val titleDone: Int = 0, val titleTotal: Int = 0, val summary: UpdateSummaryDto? = null)
 @Serializable private data class WorkerAlertDto(val alert: String? = null)
+@Serializable private data class RestrictionDto(val source: String, val states: List<String>)
 @Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
 // Mass-download: a per-series preview (downloaded/total + how many would queue) and the grand total.
@@ -1834,6 +1835,12 @@ fun Application.module() {
         // an offline node shows at once instead of blocking on a connection timeout.
         get("/api/workers") { call.respond(Workers.cachedStatuses(WorkerStore.list())) }
         get("/api/workers/alert") { call.respond(WorkerAlertDto(Workers.egressAlert)) }
+        get("/api/workers/restrictions") {
+            call.respond(Workers.restrictionsBySource().map { (sid, states) ->
+                val name = runCatching { SourceManager.loadSource(sid)?.name }.getOrNull()?.takeIf { it.isNotBlank() } ?: sid.toString()
+                RestrictionDto(name, states)
+            })
+        }
         // Worker heartbeat: a node announces itself (token + health). Matched to a registered node by source
         // IP + token, then cached online - so main knows it's up the instant it boots, no poll/timeout.
         post("/api/workers/checkin") {

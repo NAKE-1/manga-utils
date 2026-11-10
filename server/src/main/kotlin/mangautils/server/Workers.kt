@@ -269,12 +269,43 @@ object Workers {
     private fun loadAuto() = runCatching { java.nio.file.Files.readAllLines(autoFile).filter { it.isNotBlank() }.forEach { autoWorkers += it } }
     private fun exitKey(w: WorkerStatus): String? = w.exitCity?.ifBlank { null } ?: w.egressIp?.ifBlank { null }
 
+    // ---- Per-source egress restrictions ----
+    // A Mullvad state a source blocks (403s its exit IP, proven by the same content downloading from another
+    // IP). The coordinated auto-spread never assigns a restricted state, so a worker is never stranded on a
+    // state that can't fetch a source. Durable + logged. Seeded with today's confirmed blocks on first run.
+    private val restricted = java.util.concurrent.ConcurrentHashMap<Long, MutableSet<String>>() // sourceId -> state codes
+    private val restrictedFile get() = mangautils.core.config.AppConfig.dataDir.resolve("worker-egress-restricted.txt")
+    fun markRestricted(sourceId: Long, state: String) {
+        if (restricted.getOrPut(sourceId) { java.util.concurrent.ConcurrentHashMap.newKeySet() }.add(state)) {
+            System.err.println("[workers] egress-restricted: source $sourceId blocked on state '$state'")
+            saveRestricted()
+        }
+    }
+    /** Union of states restricted for ANY source - the auto-spread avoids all of these (workers are all-purpose). */
+    fun restrictedStates(): Set<String> = restricted.values.flatten().toSet()
+    fun restrictionsBySource(): Map<Long, List<String>> = restricted.mapValues { it.value.sorted() }
+    private fun saveRestricted() = runCatching {
+        java.nio.file.Files.writeString(restrictedFile, restricted.entries.joinToString("\n") { "${it.key}=${it.value.joinToString(",")}" })
+    }
+    private fun loadRestricted() = runCatching {
+        java.nio.file.Files.readAllLines(restrictedFile).forEach { ln ->
+            val k = ln.substringBefore('='); val v = ln.substringAfter('=', "")
+            k.toLongOrNull()?.let { sid -> v.split(",").filter { it.isNotBlank() }.forEach { markRestricted(sid, it) } }
+        }
+    }
+    private fun seedRestrictionsOnce() {
+        if (restricted.isNotEmpty()) return
+        markRestricted(2327480808438768017L, "atl") // Atsumaru CDN blocks the 23.234.x Atlanta IPs
+        markRestricted(2327480808438768017L, "rag") // Atsumaru CDN blocks the 23.234.x Raleigh IPs
+        markRestricted(6084907896154116083L, "dal") // MangaFire blocks the 146.70.x Dallas IP
+    }
+
     /** Coordinated AUTO: a 30s loop keeps every worker whose setting is "Auto" on its OWN distinct exit. If an
      *  auto worker shares a state/IP with any other worker, main re-runs spreadExits over just the auto workers
      *  (reserving the manually-pinned ones' cities) so no two share an egress IP. Too few states -> disable the
      *  extra auto ones + alert. Manually-pinned workers are never touched. */
     fun startAutoSpread() {
-        loadAuto()
+        loadAuto(); loadRestricted(); seedRestrictionsOnce()
         Thread {
             while (true) runCatching { Thread.sleep(30_000); kotlinx.coroutines.runBlocking { autoSpreadTick() } }
         }.apply { isDaemon = true; name = "worker-auto-spread" }.start()
@@ -336,8 +367,9 @@ object Workers {
         }
         // Assign each from `cities` = MULLVAD states only. The user's own exit nodes are never auto-assigned.
         for (w in assignable) {
+            val restrictedNow = restrictedStates()
             val cities = runCatching { spreadJson.decodeFromString(WorkerMode.ExitNodesDto.serializer(), exitNodes(w) ?: "") }
-                .getOrNull()?.cities.orEmpty().filter { it.online > 0 }.sortedBy { it.ping ?: Int.MAX_VALUE }
+                .getOrNull()?.cities.orEmpty().filter { it.online > 0 && it.code !in restrictedNow }.sortedBy { it.ping ?: Int.MAX_VALUE }
             val pick = cities.firstOrNull { it.code !in taken }
             if (pick != null) {
                 taken += pick.code
