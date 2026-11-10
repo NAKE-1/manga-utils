@@ -55,11 +55,25 @@ object ScanDispatch {
     private const val SLOW_WEIGHT = 8
     private fun weightOf(e: LibraryEntry): Int = if (e.sourceId in SLOW_SOURCES) SLOW_WEIGHT else 1
 
+    /** A library scan (manual or scheduled) is in progress. Workers.spreadExits() won't flip exits mid-scan. */
+    @Volatile var running = false
+        private set
+
     fun update(
         entries: List<LibraryEntry> = LibraryStore.list(),
         onProgress: ((done: Int, total: Int) -> Unit)? = null,
         isOnline: () -> Boolean = { true },
         onFailure: (() -> Unit)? = null,
+    ): List<UpdateResult> {
+        running = true
+        return try { updateImpl(entries, onProgress, isOnline, onFailure) } finally { running = false }
+    }
+
+    private fun updateImpl(
+        entries: List<LibraryEntry>,
+        onProgress: ((done: Int, total: Int) -> Unit)?,
+        isOnline: () -> Boolean,
+        onFailure: (() -> Unit)?,
     ): List<UpdateResult> {
         val parallel = parallelScanEnabled()
         val nodes = scanNodes()

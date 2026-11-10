@@ -256,30 +256,50 @@ object Workers {
      *  (the whole point of running more than one worker). Greedy: each worker, in order, pins its lowest-ping
      *  city not already claimed by another; a worker with no distinct city left falls back to "auto" (the
      *  worker's own per-node spread). Pins via "city:<code>", which the worker fails over within on its own. */
-    fun spreadExits(): SpreadResult {
-        val workers = WorkerStore.list().filter { it.enabled && onlineNow(it) }
-        if (workers.isEmpty()) return SpreadResult(emptyList(), "No enabled, online workers.")
-        // Each worker's reachable cities, fastest ping first.
-        val byWorker = workers.map { w ->
-            val dto = runCatching { spreadJson.decodeFromString(WorkerMode.ExitNodesDto.serializer(), exitNodes(w) ?: "") }.getOrNull()
-            w to dto?.cities.orEmpty().filter { it.online > 0 }.sortedBy { it.ping ?: Int.MAX_VALUE }
-        }
-        if (byWorker.none { it.second.isNotEmpty() })
-            return SpreadResult(emptyList(), "No Mullvad exit nodes available yet — enable Mullvad exits on the tailnet first.")
+    /** Auto-assign a DISTINCT Mullvad exit city to each enabled+online worker so no two share an egress IP.
+     *  BUSY-AWARE (skipBusy, the default): never flips a worker mid-work - a library scan in progress defers the
+     *  whole thing, and a worker with in-flight downloads keeps its current exit (its city is reserved so idle
+     *  workers still avoid it). Greedy: each assignable worker pins its lowest-ping free city; one with no
+     *  distinct city left falls back to "auto". Called by the Spread-exits button and auto on a worker joining. */
+    suspend fun spreadExits(skipBusy: Boolean = true): SpreadResult {
+        if (skipBusy && ScanDispatch.running)
+            return SpreadResult(emptyList(), "Deferred: a library scan is running — exits aren't reassigned mid-scan.")
+        val enabled = WorkerStore.list().filter { it.enabled }
+        val stats = statuses(enabled).associateBy { it.name }
+        val online = enabled.filter { stats[it.name]?.online == true }
+        if (online.isEmpty()) return SpreadResult(emptyList(), "No enabled, online workers.")
         val taken = HashSet<String>()
-        val out = byWorker.map { (w, cities) ->
+        val out = ArrayList<SpreadAssign>()
+        val assignable = ArrayList<WorkerNode>()
+        // A worker with in-flight downloads keeps its current exit; reserve its city so idle ones don't collide.
+        for (w in online) {
+            val inflight = stats[w.name]?.inflight ?: 0
+            val city = stats[w.name]?.exitCity.orEmpty()
+            if (skipBusy && inflight > 0) {
+                if (city.isNotEmpty()) taken += city
+                out += SpreadAssign(w.name, city.ifEmpty { null }, null, null, false, "busy ($inflight downloading) — kept current exit")
+            } else assignable += w
+        }
+        for (w in assignable) {
+            val cities = runCatching { spreadJson.decodeFromString(WorkerMode.ExitNodesDto.serializer(), exitNodes(w) ?: "") }
+                .getOrNull()?.cities.orEmpty().filter { it.online > 0 }.sortedBy { it.ping ?: Int.MAX_VALUE }
             val pick = cities.firstOrNull { it.code !in taken }
             if (pick != null) {
                 taken += pick.code
                 val ok = setExit(w, "city:${pick.code}") != null
-                SpreadAssign(w.name, pick.code, pick.label, pick.ping, ok, if (ok) null else "set failed")
+                out += SpreadAssign(w.name, pick.code, pick.label, pick.ping, ok, if (ok) null else "set failed")
             } else {
                 val ok = setExit(w, "auto") != null
-                SpreadAssign(w.name, null, "auto", null, ok,
+                out += SpreadAssign(w.name, null, "auto", null, ok,
                     if (cities.isEmpty()) "no exits reachable" else "no distinct city left → auto")
             }
         }
-        return SpreadResult(out, "Spread across ${workers.size} workers: ${taken.size} distinct ${if (taken.size == 1) "city" else "cities"}.")
+        val msg = when {
+            assignable.isEmpty() -> "All online workers busy — exits left unchanged."
+            out.none { it.applied && it.city != null } -> "No Mullvad exits available yet — enable them on the tailnet first."
+            else -> "${online.size} workers across ${taken.size} distinct ${if (taken.size == 1) "city" else "cities"}."
+        }
+        return SpreadResult(out, msg)
     }
 
     @Serializable data class SyncResult(val synced: Int, val failed: Int, val total: Int, val errors: List<String> = emptyList())

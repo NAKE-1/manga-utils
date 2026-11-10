@@ -1845,6 +1845,10 @@ fun Application.module() {
             // (incl. beta/custom sideloads). Backgrounded so adding stays snappy; manual re-sync is available.
             Thread { runCatching { if (Workers.onlineNow(saved)) Workers.syncExtensions(saved) } }
                 .apply { isDaemon = true; name = "worker-extsync-${saved.name}" }.start()
+            // A new worker joining rebalances egress: auto-assign distinct exits (busy-aware; defers mid-scan).
+            // Small delay so the node is online first. Does nothing until there are 2+ workers with Mullvad exits.
+            Thread { runCatching { Thread.sleep(3000); kotlinx.coroutines.runBlocking { Workers.spreadExits() } } }
+                .apply { isDaemon = true; name = "worker-spread-${saved.name}" }.start()
             val st = Workers.statuses(listOf(saved)).first()
             Workers.seed(st) // so the new card isn't "checking" until the poller/heartbeat catches up
             call.respond(st)
