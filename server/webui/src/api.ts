@@ -181,7 +181,7 @@ export const api = {
   updateProgress: () => getJson<UpdateProgress>('/api/library/update/progress'),
   // Start a library update (or join one already running) and resolve with the summary when it finishes —
   // polling /progress rather than holding a long POST open (which dropped over Tailscale → false "failed").
-  runLibraryUpdate: (onPct?: (pct: number) => void): Promise<UpdateSummary | null> =>
+  runLibraryUpdate: (onPct?: (pct: number, titleDone: number, titleTotal: number) => void): Promise<UpdateSummary | null> =>
     fetch('/api/library/update', { method: 'POST' }).catch(() => null).then(
       () =>
         new Promise<UpdateSummary | null>((resolve) => {
@@ -190,7 +190,7 @@ export const api = {
             const p = await getJson<UpdateProgress>('/api/library/update/progress').catch(() => null)
             if (!p) { if (++fails > 20) { clearInterval(t); resolve(null) } return } // ~10s unreachable → give up
             fails = 0
-            if (p.total > 0) onPct?.(Math.round((p.done / p.total) * 100))
+            if (p.total > 0) onPct?.(Math.round((p.done / p.total) * 100), p.titleDone ?? 0, p.titleTotal ?? 0)
             if (!p.running) { clearInterval(t); resolve(p.summary ?? null) }
           }, 500)
         }),
@@ -479,6 +479,8 @@ export const api = {
     if (!r.ok) throw new Error('spread failed')
     return r.json() as Promise<SpreadResult>
   },
+  workersAlert: (): Promise<string | null> =>
+    getJson<{ alert: string | null }>('/api/workers/alert').then((r) => r.alert).catch(() => null),
   testWorker: async (url: string, token: string) => {
     const r = await fetch('/api/workers/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token }) })
     return r.json() as Promise<WorkerStatus>
@@ -573,7 +575,7 @@ export interface DlTask {
 }
 export interface Downloads { tasks: DlTask[]; active: number; queued: number; totalKbps: number }
 export interface UpdateSummary { newChapters: number; updatedManga: number; titles: { title: string; count: number }[]; checked?: number; failed?: number; failedTitles?: { source: string; title: string }[] }
-export interface UpdateProgress { done: number; total: number; running: boolean; summary?: UpdateSummary | null }
+export interface UpdateProgress { done: number; total: number; running: boolean; titleDone?: number; titleTotal?: number; summary?: UpdateSummary | null }
 // Dev captcha tester: A = order strip, B = clickable grid. Both are data-URI images. count = shapes to click.
 export interface DevCaptcha { captchaId: string; count: number; imageA: string; imageB: string }
 export interface CapAttempt { at: number; result: string; clicks: number; tries: number; ms: number }

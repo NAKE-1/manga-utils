@@ -206,15 +206,17 @@ export default function Workers() {
   const [mapOpen, setMapOpen] = useState(() => { try { return localStorage.getItem('fleetMapOpen') !== '0' } catch { return true } })
   const [spreading, setSpreading] = useState(false)
   const [spreadMsg, setSpreadMsg] = useState('')
+  const [alert, setAlert] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
   const loadFlows = () => api.fleetFlows().then(setFlows).catch(() => {})
+  const loadAlert = () => api.workersAlert().then(setAlert).catch(() => {})
   const toggleMap = () => setMapOpen((v) => { const n = !v; try { localStorage.setItem('fleetMapOpen', n ? '1' : '0') } catch {} return n })
   useEffect(() => {
-    load(); loadFlows()
+    load(); loadFlows(); loadAlert()
     api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode); setUpdChk(s.workerUpdateChecking); setParScan(s.parallelUpdateScan) }).catch(() => {})
-    timer.current = setInterval(() => { load(); loadFlows() }, 5000) // live health; workers are polled server-side each call
+    timer.current = setInterval(() => { load(); loadFlows(); loadAlert() }, 5000) // live health; workers are polled server-side each call
     return () => clearInterval(timer.current)
   }, [])
 
@@ -306,6 +308,11 @@ export default function Workers() {
       </div>
 
       {/* Add a worker - opens a modal, keeps the screen clean */}
+      {alert && (
+        <div role="alert" style={{ background: 'rgba(229,72,77,0.12)', border: '1px solid #e5484d', color: '#e5484d', borderRadius: 10, padding: '10px 12px', marginBottom: 12, fontSize: 13, lineHeight: 1.45 }}>
+          ⚠ {alert}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
         <button className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={openAdd}>
           <span style={{ fontSize: 17, lineHeight: 1, fontWeight: 700 }}>+</span> Add a worker

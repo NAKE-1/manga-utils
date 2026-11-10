@@ -35,6 +35,8 @@ export function ListPage() {
   const [ready, setReady] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [updatePct, setUpdatePct] = useState(0)
+  const [updateDone, setUpdateDone] = useState(0)
+  const [updateTotal, setUpdateTotal] = useState(0)
   const [updateMsg, setUpdateMsg] = useState('')
   const [updatedTitles, setUpdatedTitles] = useState<{ title: string; count: number }[]>([])
   const [updatedFailed, setUpdatedFailed] = useState<{ source: string; title: string }[]>([])
@@ -64,7 +66,7 @@ export function ListPage() {
     if (!online) { setUpdateMsg('You appear to be offline — connect to check for updates'); return }
     setUpdating(true); setUpdateMsg(''); setUpdatedTitles([]); setUpdatedFailed([]); setUpdatePct(0)
     // Starts the update and polls to completion — no long-held request to drop → no false "Update failed".
-    const r = await api.runLibraryUpdate((pct) => setUpdatePct(pct)).catch(() => null)
+    const r = await api.runLibraryUpdate((pct, d, t) => { setUpdatePct(pct); setUpdateDone(d); setUpdateTotal(t) }).catch(() => null)
     await api.library().then(setLibrary).catch(() => {})
     setUpdating(false); setUpdatePct(0)
     if (!r) { setUpdateMsg('Update failed'); return } // only a genuine server error / unreachable now
@@ -127,7 +129,9 @@ export function ListPage() {
         <span className="list-title">{TITLES[kind] ?? 'List'}</span>
         {kind !== 'continue' && (
           <div className="upd-row">
-            {updating && updatePct > 0 && <span className="upd-pct">{updatePct}%</span>}
+            {updating && updatePct > 0 && (
+              <span className="upd-pct">{updatePct}%{updateTotal > 0 && <span style={{ fontSize: '0.72em', opacity: 0.55, marginLeft: 4, fontVariantNumeric: 'tabular-nums' }}>{updateDone}/{updateTotal}</span>}</span>
+            )}
             <button className="btn" disabled={updating} onClick={checkUpdates}>{updating ? 'Checking…' : 'Check updates'}</button>
           </div>
         )}

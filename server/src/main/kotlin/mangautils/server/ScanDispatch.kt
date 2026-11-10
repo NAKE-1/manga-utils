@@ -61,7 +61,7 @@ object ScanDispatch {
 
     fun update(
         entries: List<LibraryEntry> = LibraryStore.list(),
-        onProgress: ((done: Int, total: Int) -> Unit)? = null,
+        onProgress: ((done: Int, total: Int, titleDone: Int, titleTotal: Int) -> Unit)? = null,
         isOnline: () -> Boolean = { true },
         onFailure: (() -> Unit)? = null,
     ): List<UpdateResult> {
@@ -71,7 +71,7 @@ object ScanDispatch {
 
     private fun updateImpl(
         entries: List<LibraryEntry>,
-        onProgress: ((done: Int, total: Int) -> Unit)?,
+        onProgress: ((done: Int, total: Int, titleDone: Int, titleTotal: Int) -> Unit)?,
         isOnline: () -> Boolean,
         onFailure: (() -> Unit)?,
     ): List<UpdateResult> {
@@ -82,11 +82,11 @@ object ScanDispatch {
         if (nodes.isEmpty() || entries.size < 4) {
             val weights = entries.map(::weightOf).sorted()   // ascending: main clears its fastest titles first
             val total = weights.sum()                         // weighted total (cost-weighted, see weightOf)
-            onProgress?.invoke(0, total)
+            onProgress?.invoke(0, total, 0, entries.size)
             val done = AtomicInteger(0)
             val res = scanLocal(entries, parallel, isOnline, onFailure) {
                 val k = done.incrementAndGet(); var s = 0; for (i in 0 until minOf(k, weights.size)) s += weights[i]
-                onProgress?.invoke(s.coerceAtMost(total), total)
+                onProgress?.invoke(s.coerceAtMost(total), total, k, entries.size)
             }
             log.info("scan done: {} checked on main{}, {} new, {} failed",
                 res.size, if (parallel) " (parallel)" else "", res.sumOf { it.newChapters.size }, res.count { it.failed })
@@ -103,7 +103,7 @@ object ScanDispatch {
         // a title-linear bar races to ~50% then crawls. Weight each title by its source's rough scan cost.
         val bucketWeights = buckets.map { b -> b.map(::weightOf).sorted() } // per-bucket weights, ascending
         val total = entries.sumOf(::weightOf)                               // weighted total
-        onProgress?.invoke(0, total) // publish the total up front so the bar shows 0/total, not a stuck 0/0
+        onProgress?.invoke(0, total, 0, entries.size) // publish totals up front so the bar shows 0/total, not a stuck 0/0
         // Each node clears its LIGHTEST (fastest) titles first (8-wide parallel), so once it has finished k of
         // its titles the work done is ~the sum of its k smallest title-weights. Track per-node completed counts
         // (main = bucket 0, workers = 1..N), convert to weight at publish time.
@@ -115,7 +115,8 @@ object ScanDispatch {
         }
         val publish = {
             val wd = weightedDone(0, mainCount.get()) + nodes.indices.sumOf { weightedDone(it + 1, workerCounts[it]) }
-            onProgress?.invoke(wd.coerceAtMost(total), total)
+            val td = mainCount.get() + workerCounts.sum() // real title count (for the small xxx/xxx text)
+            onProgress?.invoke(wd.coerceAtMost(total), total, td.coerceAtMost(entries.size), entries.size)
         }
 
         // Kick off every worker's fetch up front so they run in parallel with main's own local scan.

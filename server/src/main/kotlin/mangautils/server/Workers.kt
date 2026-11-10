@@ -252,6 +252,36 @@ object Workers {
     )
     @Serializable data class SpreadResult(val assignments: List<SpreadAssign>, val message: String = "")
 
+    // ---- Egress-collision safety net ----
+    @Volatile var egressAlert: String? = null
+        private set
+    private val collisionDisabled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var collisionGraceUntil = 0L
+    /** Give a just-enabled worker ~90s before the collision guard may disable it again, so a manual re-enable
+     *  has time to be re-spread onto a distinct exit instead of being instantly re-disabled. */
+    fun graceAfterEnable() { collisionGraceUntil = System.currentTimeMillis() + 90_000 }
+
+    /** Safety net: if 2+ enabled, online workers share the SAME exit (same Mullvad city) or the same egress IP
+     *  (e.g. they all fell back to Atlanta, or all to direct egress), that defeats running multiple workers and
+     *  risks getting that one IP throttled. Disable the colliding workers and set an alert the UI shows. Clears
+     *  the alert when there's no collision; during the post-enable grace window it warns but doesn't disable. */
+    fun guardEgressCollisions(live: List<WorkerStatus>) {
+        val groups = live.filter { it.enabled && it.online }
+            .mapNotNull { w -> (w.exitCity?.ifBlank { null } ?: w.egressIp?.ifBlank { null })?.let { it to w } }
+            .groupBy({ it.first }, { it.second })
+            .filterValues { it.size > 1 }
+        if (groups.isEmpty()) { egressAlert = null; return }
+        val group = groups.values.first()
+        val names = group.map { it.name }
+        val shared = groups.keys.first()
+        if (System.currentTimeMillis() < collisionGraceUntil) {
+            egressAlert = "${names.joinToString(", ")} are on the same exit ($shared). Tap \"Spread exits\" to split them onto distinct exits."
+            return
+        }
+        group.forEach { WorkerStore.setEnabled(it.name, false); collisionDisabled += it.name }
+        egressAlert = "Disabled ${names.joinToString(", ")}: they share one exit/IP ($shared), which defeats running multiple workers and risks throttling. Tap \"Spread exits\" to re-enable and split them."
+    }
+
     /** Auto-assign a DISTINCT Mullvad exit city to each enabled+online worker so no two share an egress IP
      *  (the whole point of running more than one worker). Greedy: each worker, in order, pins its lowest-ping
      *  city not already claimed by another; a worker with no distinct city left falls back to "auto" (the
@@ -264,6 +294,11 @@ object Workers {
     suspend fun spreadExits(skipBusy: Boolean = true): SpreadResult {
         if (skipBusy && ScanDispatch.running)
             return SpreadResult(emptyList(), "Deferred: a library scan is running — exits aren't reassigned mid-scan.")
+        // One-tap recovery: re-enable any workers the collision guard auto-disabled, then spread them out.
+        if (collisionDisabled.isNotEmpty()) {
+            collisionDisabled.forEach { WorkerStore.setEnabled(it, true) }
+            collisionDisabled.clear(); collisionGraceUntil = System.currentTimeMillis() + 90_000
+        }
         val enabled = WorkerStore.list().filter { it.enabled }
         val stats = statuses(enabled).associateBy { it.name }
         val online = enabled.filter { stats[it.name]?.online == true }
@@ -299,6 +334,7 @@ object Workers {
             out.none { it.applied && it.city != null } -> "No Mullvad exits available yet — enable them on the tailnet first."
             else -> "${online.size} workers across ${taken.size} distinct ${if (taken.size == 1) "city" else "cities"}."
         }
+        if (out.any { it.applied && it.city != null }) egressAlert = null // cleared the collision
         return SpreadResult(out, msg)
     }
 

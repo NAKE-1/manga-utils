@@ -267,7 +267,8 @@ private data class LibraryDto(
     val failed: Int = 0,
     val failedTitles: List<FailedTitleDto> = emptyList(),
 )
-@Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean, val summary: UpdateSummaryDto? = null)
+@Serializable private data class UpdateProgressDto(val done: Int, val total: Int, val running: Boolean, val titleDone: Int = 0, val titleTotal: Int = 0, val summary: UpdateSummaryDto? = null)
+@Serializable private data class WorkerAlertDto(val alert: String? = null)
 @Serializable private data class SimulateDto(val title: String, val newChapters: Int, val autoDownloaded: Boolean)
 
 // Mass-download: a per-series preview (downloaded/total + how many would queue) and the grand total.
@@ -352,6 +353,8 @@ private fun sourceDisplayName(id: Long) = runCatching { mangautils.core.source.S
 // Live progress of a running library-update scan, for the "Check updates" percentage.
 @Volatile private var libUpdateDone = 0
 @Volatile private var libUpdateTotal = 0
+@Volatile private var libUpdateTitleDone = 0   // real title count (weighted done/total drive the bar; this is the xxx/xxx text)
+@Volatile private var libUpdateTitleTotal = 0
 @Volatile private var libUpdateRunning = false
 @Volatile private var libUpdateSummary: UpdateSummaryDto? = null // last completed manual-update result (for the poll)
 // Serializes manual library updates so a second click joins the running one instead of double-running.
@@ -1689,11 +1692,11 @@ fun Application.module() {
                 return@post
             }
             if (!libUpdateRunning) {
-                libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0; libUpdateSummary = null
+                libUpdateRunning = true; libUpdateDone = 0; libUpdateTotal = 0; libUpdateTitleDone = 0; libUpdateTitleTotal = 0; libUpdateSummary = null
                 libUpdateExec.submit {
                     try {
                         val results = ScanDispatch.update(
-                            onProgress = { done, total -> libUpdateDone = done; libUpdateTotal = total },
+                            onProgress = { done, total, td, tt -> libUpdateDone = done; libUpdateTotal = total; libUpdateTitleDone = td; libUpdateTitleTotal = tt },
                             isOnline = { NetMonitor.online },
                             onFailure = { NetMonitor.reportPossibleOutage() },
                         )
@@ -1717,10 +1720,10 @@ fun Application.module() {
                 }
             }
             // Whether we started it or joined one already running, the client polls /progress for the result.
-            call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, true))
+            call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, true, libUpdateTitleDone, libUpdateTitleTotal))
         }
         get("/api/library/update/progress") {
-            call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning, if (!libUpdateRunning) libUpdateSummary else null))
+            call.respond(UpdateProgressDto(libUpdateDone, libUpdateTotal, libUpdateRunning, libUpdateTitleDone, libUpdateTitleTotal, if (!libUpdateRunning) libUpdateSummary else null))
         }
         // Clear every series' "new chapters" flag (the ! badges) at once.
         post("/api/library/clear-new") {
@@ -1828,7 +1831,12 @@ fun Application.module() {
         // ---- Worker pool (distributed IP-pool fetch nodes) ----
         // Reads the status cache (fed by worker heartbeats + a background poll), so the screen is instant -
         // an offline node shows at once instead of blocking on a connection timeout.
-        get("/api/workers") { call.respond(Workers.cachedStatuses(WorkerStore.list())) }
+        get("/api/workers") {
+            val st = Workers.cachedStatuses(WorkerStore.list())
+            Workers.guardEgressCollisions(st) // disable + alert if 2+ workers collapse onto one exit/IP
+            call.respond(st)
+        }
+        get("/api/workers/alert") { call.respond(WorkerAlertDto(Workers.egressAlert)) }
         // Worker heartbeat: a node announces itself (token + health). Matched to a registered node by source
         // IP + token, then cached online - so main knows it's up the instant it boots, no poll/timeout.
         post("/api/workers/checkin") {
@@ -1877,6 +1885,7 @@ fun Application.module() {
         post("/api/workers/enable") {
             val name = call.queryParam("name") ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing name"))
             val on = call.queryParam("on")?.toBoolean() ?: true
+            if (on) Workers.graceAfterEnable() // don't let the collision guard instantly re-disable a manual re-enable
             if (WorkerStore.setEnabled(name, on)) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound, ErrorDto("no such worker"))
         }
         post("/api/workers/test") {
