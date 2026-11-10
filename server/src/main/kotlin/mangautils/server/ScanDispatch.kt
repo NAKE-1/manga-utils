@@ -87,13 +87,35 @@ object ScanDispatch {
         }
         // Poll the workers' live scan progress so the bar climbs during their (single-remote-call) fetch,
         // instead of jumping only when each batch returns. Stops once every worker future is done.
+        // A worker that HANGS on its share (can't fetch - e.g. unseeded/cold, bad egress) would otherwise
+        // freeze the whole scan: the per-series local fallback only kicks in once that worker's future
+        // RETURNS, and a hung worker doesn't return until the 15-min callTimeout. So watch each worker's live
+        // scan progress; if one makes NO progress for STALL_MS, cancel its future - fut.get() then throws, its
+        // bucket falls back to a local fetch, and the scan moves on instead of stalling at ~50%.
+        val STALL_MS = 45_000L
+        val lastDone = HashMap<String, Int>()
+        val lastAdvance = HashMap<String, Long>()
         val poller = pool.submit {
             runCatching {
                 while (futures.any { !it.second.isDone }) {
-                    // Progress only climbs within a run. A worker zeroes its counter the instant its batch
-                    // finishes (before its HTTP response lands, so its future isn't done yet), so a late poll
-                    // can read 0 - take the max, never let the bar dip to ~50% then snap back to 100.
-                    val polled = nodes.sumOf { pollScanProgress(it) }
+                    val now = System.currentTimeMillis()
+                    var polled = 0
+                    for ((node, fut) in futures) {
+                        val d = pollScanProgress(node)
+                        polled += d
+                        val prev = lastDone[node.name] ?: -1
+                        when {
+                            d > prev -> { lastDone[node.name] = d; lastAdvance[node.name] = now }
+                            !fut.isDone && now - (lastAdvance[node.name] ?: now) > STALL_MS -> {
+                                log.warn("scan via {} stalled {}s with no progress - giving up, its share falls back local",
+                                    node.name, STALL_MS / 1000)
+                                fut.cancel(true)
+                            }
+                        }
+                    }
+                    // Monotonic: a worker zeroes its counter the instant its batch finishes (before its HTTP
+                    // response lands, so its future isn't done yet), so a late poll can read 0 - take the max,
+                    // never let the bar dip to ~50% then snap back to 100.
                     if (polled > workerDone.get()) workerDone.set(polled)
                     publish()
                     Thread.sleep(700)
