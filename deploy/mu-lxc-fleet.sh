@@ -7,6 +7,7 @@
 #   ./mu-lxc-fleet.sh restart           # docker compose restart on all
 #   ./mu-lxc-fleet.sh ps                # container status on all
 #   ./mu-lxc-fleet.sh logs 301 200      # last 200 compose log lines from CT 301
+#   ./mu-lxc-fleet.sh prune             # reclaim build cache + dangling images on all (safe; keeps live images)
 #   ./mu-lxc-fleet.sh exec 302 -- df -h # arbitrary command in CT 302
 set -euo pipefail
 
@@ -31,7 +32,13 @@ case "$cmd" in
     for ct in "${WORKERS[@]}"; do echo "== CT $ct =="; in_ct "$ct" "docker ps --format 'table {{.Names}}\t{{.Status}}'"; done ;;
   logs)
     ct=${1:?need CTID}; n=${2:-100}; in_ct "$ct" "cd $COMPOSE_DIR && docker compose logs --tail=$n" ;;
+  prune)
+    targets=("$@"); [ ${#targets[@]} -eq 0 ] && targets=("${WORKERS[@]}")
+    for ct in "${targets[@]}"; do
+      echo "== CT $ct: prune build cache + dangling images (live images kept) =="
+      in_ct "$ct" "docker builder prune -af; docker image prune -f; docker system df"
+    done ;;
   exec)
     ct=${1:?need CTID}; shift; [ "${1:-}" = "--" ] && shift; in_ct "$ct" "$*" ;;
-  *) echo "usage: $0 update [CTID...] | restart | ps | logs CTID [N] | exec CTID -- cmd..."; exit 1 ;;
+  *) echo "usage: $0 update [CTID...] | restart | ps | logs CTID [N] | prune [CTID...] | exec CTID -- cmd..."; exit 1 ;;
 esac
