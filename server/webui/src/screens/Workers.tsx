@@ -343,7 +343,6 @@ export default function Workers() {
               </div>
             </details>
           )}
-          <div className="set-hint" style={{ marginTop: 8 }}>Detection only — deploy with your usual commands (main rebuild + mu-lxc-fleet.sh + the Pi).</div>
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
