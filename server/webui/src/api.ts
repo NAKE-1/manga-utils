@@ -488,7 +488,7 @@ export const api = {
   },
   syncWorkerExtensions: async (name: string) => {
     const r = await fetch(`/api/workers/sync-extensions?name=${encodeURIComponent(name)}`, { method: 'POST' })
-    return r.json() as Promise<{ synced: number; failed: number; total: number; errors: string[] }>
+    return r.json() as Promise<{ synced: number; failed: number; total: number; changed: number; errors: string[] }>
   },
   workerExtensions: (name: string) => getJson<WorkerExt[]>(`/api/workers/extensions?name=${encodeURIComponent(name)}`, 1, 20000),
   workerUsage: (name: string) => getJson<WorkerUsage>(`/api/workers/usage?name=${encodeURIComponent(name)}`, 1, 15000),

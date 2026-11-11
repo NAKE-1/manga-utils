@@ -437,7 +437,7 @@ object Workers {
         exitClient.newCall(rb.build()).execute().use { r -> if (!r.isSuccessful) null else ghJson.decodeFromString<VerDto>(r.body?.string() ?: "{}").commit.ifBlank { null } }
     }.getOrNull()
 
-    @Serializable data class SyncResult(val synced: Int, val failed: Int, val total: Int, val errors: List<String> = emptyList())
+    @Serializable data class SyncResult(val synced: Int, val failed: Int, val total: Int, val errors: List<String> = emptyList(), val changed: Int = 0)
     private val jarMedia = "application/java-archive".toMediaType()
     private val syncClient = OkHttpClient.Builder().connectTimeout(6, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
 
@@ -449,12 +449,13 @@ object Workers {
      *  installs on the worker. */
     fun syncExtensions(node: WorkerNode): SyncResult {
         val installed = runCatching { mangautils.core.extension.InstalledStore.list() }.getOrDefault(emptyList())
-        var ok = 0; var bad = 0; val errs = ArrayList<String>()
+        var ok = 0; var bad = 0; var changed = 0; val errs = ArrayList<String>()
         for (m in installed) {
             val jar = java.nio.file.Path.of(m.jarPath)
             if (!java.nio.file.Files.exists(jar)) { bad++; errs.add("${m.name}: jar missing on main (${jar.fileName})"); continue }
             // null = installed OK; else the worker's error message (or a transport failure) so the caller
             // sees WHY a jar was rejected, not just its name.
+            var didChange = false
             val err = runCatching {
                 val body = java.nio.file.Files.readAllBytes(jar).toRequestBody(jarMedia)
                 val rb = Request.Builder().url("${node.url.trimEnd('/')}/worker/extensions").post(body)
@@ -469,12 +470,13 @@ object Workers {
                 hdr("X-Ext-Code", m.versionCode.toString())
                 hdr("X-Ext-Classes", m.classNames.joinToString(";"))
                 syncClient.newCall(rb.build()).execute().use { r ->
-                    if (r.isSuccessful) null else (r.body?.string()?.take(200)?.ifBlank { null } ?: "HTTP ${r.code}")
+                    if (r.isSuccessful) { didChange = r.header("X-Ext-Changed") == "1"; null }
+                    else (r.body?.string()?.take(200)?.ifBlank { null } ?: "HTTP ${r.code}")
                 }
             }.getOrElse { it.message ?: "push failed" }
-            if (err == null) ok++ else { bad++; errs.add("${m.name}: $err") }
+            if (err == null) { ok++; if (didChange) changed++ } else { bad++; errs.add("${m.name}: $err") }
         }
-        return SyncResult(ok, bad, installed.size, errs.take(10))
+        return SyncResult(ok, bad, installed.size, errs.take(10), changed)
     }
 
     /** The extensions installed on a worker (proxied through from its /worker/extensions). */

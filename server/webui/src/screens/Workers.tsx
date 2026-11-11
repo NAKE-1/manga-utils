@@ -97,7 +97,7 @@ function SyncButton({ name }: { name: string }) {
     setBusy(true); setMsg(''); setErrs([])
     try {
       const r = await api.syncWorkerExtensions(name)
-      setMsg(`Synced ${r.synced}/${r.total}${r.failed ? ` (${r.failed} failed)` : ''}`)
+      setMsg(`${r.synced}/${r.total} synced · ${r.changed} changed${r.failed ? ` · ${r.failed} failed` : ''}`)
       setErrs(r.errors || [])
     } catch { setMsg('Sync failed') } finally { setBusy(false) }
   }

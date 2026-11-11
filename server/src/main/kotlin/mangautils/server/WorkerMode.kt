@@ -433,12 +433,19 @@ object WorkerMode {
                     classNames = classes,
                 )
             }
+            // Did this push actually change our set? New package, or a different versionCode than we already
+            // hold = changed; same versionCode = a no-op re-push. Reported back so main can say "x changed".
+            val before = provided?.let { p -> runCatching { InstalledStore.list().firstOrNull { it.pkg == p.pkg } }.getOrNull() }
+            val changed = provided == null || before == null || before.versionCode != provided.versionCode
             val r = withContext(Dispatchers.IO) {
                 val tmp = Files.createTempFile("wsync-", ".jar")
                 try { Files.write(tmp, bytes); runCatching { ExtensionInstaller().installLocalJar(tmp, provided) } }
                 finally { Files.deleteIfExists(tmp) }
             }
-            r.fold(onSuccess = { call.respond(OkDto(true)) }, onFailure = { call.respond(HttpStatusCode.InternalServerError, Err(it.message ?: "install failed")) })
+            r.fold(
+                onSuccess = { call.response.headers.append("X-Ext-Changed", if (changed) "1" else "0"); call.respond(OkDto(true)) },
+                onFailure = { call.respond(HttpStatusCode.InternalServerError, Err(it.message ?: "install failed")) },
+            )
         }
         // Tailscale exit node: switch this node between normal egress and a chosen exit (or none).
         get("/worker/exit-nodes") {
