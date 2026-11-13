@@ -128,7 +128,11 @@ object ScanDispatch {
         // the per-series local fallback only kicks in once its future RETURNS, which for a hung worker is the
         // 15-min callTimeout. So if a worker makes NO progress for STALL_MS, cancel its future - fut.get() then
         // throws and its bucket falls back to a local fetch, and the scan moves on instead of stalling at ~50%.
-        val STALL_MS = 45_000L
+        // 90s, not 45s: a worker shares ONE solver/cf_clearance between scanning and downloading, and a
+        // MangaFire cf_clearance warm (queued behind an in-flight download's solver calls) can take 30-45s
+        // before the scan's first MangaFire title completes. 45s gave up on a healthy-but-busy worker and
+        // re-fetched its whole share locally; 90s outlasts a warm so the worker's share isn't wasted.
+        val STALL_MS = 90_000L
         val lastAdvance = HashMap<String, Long>().apply { val t0 = System.currentTimeMillis(); nodes.forEach { put(it.name, t0) } }
         val poller = pool.submit {
             runCatching {
