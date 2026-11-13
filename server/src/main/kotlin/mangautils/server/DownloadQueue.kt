@@ -109,7 +109,13 @@ object DownloadQueue {
         val candidates = runCatching {
             WorkerStore.list().filter { it.enabled && (pick.isBlank() || it.name == pick) }
         }.getOrDefault(emptyList())
-        for (node in candidates) {
+        // Re-adopt: a restart kept this task's (assignedWorker, remoteJobId) and the worker is still running
+        // that job. Route BACK to that same node first so WorkerDelegate reconnects to the live job
+        // (WorkerDelegate.run only re-adopts when assignedWorker == node.name). First-fit alone always picked
+        // the first node in the list, starting a DUPLICATE there and orphaning the original worker's job.
+        val ordered = if (task.remoteJobId.isNotBlank() && task.assignedWorker.isNotBlank())
+            candidates.sortedByDescending { it.name == task.assignedWorker } else candidates
+        for (node in ordered) {
             val reserved = synchronized(workerLoad) {
                 val set = workerLoad.getOrPut(node.name) { mutableSetOf() }
                 if (task.sourceId in set || set.size >= MAX_PER_WORKER) false else { set.add(task.sourceId); true }
