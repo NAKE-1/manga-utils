@@ -163,7 +163,10 @@ object ScanDispatch {
                 .getOrElse { log.warn("scan via {} failed, all {} fall back local: {}", node.name, bucket.size, it.message); emptyMap() }
             if (refs.isNotEmpty()) log.info("scan via {}: {}/{} fetched remotely", node.name, refs.size, bucket.size)
             remote += refs.size
-            LibraryService.update(bucket, null, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
+            // Tick progress through the diff + any local fallback, so a stalled worker's bucket (re-fetched
+            // local here) doesn't leave the bar frozen until the final jump. Drives this bucket's count; the
+            // poller is monotonic so there's no fight over the slot.
+            LibraryService.update(bucket, { d, _ -> workerCounts[idx] = d; publish() }, isOnline, onFailure, prefetch = { refs[it.mangaUrl] })
         }
         poller.cancel(true)
         mainCount.set(buckets[0].size); for (i in workerCounts.indices) workerCounts[i] = buckets[i + 1].size
