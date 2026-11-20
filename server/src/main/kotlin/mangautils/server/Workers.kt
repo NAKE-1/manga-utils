@@ -309,8 +309,10 @@ object Workers {
         // Atsumaru CDN blocks the whole 23.234.x provider range: Atlanta, Raleigh, LA, Salt Lake (+ Kansas
         // City/Phoenix, which also fail MangaFire so they're left out of the pool entirely).
         listOf("atl", "rag", "lax", "slc").forEach { markRestricted(2327480808438768017L, it) }
-        // MangaFire blocks Dallas (146.70.x) and Denver (37.19.210.x).
-        listOf("dal", "den").forEach { markRestricted(6084907896154116083L, it) }
+        // MangaFire is rough on all of Texas - Dallas (146.70.x) + Houston (37.19.221.x, confirmed scan laggard
+        // + 601 stalls 2026-11-19) + McAllen (txc) - plus Denver (37.19.210.x). Houston/Dallas/McAllen = every
+        // Mullvad TX city, so this blocks Texas fully.
+        listOf("dal", "hou", "txc", "den").forEach { markRestricted(6084907896154116083L, it) }
     }
 
     /** Coordinated AUTO: a 30s loop keeps every worker whose setting is "Auto" on its OWN distinct exit. If an
