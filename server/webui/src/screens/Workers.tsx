@@ -1,8 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage, type FleetDto, type UpdatesInfo } from '../api'
+import { api, type WorkerStatus, type ExitNodesDto, type WorkerExt, type WorkerUsage, type FleetDto, type UpdatesInfo, type Source } from '../api'
 import { IconArrowLeft } from '../components/icons'
 import FlowMap from '../components/FlowMap'
+
+// A source shown as a small coloured letter-chip (abbreviation = its initials) + tooltip of the full name.
+// No icon URLs needed - the chip IS the icon, derived from the source name so it's stable and offline-safe.
+function srcAbbrev(name?: string): string {
+  if (!name) return '??'
+  const words = name.replace(/[^a-zA-Z0-9 ]/g, '').trim().split(/\s+/).filter(Boolean)
+  return (words.length > 1 ? words.map((w) => w[0]).join('') : name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3)).slice(0, 3).toUpperCase()
+}
+function srcColor(id: string): string {
+  let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  return `hsl(${h % 360} 52% 42%)`
+}
+function SrcBadge({ id, sources }: { id: string; sources: Record<string, Source> }) {
+  const s = sources[id]
+  return (
+    <span title={s?.name || id} style={{ background: srcColor(id), color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, letterSpacing: '.03em', flexShrink: 0, lineHeight: 1.5 }}>
+      {srcAbbrev(s?.name)}
+    </span>
+  )
+}
 
 // View a worker's installed extensions (name, version, BETA for sideloads).
 function ExtList({ name }: { name: string }) {
@@ -215,6 +235,7 @@ export default function Workers() {
   const [spreadMsg, setSpreadMsg] = useState('')
   const [alert, setAlert] = useState<string | null>(null)
   const [updates, setUpdates] = useState<UpdatesInfo | null>(null)
+  const [sources, setSources] = useState<Record<string, Source>>({})
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
@@ -224,6 +245,7 @@ export default function Workers() {
   useEffect(() => {
     load(); loadFlows(); loadAlert()
     api.updates().then(setUpdates).catch(() => {}) // once on mount: hits GitHub + polls worker versions
+    api.sources().then((s) => setSources(Object.fromEntries(s.map((x) => [x.id, x])))).catch(() => {}) // id -> source, for activity-panel badges
     api.getSettings().then((s) => { setDispatch(s.workerDispatch); setPick(s.workerNode); setUpdChk(s.workerUpdateChecking); setParScan(s.parallelUpdateScan) }).catch(() => {})
     timer.current = setInterval(() => { load(); loadFlows(); loadAlert() }, 5000) // live health; workers are polled server-side each call
     return () => clearInterval(timer.current)
@@ -315,6 +337,46 @@ export default function Workers() {
           <span className={'switch' + (parScan ? ' on' : '')}><span className="knob" /></span>
         </button>
       </div>
+
+      {/* Live fleet activity - what each node is scanning/downloading right now, with a running count.
+          Only shown while something is actually in flight (a scan or a download). */}
+      {workers.some((w) => w.online && ((w.scanTotal ?? 0) > 0 || (w.inflight ?? 0) > 0)) && (
+        <div className="wh-card">
+          <div className="set-row-label">Fleet activity</div>
+          <div style={{ marginTop: 8, display: 'grid', gap: 12 }}>
+            {workers.filter((w) => w.online && ((w.scanTotal ?? 0) > 0 || (w.inflight ?? 0) > 0)).map((w) => {
+              const done = w.scanDone ?? 0, total = w.scanTotal ?? 0
+              const dpct = total > 0 ? Math.round((done / total) * 100) : 0
+              return (
+                <div key={w.name}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, alignItems: 'baseline' }}>
+                    <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</b>
+                    <span className="set-hint" style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                      {total > 0 ? `scanning ${done}/${total}` : ''}
+                      {(w.inflight ?? 0) > 0 ? `${total > 0 ? ' · ' : ''}${w.inflight} downloading` : ''}
+                    </span>
+                  </div>
+                  {total > 0 && (
+                    <div style={{ marginTop: 5, height: 5, borderRadius: 3, background: 'var(--border, #2a2a2a)', overflow: 'hidden' }}>
+                      <div style={{ width: `${dpct}%`, height: '100%', background: 'var(--accent, #7c6cff)', transition: 'width .3s' }} />
+                    </div>
+                  )}
+                  {(w.scanCur ?? []).length > 0 && (
+                    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {(w.scanCur ?? []).slice(0, 6).map((c, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
+                          <SrcBadge id={c.source} sources={sources} />
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Add a worker - opens a modal, keeps the screen clean */}
       {alert && (

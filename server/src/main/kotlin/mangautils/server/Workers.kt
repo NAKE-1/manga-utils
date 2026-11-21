@@ -67,6 +67,9 @@ object Workers {
         val error: String? = null,
         val checking: Boolean = false, // never heard from yet (grey dot) - distinct from confirmed offline
         val exitCity: String? = null,  // the worker's current Mullvad egress state code (for the fleet map)
+        val scanDone: Int = 0,         // live update-scan progress (for the fleet-activity panel)
+        val scanTotal: Int = 0,
+        val scanCur: List<WorkerMode.ScanCur> = emptyList(), // series this node is scanning right now
     )
 
     @Serializable data class AddReq(val name: String, val url: String, val token: String = "")
@@ -85,7 +88,8 @@ object Workers {
                         error = if (resp.code == 401) "unauthorized (check token)" else "HTTP ${resp.code}")
                 }
                 val h = json.decodeFromString<WorkerMode.Health>(bodyText)
-                WorkerStatus(node.name, base, node.enabled, true, h.egressIp, h.inflight, h.metrics, h.version, h.uptimeS, exitCity = h.exitCity)
+                WorkerStatus(node.name, base, node.enabled, true, h.egressIp, h.inflight, h.metrics, h.version, h.uptimeS, exitCity = h.exitCity,
+                    scanDone = h.scanDone, scanTotal = h.scanTotal, scanCur = h.scanCur)
             }
         } catch (e: Exception) {
             WorkerStatus(node.name, base, node.enabled, false, error = e.message ?: "unreachable")
@@ -200,6 +204,7 @@ object Workers {
             node.name, node.url.trimEnd('/'), node.enabled, online = true,
             egressIp = h?.egressIp, inflight = h?.inflight, metrics = h?.metrics, version = h?.version, uptimeS = h?.uptimeS,
             exitCity = h?.exitCity,
+            scanDone = h?.scanDone ?: 0, scanTotal = h?.scanTotal ?: 0, scanCur = h?.scanCur ?: emptyList(),
         )
         cache[node.name] = Cached(now, st)
         lastUp[node.name] = now; lastHealth[node.name] = st

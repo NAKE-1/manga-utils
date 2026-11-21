@@ -515,7 +515,8 @@ export interface ExitCity { code: string; label: string; online: number; total: 
 export interface ExitNodesDto { available: boolean; current: string; nodes: ExitNode[]; error?: string; auto?: boolean; cities?: ExitCity[]; currentCity?: string }
 
 export interface WorkerMetrics { cpuPct: number | null; memPct: number | null; memUsedGb: number | null; memTotalGb: number | null; tempC: number | null; diskFreeGb: number | null; diskTotalGb: number | null; diskPct: number | null; netRxBytes: number | null; netTxBytes: number | null; load1: number | null }
-export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null; checking?: boolean }
+export interface ScanCur { source: string; title: string }
+export interface WorkerStatus { name: string; url: string; enabled: boolean; online: boolean; egressIp?: string | null; inflight?: number | null; metrics?: WorkerMetrics | null; version?: string | null; uptimeS?: number | null; error?: string | null; checking?: boolean; scanDone?: number; scanTotal?: number; scanCur?: ScanCur[] }
 export interface UsageStat { min: number; max: number; avg: number }
 export interface UsageWindow { samples: number; ram: UsageStat; cpu: UsageStat; temp: UsageStat; disk: UsageStat }
 export interface WorkerUsage { ramTotalGb: number; diskTotalGb: number; h1: UsageWindow; h24: UsageWindow; boot: UsageWindow; ramSpark: number[] }

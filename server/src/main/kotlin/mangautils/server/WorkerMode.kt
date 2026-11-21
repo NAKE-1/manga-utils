@@ -84,6 +84,7 @@ object WorkerMode {
     @Volatile private var currentExitCity = "" // its Mullvad state code (for the fleet map); "" = direct/unknown
     private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
     @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
+    private val curScan = java.util.concurrent.ConcurrentHashMap<String, ScanCur>() // in-flight scan items (manga -> source+title), for the live fleet-activity panel
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
     private val hbJson = kotlinx.serialization.json.Json { encodeDefaults = true }
 
@@ -104,7 +105,8 @@ object WorkerMode {
         val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
-    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false, val exitCity: String = "")
+    @Serializable data class ScanCur(val source: String, val title: String)
+    @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false, val exitCity: String = "", val scanDone: Int = 0, val scanTotal: Int = 0, val scanCur: List<ScanCur> = emptyList())
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
     @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean, val ping: Int? = null)
     // nodes = the individual servers (for the "available nodes" list + current display); cities = the pickable
@@ -317,7 +319,8 @@ object WorkerMode {
             val inflight = jobs.values.count { it.state == "running" }
             val now = System.currentTimeMillis()
             call.respond(Health(VERSION, (now - started) / 1000, egress(), inflight, inflight == 0, metrics(),
-                shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000, exitCity = currentExitCity))
+                shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000, exitCity = currentExitCity,
+                scanDone = scanProgress.get(), scanTotal = scanTotal, scanCur = curScan.values.toList()))
         }
         get("/worker/jobs") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
@@ -338,13 +341,14 @@ object WorkerMode {
                         async {
                             sem.withPermit {
                                 val label = item.title.ifBlank { item.manga }
+                                curScan[item.manga] = ScanCur(item.source, label)
                                 try {
                                     runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
                                         .fold(
                                             onSuccess = { log.info("SCAN '{}' - {} chapters", label, it.size); ScanResItem(item.manga, chapters = it) },
                                             onFailure = { log.warn("SCAN '{}' - FAILED: {}", label, it.message); ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
                                         )
-                                } finally { scanProgress.incrementAndGet() }
+                                } finally { scanProgress.incrementAndGet(); curScan.remove(item.manga) }
                             }
                         }
                     }.awaitAll()
@@ -352,7 +356,7 @@ object WorkerMode {
             }
             val ok = results.count { it.chapters != null }
             log.info("scan batch: {}/{} series in {}s", ok, results.size, (System.currentTimeMillis() - t0) / 1000)
-            scanTotal = 0; scanProgress.set(0) // idle after a batch: an early poll of the NEXT run reads 0, not this batch's stale count (fixes the ~50% flash on main's update bar)
+            scanTotal = 0; scanProgress.set(0); curScan.clear() // idle after a batch: an early poll of the NEXT run reads 0, not this batch's stale count (fixes the ~50% flash on main's update bar)
             call.respond(ScanResDto(results))
         }
         get("/worker/scan/progress") {
@@ -779,7 +783,8 @@ object WorkerMode {
                     val inflight = jobs.values.count { it.state == "running" }
                     val nowH = System.currentTimeMillis()
                     val h = Health(VERSION, (nowH - started) / 1000, egress(), inflight, inflight == 0, metrics(),
-                        shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000, exitCity = currentExitCity)
+                        shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000, exitCity = currentExitCity,
+                        scanDone = scanProgress.get(), scanTotal = scanTotal, scanCur = curScan.values.toList())
                     val body = hbJson.encodeToString(Workers.CheckinDto(token, h, selfTsIp)).toRequestBody("application/json".toMediaType())
                     client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
                 }
