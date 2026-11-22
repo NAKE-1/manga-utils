@@ -246,7 +246,7 @@ export default function Workers() {
   const [alert, setAlert] = useState<string | null>(null)
   const [updates, setUpdates] = useState<UpdatesInfo | null>(null)
   const [sources, setSources] = useState<Record<string, Source>>({})
-  const [dev] = useState(() => { try { return localStorage.getItem('dev.mode') === '1' } catch { return false } }) // Fleet activity is a dev-only panel
+  const [showPanel] = useState(() => { try { return localStorage.getItem('pref.fleetPanel') === '1' } catch { return false } }) // Fleet activity toggle in Settings > Appearance
   const timer = useRef<ReturnType<typeof setInterval>>()
 
   const load = () => api.workers().then((w) => { setWorkers(w); setLoaded(true) }).catch(() => setLoaded(true))
@@ -350,8 +350,8 @@ export default function Workers() {
       </div>
 
       {/* Live fleet activity - per node, what it's scanning/downloading right now with a running count.
-          Dev-only (triple-tap the Settings title to enable dev mode); hidden otherwise. */}
-      {dev && workers.some((w) => w.online) && (
+          Opt-in via Settings > Appearance > Fleet activity panel; hidden by default. */}
+      {showPanel && workers.some((w) => w.online) && (
         <div className="wh-card">
           <div className="set-row-label">Fleet activity</div>
           <div style={{ marginTop: 8, display: 'grid', gap: 12 }}>

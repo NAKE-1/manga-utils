@@ -70,6 +70,7 @@ export function Settings() {
   const [about, setAbout] = useState<VersionInfo | null>(null)
   const [showChangelog, setShowChangelog] = useState(false)
   const [devContinueRemove, setDevContinueRemove] = useState(localStorage.getItem('dev.continueRemove') === '1')
+  const [fleetPanel, setFleetPanel] = useState(() => { try { return localStorage.getItem('pref.fleetPanel') === '1' } catch { return false } })
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState<{ text: string; err: boolean } | null>(null)
   const [importProg, setImportProg] = useState<{ phase: string; done: number; total: number; current: string } | null>(null)
@@ -413,6 +414,15 @@ export function Settings() {
               <option value={201}>201</option>
             </select>
           </div>
+        </div>
+        <div className="set-card">
+          <button className="set-toggle" onClick={() => { const v = !fleetPanel; setFleetPanel(v); try { localStorage.setItem('pref.fleetPanel', v ? '1' : '0') } catch {} }}>
+            <div>
+              <div className="set-row-label">Fleet activity panel</div>
+              <div className="set-hint">Show a live per-node scan/download log on the Worker nodes screen. Off by default.</div>
+            </div>
+            <span className={'switch' + (fleetPanel ? ' on' : '')}><span className="knob" /></span>
+          </button>
         </div>
       </section>
 
