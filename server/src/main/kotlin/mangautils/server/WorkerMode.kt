@@ -84,7 +84,8 @@ object WorkerMode {
     @Volatile private var currentExitCity = "" // its Mullvad state code (for the fleet map); "" = direct/unknown
     private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
     @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
-    private val curScan = java.util.concurrent.ConcurrentHashMap<String, ScanCur>() // in-flight scan items (manga -> source+title), for the live fleet-activity panel
+    private class CurScan(val source: String, val title: String, val manga: String, val start: Long) // + start, so the panel can show elapsed ms
+    private val curScan = java.util.concurrent.ConcurrentHashMap<String, CurScan>() // in-flight scan items, for the live fleet-activity panel
     private val httpClient = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
     private val hbJson = kotlinx.serialization.json.Json { encodeDefaults = true }
 
@@ -105,8 +106,8 @@ object WorkerMode {
         val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
-    @Serializable data class ScanCur(val source: String, val title: String, val manga: String = "")
-    @Serializable data class DlCur(val source: String, val title: String, val chapter: String, val pagesDone: Int, val pagesTotal: Int, val manga: String = "")
+    @Serializable data class ScanCur(val source: String, val title: String, val manga: String = "", val ms: Int = 0)
+    @Serializable data class DlCur(val source: String, val title: String, val chapter: String, val pagesDone: Int, val pagesTotal: Int, val manga: String = "", val ms: Int = 0)
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false, val exitCity: String = "", val scanDone: Int = 0, val scanTotal: Int = 0, val scanCur: List<ScanCur> = emptyList(), val dlCur: List<DlCur> = emptyList())
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
     @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean, val ping: Int? = null)
@@ -140,6 +141,7 @@ object WorkerMode {
         // these onto the task, exactly like a local download, so the card shows pages + KB/s.
         @Volatile var curChapter = ""
         @Volatile var curChapterUrl = ""
+        @Volatile var curChapterStart = 0L // when the current chapter began (for the activity panel's elapsed ms)
         @Volatile var curPagesDone = 0
         @Volatile var curPagesTotal = 0
         @Volatile var curBytesPerSec = 0.0
@@ -177,6 +179,7 @@ object WorkerMode {
             // reads like main ("[d2-xxx] DOWNLOAD Chapter 20 - 5/39 pages - 480 KB/s") instead of being
             // silent behind Ktor's per-request access log. The listener is cheap: no disk I/O, no lock.
             val listener = DownloadListener { p ->
+                if (p.chapterUrl != job.curChapterUrl) job.curChapterStart = System.currentTimeMillis() // new chapter -> reset the timer
                 job.curChapter = p.chapter; job.curChapterUrl = p.chapterUrl
                 job.curPagesDone = p.pagesDone; job.curPagesTotal = p.pagesTotal; job.curBytesPerSec = p.bytesPerSecond
                 byUrl[p.chapterUrl]?.let { it.pagesDone = p.pagesDone; it.pagesTotal = p.pagesTotal }
@@ -321,8 +324,9 @@ object WorkerMode {
             val now = System.currentTimeMillis()
             call.respond(Health(VERSION, (now - started) / 1000, egress(), inflight, inflight == 0, metrics(),
                 shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000, exitCity = currentExitCity,
-                scanDone = scanProgress.get(), scanTotal = scanTotal, scanCur = curScan.values.toList(),
-                dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal, it.mangaUrl) }))
+                scanDone = scanProgress.get(), scanTotal = scanTotal,
+                scanCur = curScan.values.map { ScanCur(it.source, it.title, it.manga, (now - it.start).toInt()) },
+                dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal, it.mangaUrl, if (it.curChapterStart > 0) (now - it.curChapterStart).toInt() else 0) }))
         }
         get("/worker/jobs") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
@@ -343,7 +347,7 @@ object WorkerMode {
                         async {
                             sem.withPermit {
                                 val label = item.title.ifBlank { item.manga }
-                                curScan[item.manga] = ScanCur(item.source, label, item.manga)
+                                curScan[item.manga] = CurScan(item.source, label, item.manga, System.currentTimeMillis())
                                 try {
                                     runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
                                         .fold(
@@ -786,8 +790,9 @@ object WorkerMode {
                     val nowH = System.currentTimeMillis()
                     val h = Health(VERSION, (nowH - started) / 1000, egress(), inflight, inflight == 0, metrics(),
                         shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000, exitCity = currentExitCity,
-                        scanDone = scanProgress.get(), scanTotal = scanTotal, scanCur = curScan.values.toList(),
-                        dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal, it.mangaUrl) })
+                        scanDone = scanProgress.get(), scanTotal = scanTotal,
+                        scanCur = curScan.values.map { ScanCur(it.source, it.title, it.manga, (nowH - it.start).toInt()) },
+                        dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal, it.mangaUrl, if (it.curChapterStart > 0) (nowH - it.curChapterStart).toInt() else 0) })
                     val body = hbJson.encodeToString(Workers.CheckinDto(token, h, selfTsIp)).toRequestBody("application/json".toMediaType())
                     client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
                 }

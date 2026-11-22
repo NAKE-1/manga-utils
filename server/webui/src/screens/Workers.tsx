@@ -21,6 +21,10 @@ function seriesId(manga?: string, fallback?: string): string {
   const s = manga.replace(/^\/?title\//, '').replace(/^\//, '')
   return s.split('/')[0].split('-')[0] || s
 }
+function fmtMs(ms?: number): string {
+  if (ms == null || ms <= 0) return ''
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+}
 function SrcBadge({ id, sources }: { id: string; sources: Record<string, Source> }) {
   const s = sources[id]
   return (
@@ -354,43 +358,45 @@ export default function Workers() {
               const done = w.scanDone ?? 0, total = w.scanTotal ?? 0
               const dpct = total > 0 ? Math.round((done / total) * 100) : 0
               const scanning = total > 0
-              const dls = w.dlCur ?? []
+              const dls = w.dlCur ?? [], scans = w.scanCur ?? []
               const parts: string[] = []
-              if (scanning) parts.push(`scanning ${done}/${total}`)
-              if (dls.length > 0) parts.push(`${dls.length} downloading`)
+              if (scanning) parts.push(`scan ${done}/${total}`)
+              if (dls.length > 0) parts.push(`${dls.length} dl`)
               if (parts.length === 0) parts.push('idle')
+              // network-log rows: active downloads first, then in-flight scans; cap at 3 per node
+              const rows = [
+                ...dls.map((c) => ({ kind: 'DL', src: c.source, id: seriesId(c.manga, c.title), title: c.title, ms: c.ms, detail: `${c.chapter || ''}${c.pagesTotal > 0 ? ` ${c.pagesDone}/${c.pagesTotal}p` : ''}`.trim() })),
+                ...scans.map((c) => ({ kind: 'SCAN', src: c.source, id: seriesId(c.manga, c.title), title: c.title, ms: c.ms, detail: '' })),
+              ]
+              const shown = rows.slice(0, 3), more = rows.length - shown.length
+              const mono = 'var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace)'
               return (
                 <div key={w.name}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, alignItems: 'baseline' }}>
-                    <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</b>
-                    <span className="set-hint" style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{parts.join(' · ')}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
+                    <b style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</b>
+                    {w.exitCity && <span style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--muted)', background: 'var(--border, #23262d)', padding: '0 5px', borderRadius: 4, flexShrink: 0 }}>{w.exitCity}</span>}
+                    <span style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 11, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{parts.join(' · ')}</span>
                   </div>
                   {scanning && (
-                    <div style={{ marginTop: 5, height: 5, borderRadius: 3, background: 'var(--border, #2a2a2a)', overflow: 'hidden' }}>
+                    <div style={{ margin: '4px 0 2px', height: 3, borderRadius: 3, background: 'var(--border, #2a2a2a)', overflow: 'hidden' }}>
                       <div style={{ width: `${dpct}%`, height: '100%', background: 'var(--accent, #7c6cff)', transition: 'width .3s' }} />
                     </div>
                   )}
-                  {(w.scanCur ?? []).length > 0 && (
-                    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {(w.scanCur ?? []).slice(0, 6).map((c, i) => (
-                        <div key={'s' + i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
-                          <SrcBadge id={c.source} sources={sources} />
-                          <span title={c.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono, ui-monospace, monospace)' }}>{seriesId(c.manga, c.title)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {dls.length > 0 && (
-                    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {dls.slice(0, 6).map((c, i) => (
-                        <div key={'d' + i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
-                          <SrcBadge id={c.source} sources={sources} />
-                          <span title={c.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono, ui-monospace, monospace)' }}>{seriesId(c.manga, c.title)}</span>
-                          <span className="set-hint" style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>
-                            {c.chapter || ''}{c.pagesTotal > 0 ? ` · ${c.pagesDone}/${c.pagesTotal}p` : ''}
+                  {shown.length === 0 ? (
+                    <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--muted)', opacity: 0.6 }}>idle</div>
+                  ) : (
+                    <div>
+                      {shown.map((r, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: mono, fontSize: 11.5, padding: '2.5px 0', borderTop: i ? '1px solid rgba(128,128,128,.12)' : 'none' }}>
+                          <span style={{ width: 32, flexShrink: 0, fontWeight: 700, fontSize: 10, color: 'var(--accent, #7c6cff)' }}>{r.kind}</span>
+                          <SrcBadge id={r.src} sources={sources} />
+                          <span title={r.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {r.id}{r.detail ? <span style={{ color: 'var(--muted)' }}> {r.detail}</span> : null}
                           </span>
+                          <span style={{ flexShrink: 0, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtMs(r.ms)}</span>
                         </div>
                       ))}
+                      {more > 0 && <div style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--muted)', opacity: 0.7, paddingTop: 2 }}>+{more} more</div>}
                     </div>
                   )}
                 </div>
