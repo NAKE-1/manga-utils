@@ -18,6 +18,11 @@ RUN apt-get update \
 
 WORKDIR /src
 COPY . .
+# Optional Maven mirror (see docs/maven-mirror.md + settings.gradle.kts). Empty by default, so main/dev
+# builds resolve from the public repos as before. Worker builds pass their main's mirror URL here so the
+# build fetches deps over the tailnet instead of the Mullvad exit (which Google's Maven CDN blocks).
+ARG MU_MAVEN_MIRROR=""
+ENV MU_MAVEN_MIRROR=$MU_MAVEN_MIRROR
 # installDist builds :core/:source-api/:android-compat, bundles the built web UI into resources,
 # and produces a runnable dist at server/build/install/server (bin/server launcher + lib/*.jar).
 # safe.directory so generateBuildInfo's `git` calls work on the COPY'd tree (avoids git's

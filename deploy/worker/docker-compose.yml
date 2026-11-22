@@ -21,6 +21,11 @@ services:
     build:
       context: ../..                         # repo root (so `docker compose build` builds our image for THIS box's arch)
       dockerfile: deploy/Dockerfile
+      args:
+        # Point builds at main's Maven mirror over the tailnet (bypasses the Mullvad exit that blocks
+        # Google's Maven CDN). Empty by default. Set MU_MAVEN_MIRROR in the worker's env/.env, e.g.
+        # MU_MAVEN_MIRROR=http://100.67.109.13:8099 — see docs/maven-mirror.md.
+        MU_MAVEN_MIRROR: ${MU_MAVEN_MIRROR:-}
     container_name: manga-worker
     hostname: manga-worker
     # Run as root so the container can use the host's root-owned tailscaled.sock (mounted below) to switch
