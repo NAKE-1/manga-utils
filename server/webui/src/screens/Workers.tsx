@@ -15,6 +15,12 @@ function srcColor(id: string): string {
   let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0
   return `hsl(${h % 360} 52% 42%)`
 }
+// Compact series id from a manga url/slug: "/title/nw2ll-akage-..." -> "nw2ll", "m7s1" -> "m7s1".
+function seriesId(manga?: string, fallback?: string): string {
+  if (!manga) return fallback || '?'
+  const s = manga.replace(/^\/?title\//, '').replace(/^\//, '')
+  return s.split('/')[0].split('-')[0] || s
+}
 function SrcBadge({ id, sources }: { id: string; sources: Record<string, Source> }) {
   const s = sources[id]
   return (
@@ -369,7 +375,7 @@ export default function Workers() {
                       {(w.scanCur ?? []).slice(0, 6).map((c, i) => (
                         <div key={'s' + i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
                           <SrcBadge id={c.source} sources={sources} />
-                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                          <span title={c.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono, ui-monospace, monospace)' }}>{seriesId(c.manga, c.title)}</span>
                         </div>
                       ))}
                     </div>
@@ -379,7 +385,7 @@ export default function Workers() {
                       {dls.slice(0, 6).map((c, i) => (
                         <div key={'d' + i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
                           <SrcBadge id={c.source} sources={sources} />
-                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                          <span title={c.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono, ui-monospace, monospace)' }}>{seriesId(c.manga, c.title)}</span>
                           <span className="set-hint" style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>
                             {c.chapter || ''}{c.pagesTotal > 0 ? ` · ${c.pagesDone}/${c.pagesTotal}p` : ''}
                           </span>

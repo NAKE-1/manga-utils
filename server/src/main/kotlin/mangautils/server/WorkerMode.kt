@@ -105,8 +105,8 @@ object WorkerMode {
         val diskFreeGb: Double? = null, val diskTotalGb: Double? = null, val diskPct: Double? = null,
         val netRxBytes: Long? = null, val netTxBytes: Long? = null, val load1: Double? = null,
     )
-    @Serializable data class ScanCur(val source: String, val title: String)
-    @Serializable data class DlCur(val source: String, val title: String, val chapter: String, val pagesDone: Int, val pagesTotal: Int)
+    @Serializable data class ScanCur(val source: String, val title: String, val manga: String = "")
+    @Serializable data class DlCur(val source: String, val title: String, val chapter: String, val pagesDone: Int, val pagesTotal: Int, val manga: String = "")
     @Serializable data class Health(val version: String, val uptimeS: Long, val egressIp: String, val inflight: Int, val idle: Boolean, val metrics: Metrics, val shipping: Boolean = false, val syncing: Boolean = false, val exitCity: String = "", val scanDone: Int = 0, val scanTotal: Int = 0, val scanCur: List<ScanCur> = emptyList(), val dlCur: List<DlCur> = emptyList())
     @Serializable data class ExitNode(val name: String, val ip: String, val online: Boolean, val current: Boolean)
     @Serializable data class ExitCity(val code: String, val label: String, val online: Int, val total: Int, val current: Boolean, val ping: Int? = null)
@@ -322,7 +322,7 @@ object WorkerMode {
             call.respond(Health(VERSION, (now - started) / 1000, egress(), inflight, inflight == 0, metrics(),
                 shipping = now - lastServeAt < 4000, syncing = now - lastExtAt < 6000, exitCity = currentExitCity,
                 scanDone = scanProgress.get(), scanTotal = scanTotal, scanCur = curScan.values.toList(),
-                dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal) }))
+                dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal, it.mangaUrl) }))
         }
         get("/worker/jobs") {
             if (!call.authed()) return@get call.respond(HttpStatusCode.Unauthorized, Err("unauthorized"))
@@ -343,7 +343,7 @@ object WorkerMode {
                         async {
                             sem.withPermit {
                                 val label = item.title.ifBlank { item.manga }
-                                curScan[item.manga] = ScanCur(item.source, label)
+                                curScan[item.manga] = ScanCur(item.source, label, item.manga)
                                 try {
                                     runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
                                         .fold(
@@ -787,7 +787,7 @@ object WorkerMode {
                     val h = Health(VERSION, (nowH - started) / 1000, egress(), inflight, inflight == 0, metrics(),
                         shipping = nowH - lastServeAt < 4000, syncing = nowH - lastExtAt < 6000, exitCity = currentExitCity,
                         scanDone = scanProgress.get(), scanTotal = scanTotal, scanCur = curScan.values.toList(),
-                        dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal) })
+                        dlCur = jobs.values.filter { it.state == "running" }.map { DlCur(it.sourceId.toString(), it.title, it.curChapter, it.curPagesDone, it.curPagesTotal, it.mangaUrl) })
                     val body = hbJson.encodeToString(Workers.CheckinDto(token, h, selfTsIp)).toRequestBody("application/json".toMediaType())
                     client.newCall(Request.Builder().url(url).post(body).build()).execute().close()
                 }
