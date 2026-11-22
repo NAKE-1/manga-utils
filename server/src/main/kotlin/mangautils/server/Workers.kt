@@ -283,7 +283,17 @@ object Workers {
     }
     fun isAutoManaged(name: String) = name in autoWorkers
     private fun loadAuto() = runCatching { java.nio.file.Files.readAllLines(autoFile).filter { it.isNotBlank() }.forEach { autoWorkers += it } }
-    private fun exitKey(w: WorkerStatus): String? = w.exitCity?.ifBlank { null } ?: w.egressIp?.ifBlank { null }
+    private fun prefix24(ip: String?): String? =
+        ip?.ifBlank { null }?.split(".")?.takeIf { it.size == 4 }?.take(3)?.joinToString(".")
+    /** All collision groups among live workers: two workers collide if they share a STATE (exitCity) OR a /24
+     *  (egress range). A worker clashing on both dimensions appears in two groups; callers distinctBy name. */
+    private fun collisions(l: List<WorkerStatus>): List<List<WorkerStatus>> {
+        val live = l.filter { it.enabled && it.online }
+        val byState = live.filter { !it.exitCity.isNullOrBlank() }.groupBy { it.exitCity!! }.values
+        val by24 = live.mapNotNull { w -> prefix24(w.egressIp)?.let { it to w } }
+            .groupBy({ it.first }, { it.second }).values
+        return (byState + by24).filter { it.size > 1 }
+    }
 
     // ---- Per-source egress restrictions ----
     // A Mullvad state a source blocks (403s its exit IP, proven by the same content downloading from another
@@ -334,20 +344,25 @@ object Workers {
     /** Kick an immediate coordinated-auto pass (e.g. right after a worker is switched to Auto). */
     fun nudgeAutoSpread() = Thread { runCatching { kotlinx.coroutines.runBlocking { autoSpreadTick() } } }
         .apply { isDaemon = true; name = "auto-spread-nudge" }.start()
-    private fun autoDupes(l: List<WorkerStatus>) = l.filter { it.enabled && it.online }
-        .mapNotNull { w -> exitKey(w)?.let { it to w } }
-        .groupBy({ it.first }, { it.second }).values.filter { g -> g.size > 1 && g.any { it.name in autoWorkers } }
     private suspend fun autoSpreadTick() {
-        if (autoWorkers.isEmpty()) { egressAlert = null; return }
-        if (autoDupes(statuses(WorkerStore.list())).isEmpty()) { egressAlert = null; return }
+        val cols = collisions(statuses(WorkerStore.list()))
+        // Only an AUTO-managed worker can be moved; a group of only manually-pinned workers can't be touched.
+        val actionable = cols.filter { g -> g.any { it.name in autoWorkers } }
+        if (actionable.isEmpty()) {
+            // Nothing to re-spread. If two PINNED workers share a state/IP, surface it (we won't override a pin).
+            val pinnedClash = cols.firstOrNull { g -> g.none { it.name in autoWorkers } }
+            egressAlert = pinnedClash?.let { g ->
+                "Pinned workers ${g.joinToString(", ") { it.name }} share a state/IP — give one a different exit." }
+            return
+        }
         spreadExits(only = autoWorkers)                      // reassign just the auto workers to distinct exits
         kotlinx.coroutines.delay(6000)                       // let the new exits connect before re-checking
-        val still = autoDupes(statuses(WorkerStore.list()))
-        if (still.isEmpty()) { egressAlert = null; return }   // healed - every auto worker on a distinct exit
+        val still = collisions(statuses(WorkerStore.list())).filter { g -> g.any { it.name in autoWorkers } }
+        if (still.isEmpty()) { egressAlert = null; return }   // healed - every auto worker on a distinct state + /24
         val extras = still.flatMap { g -> g.filter { it.name in autoWorkers } }.distinctBy { it.name }.drop(1)
         extras.forEach { WorkerStore.setEnabled(it.name, false); collisionDisabled += it.name }
         egressAlert = if (extras.isEmpty()) null
-            else "Not enough distinct exits for the Auto workers — disabled ${extras.joinToString(", ") { it.name }} to avoid a shared egress IP. Add more Mullvad states."
+            else "Not enough distinct exits for the Auto workers — disabled ${extras.joinToString(", ") { it.name }} to avoid a shared state/IP. Add more Mullvad states."
     }
 
     /** Auto-assign a DISTINCT Mullvad exit city to each enabled+online worker so no two share an egress IP
@@ -534,6 +549,10 @@ object Workers {
         "mem" to (35.15 to -90.05), "msy" to (29.95 to -90.07), "lit" to (34.75 to -92.29),
         "hou" to (29.76 to -95.37), "dal" to (32.78 to -96.80), "was" to (39.04 to -77.49),
         "nyc" to (40.71 to -74.01),
+        // Expanded 2026-11-10 picker cities - were missing here, so a worker on any of them mapped as "direct".
+        "qas" to (39.04 to -77.49), "sea" to (47.61 to -122.33), "sfo" to (37.77 to -122.42),
+        "sjc" to (37.34 to -121.89), "txc" to (26.20 to -98.23), "uyk" to (40.79 to -74.06),
+        "den" to (39.74 to -104.99), "lax" to (34.05 to -118.24), "slc" to (40.76 to -111.89),
     )
 
     /** Assemble the fleet view from the status cache + the download queue's per-worker source load. */

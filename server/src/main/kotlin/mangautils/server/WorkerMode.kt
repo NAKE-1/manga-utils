@@ -754,7 +754,15 @@ object WorkerMode {
         val (code, out) = applyExit(node)
         if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
         if (node.isBlank()) { exitActive = false; currentExit = ""; currentExitCity = ""; return null } // normal egress - nothing to verify
-        if (verifyEgress()) { exitActive = true; currentExit = node; currentExitCity = ""; return null } // manual pin: city unknown
+        if (verifyEgress()) {
+            exitActive = true; currentExit = node
+            // node is a Mullvad server's tailnet IP/name - recover its city so the fleet map can place this worker.
+            // (A manual pin used to report no city, collapsing every pinned worker onto the map's "direct" dot.)
+            currentExitCity = mullvadCandidates().firstOrNull {
+                node in it.TailscaleIPs || it.HostName.equals(node, true) || it.DNSName.substringBefore('.').equals(node, true)
+            }?.let { cityOf(it) }.orEmpty()
+            return null
+        }
         // The exit node didn't give us a working path out. Revert to normal egress so downloads keep working.
         log.warn("exit node '{}' failed connectivity check - reverting to normal egress", node)
         applyExit(""); exitActive = false; currentExit = ""; currentExitCity = ""; egressIp = null
