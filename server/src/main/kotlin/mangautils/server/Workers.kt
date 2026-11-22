@@ -70,6 +70,7 @@ object Workers {
         val scanDone: Int = 0,         // live update-scan progress (for the fleet-activity panel)
         val scanTotal: Int = 0,
         val scanCur: List<WorkerMode.ScanCur> = emptyList(), // series this node is scanning right now
+        val dlCur: List<WorkerMode.DlCur> = emptyList(),     // chapters this node is downloading right now
     )
 
     @Serializable data class AddReq(val name: String, val url: String, val token: String = "")
@@ -89,7 +90,7 @@ object Workers {
                 }
                 val h = json.decodeFromString<WorkerMode.Health>(bodyText)
                 WorkerStatus(node.name, base, node.enabled, true, h.egressIp, h.inflight, h.metrics, h.version, h.uptimeS, exitCity = h.exitCity,
-                    scanDone = h.scanDone, scanTotal = h.scanTotal, scanCur = h.scanCur)
+                    scanDone = h.scanDone, scanTotal = h.scanTotal, scanCur = h.scanCur, dlCur = h.dlCur)
             }
         } catch (e: Exception) {
             WorkerStatus(node.name, base, node.enabled, false, error = e.message ?: "unreachable")
@@ -204,7 +205,7 @@ object Workers {
             node.name, node.url.trimEnd('/'), node.enabled, online = true,
             egressIp = h?.egressIp, inflight = h?.inflight, metrics = h?.metrics, version = h?.version, uptimeS = h?.uptimeS,
             exitCity = h?.exitCity,
-            scanDone = h?.scanDone ?: 0, scanTotal = h?.scanTotal ?: 0, scanCur = h?.scanCur ?: emptyList(),
+            scanDone = h?.scanDone ?: 0, scanTotal = h?.scanTotal ?: 0, scanCur = h?.scanCur ?: emptyList(), dlCur = h?.dlCur ?: emptyList(),
         )
         cache[node.name] = Cached(now, st)
         lastUp[node.name] = now; lastHealth[node.name] = st

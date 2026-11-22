@@ -338,25 +338,28 @@ export default function Workers() {
         </button>
       </div>
 
-      {/* Live fleet activity - what each node is scanning/downloading right now, with a running count.
-          Only shown while something is actually in flight (a scan or a download). */}
-      {workers.some((w) => w.online && ((w.scanTotal ?? 0) > 0 || (w.inflight ?? 0) > 0)) && (
+      {/* Live fleet activity - per node, what it's scanning/downloading right now with a running count.
+          Always shown (idle nodes included) so the panel is a steady place to watch the fleet. */}
+      {workers.some((w) => w.online) && (
         <div className="wh-card">
           <div className="set-row-label">Fleet activity</div>
           <div style={{ marginTop: 8, display: 'grid', gap: 12 }}>
-            {workers.filter((w) => w.online && ((w.scanTotal ?? 0) > 0 || (w.inflight ?? 0) > 0)).map((w) => {
+            {workers.filter((w) => w.online).map((w) => {
               const done = w.scanDone ?? 0, total = w.scanTotal ?? 0
               const dpct = total > 0 ? Math.round((done / total) * 100) : 0
+              const scanning = total > 0
+              const dls = w.dlCur ?? []
+              const parts: string[] = []
+              if (scanning) parts.push(`scanning ${done}/${total}`)
+              if (dls.length > 0) parts.push(`${dls.length} downloading`)
+              if (parts.length === 0) parts.push('idle')
               return (
                 <div key={w.name}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, alignItems: 'baseline' }}>
                     <b style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</b>
-                    <span className="set-hint" style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                      {total > 0 ? `scanning ${done}/${total}` : ''}
-                      {(w.inflight ?? 0) > 0 ? `${total > 0 ? ' · ' : ''}${w.inflight} downloading` : ''}
-                    </span>
+                    <span className="set-hint" style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{parts.join(' · ')}</span>
                   </div>
-                  {total > 0 && (
+                  {scanning && (
                     <div style={{ marginTop: 5, height: 5, borderRadius: 3, background: 'var(--border, #2a2a2a)', overflow: 'hidden' }}>
                       <div style={{ width: `${dpct}%`, height: '100%', background: 'var(--accent, #7c6cff)', transition: 'width .3s' }} />
                     </div>
@@ -364,9 +367,22 @@ export default function Workers() {
                   {(w.scanCur ?? []).length > 0 && (
                     <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {(w.scanCur ?? []).slice(0, 6).map((c, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
+                        <div key={'s' + i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
                           <SrcBadge id={c.source} sources={sources} />
                           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {dls.length > 0 && (
+                    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {dls.slice(0, 6).map((c, i) => (
+                        <div key={'d' + i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, minWidth: 0 }}>
+                          <SrcBadge id={c.source} sources={sources} />
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                          <span className="set-hint" style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>
+                            {c.chapter || ''}{c.pagesTotal > 0 ? ` · ${c.pagesDone}/${c.pagesTotal}p` : ''}
+                          </span>
                         </div>
                       ))}
                     </div>
