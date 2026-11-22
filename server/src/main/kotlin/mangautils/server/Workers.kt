@@ -394,7 +394,10 @@ object Workers {
             val pick = cities.firstOrNull { it.code !in taken }
             if (pick != null) {
                 taken += pick.code
-                val ok = setExit(w, "city:${pick.code}") != null
+                // auto:<city>, not city:<city>: the worker PREFERS this distinct city but roams to a clean one
+                // if every server in it is MangaFire-banned at the /24 level (which main's city-only restricted
+                // list can't see, e.g. Miami). Prevents a spread worker stranding on local in a fully-banned city.
+                val ok = setExit(w, "auto:${pick.code}") != null
                 out += SpreadAssign(w.name, pick.code, pick.label, pick.ping, ok, if (ok) null else "set failed")
             } else {
                 val ok = setExit(w, "auto") != null
