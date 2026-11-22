@@ -10,7 +10,11 @@ pluginManagement {
     repositories {
         val m = System.getenv("MU_MAVEN_MIRROR")?.trim()?.trimEnd('/')?.ifBlank { null }
         if (m != null) {
-            maven("$m/gradle-plugins"); maven("$m/central"); maven("$m/google"); maven("$m/compose-dev")
+            // The mirror is plain http on the tailnet (no TLS) - Gradle blocks http repos unless allowed.
+            maven("$m/gradle-plugins") { isAllowInsecureProtocol = true }
+            maven("$m/central") { isAllowInsecureProtocol = true }
+            maven("$m/google") { isAllowInsecureProtocol = true }
+            maven("$m/compose-dev") { isAllowInsecureProtocol = true }
         } else {
             gradlePluginPortal()
             mavenCentral()
@@ -24,7 +28,11 @@ dependencyResolutionManagement {
     repositories {
         val m = System.getenv("MU_MAVEN_MIRROR")?.trim()?.trimEnd('/')?.ifBlank { null }
         if (m != null) {
-            maven("$m/central"); maven("$m/google"); maven("$m/jitpack"); maven("$m/jetbrains-ij"); maven("$m/jogamp")
+            maven("$m/central") { isAllowInsecureProtocol = true }
+            maven("$m/google") { isAllowInsecureProtocol = true }
+            maven("$m/jitpack") { isAllowInsecureProtocol = true }
+            maven("$m/jetbrains-ij") { isAllowInsecureProtocol = true }
+            maven("$m/jogamp") { isAllowInsecureProtocol = true }
         } else {
             mavenCentral()
             google()
