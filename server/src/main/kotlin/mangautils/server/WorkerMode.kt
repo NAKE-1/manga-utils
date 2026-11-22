@@ -754,8 +754,11 @@ object WorkerMode {
         val (code, out) = applyExit(node)
         if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
         if (node.isBlank()) { exitActive = false; currentExit = ""; currentExitCity = ""; return null } // normal egress - nothing to verify
-        if (verifyEgress()) {
-            exitActive = true; currentExit = node
+        // probeExitEgress (not verifyEgress) so egressIp reflects the REAL exit: verifyEgress only returns a
+        // bool, leaving egressIp at its stale boot-time value (health/map/collision then show the wrong IP).
+        val eg = probeExitEgress()
+        if (eg != null) {
+            exitActive = true; currentExit = node; egressIp = eg
             // node is a Mullvad server's tailnet IP/name - recover its city so the fleet map can place this worker.
             // (A manual pin used to report no city, collapsing every pinned worker onto the map's "direct" dot.)
             currentExitCity = mullvadCandidates().firstOrNull {
