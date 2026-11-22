@@ -214,7 +214,10 @@ object WorkerMode {
                     job.id, failed, job.chapters.size, job.sourceId, currentExitCity, egress())
         } catch (e: Exception) {
             if (job.cancelled) log.info("worker job {} cancelled by main - stopping", job.id)
-            else { log.warn("worker job {} FAILED: {}", job.id, e.message); runCatching { resolveFolders(job) } }
+            else {
+                log.warn("worker job {} FAILED: {}", job.id, e.message); runCatching { resolveFolders(job) }
+                if (job.sourceId.toString() == MANGAFIRE_ID && cfBanned(e.message)) onMangaFireBanned()
+            }
             job.state = "failed"
         } finally {
             resolver.interrupt()
@@ -352,7 +355,7 @@ object WorkerMode {
                                     runCatching { LibraryService.fetchRefs(item.source.toLongOrNull() ?: 0L, item.manga) }
                                         .fold(
                                             onSuccess = { log.info("SCAN '{}' - {} chapters", label, it.size); ScanResItem(item.manga, chapters = it) },
-                                            onFailure = { log.warn("SCAN '{}' - FAILED: {}", label, it.message); ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
+                                            onFailure = { log.warn("SCAN '{}' - FAILED: {}", label, it.message); if (item.source == MANGAFIRE_ID && cfBanned(it.message)) onMangaFireBanned(); ScanResItem(item.manga, error = (it.message ?: "fetch failed").take(200)) },
                                         )
                                 } finally { scanProgress.incrementAndGet(); curScan.remove(item.manga) }
                             }
@@ -601,6 +604,72 @@ object WorkerMode {
     private fun persistExitMode(mode: String) { runCatching { Files.writeString(exitStateFile, mode) } }
     private fun loadExitMode(): String = runCatching { Files.readString(exitStateFile).trim() }.getOrDefault("")
 
+    // ---- Per-SERVER MangaFire egress bans (the reactive auto-rotate) ----
+    // MangaFire's Cloudflare bans by IP /24 range, and a Mullvad city mixes clean + banned servers, so exit
+    // selection must avoid banned SERVERS, not just cities. Seeded from the 2026-11-22 full sweep and extended
+    // at runtime when a MangaFire fetch comes back CF-IP-banned; every entry carries a TTL so a recovered range
+    // re-enters the pool on its own (and is re-marked on the next failure if still bad). selectFrom skips any
+    // candidate whose egress /24 is banned, so broad-auto AND city-pin both land on a clean server unaided.
+    private val MANGAFIRE_ID = "6084907896154116083"
+    private val BAN_TTL_MS = 24L * 3600_000
+    private val bannedEgress = ConcurrentHashMap<String, Long>() // "a.b.c" /24 -> expiry epoch ms
+    private val SEED_BANNED = listOf(
+        "146.70.165", "146.70.166", "146.70.168", "146.70.171", "146.70.172", "146.70.173", "146.70.187",
+        "146.70.211", "37.19.200", "37.19.210", "37.19.221", "45.134.140", "45.134.142", "138.199.43",
+        "143.244.47", "185.156.46", "135.136.36", "104.36.50", "169.150.203", "193.37.254", "79.127.217",
+        "79.127.222", "89.45.4",
+    )
+    @Volatile private var bannedSeeded = false
+    private fun seedBansOnce() {
+        if (bannedSeeded) return; bannedSeeded = true
+        val exp = System.currentTimeMillis() + BAN_TTL_MS
+        SEED_BANNED.forEach { bannedEgress.putIfAbsent(it, exp) }
+    }
+    private fun prefix24(ip: String?): String? =
+        ip?.trim()?.split(".")?.takeIf { it.size == 4 && it.all { o -> o.toIntOrNull() != null } }?.let { "${it[0]}.${it[1]}.${it[2]}" }
+    private fun isBannedEgress(ip: String?): Boolean {
+        val p = prefix24(ip) ?: return false
+        val exp = bannedEgress[p] ?: return false
+        if (System.currentTimeMillis() > exp) { bannedEgress.remove(p); return false } // TTL recovery
+        return true
+    }
+    private fun markBannedEgress(ip: String?) {
+        val p = prefix24(ip) ?: return
+        if (bannedEgress.put(p, System.currentTimeMillis() + BAN_TTL_MS) == null)
+            log.warn("egress {}.x MangaFire-banned (learned) - avoiding it for {}h", p, BAN_TTL_MS / 3600_000)
+    }
+    private fun cfBanned(msg: String?): Boolean =
+        msg != null && ("your IP is banned" in msg || "Cloudflare bypass" in msg || "Cloudflare has blocked" in msg)
+    /** Probe current egress IP (retries ~15s for a fresh exit). Returns the public IP, or null if no egress. */
+    private fun probeEgressIp(): String? {
+        val probe = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
+        repeat(5) {
+            val ip = runCatching {
+                probe.newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { if (it.isSuccessful) it.body?.string()?.trim() else null }
+            }.getOrNull()
+            if (!ip.isNullOrBlank()) return ip
+            Thread.sleep(3000)
+        }
+        return null
+    }
+    // Reactive: a MangaFire fetch came back CF-IP-banned. Learn the current egress /24 and, if we're on a
+    // managed exit (auto or city-pin), kick an off-thread re-select to move onto a clean server. Debounced so
+    // an 8-wide batch of failures triggers ONE move, not eight; selectFrom then skips the banned one.
+    private val lastReselectAt = java.util.concurrent.atomic.AtomicLong(0)
+    private fun onMangaFireBanned() {
+        val eg = egressIp ?: return
+        markBannedEgress(eg)
+        if (!(autoMode || cityPin.isNotEmpty())) return
+        val now = System.currentTimeMillis(); val prev = lastReselectAt.get()
+        if (now - prev < 30_000 || !lastReselectAt.compareAndSet(prev, now)) return
+        Thread {
+            runCatching {
+                log.warn("MangaFire banned on egress {} - re-selecting a clean exit", eg)
+                if (cityPin.isNotEmpty()) citySelect(cityPin, currentExit) else autoSelect(currentExit)
+            }
+        }.apply { isDaemon = true; name = "mf-ban-reselect" }.start()
+    }
+
     /** Quick one-shot egress check (the watchdog's probe; verifyEgress is the slower retrying one for a set). */
     private fun egressWorks(): Boolean = runCatching {
         OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
@@ -613,15 +682,17 @@ object WorkerMode {
     private fun selectFrom(pool: List<TsPeer>, avoid: String?) {
         // ponytail: pool is already ping-ordered, so take it in order (no rotation) and get the genuinely
         // fastest reachable server. Per-worker egress spread lives in mullvadCandidates' pre-ping fallback.
+        seedBansOnce()
         for (p in pool.filter { it.Online }) {
             val ip = p.TailscaleIPs.firstOrNull() ?: continue
             if (ip == avoid) continue
             val (code, _) = applyExit(ip)
-            if (code == 0 && verifyEgress()) {
-                currentExit = ip; currentExitCity = cityOf(p).orEmpty(); exitActive = true
-                log.info("exit node -> {} ({})", p.HostName, ip)
-                return
-            }
+            if (code != 0) continue
+            val eg = probeEgressIp() ?: continue // this node gave no working egress - try the next
+            if (isBannedEgress(eg)) { log.info("exit {} egress {}.x is MangaFire-banned - skipping", p.HostName, prefix24(eg)); continue }
+            currentExit = ip; currentExitCity = cityOf(p).orEmpty(); exitActive = true; egressIp = eg
+            log.info("exit node -> {} ({}) egress {}", p.HostName, ip, eg)
+            return
         }
         log.warn("exit: no eligible node connected - using normal egress for now")
         applyExit(""); currentExit = ""; currentExitCity = ""; exitActive = false; egressIp = null
@@ -849,6 +920,8 @@ object WorkerMode {
                 if (autoMode || cityPin.isNotEmpty()) {
                     val reselect = { avoid: String? -> if (cityPin.isNotEmpty()) citySelect(cityPin, avoid) else autoSelect(avoid) }
                     if (!exitActive) { reselect(null); strikes = 0; continue } // re-acquire when a node comes back
+                    // safety net: if the current exit is (now) MangaFire-banned, move off it even though egress works
+                    if (isBannedEgress(egressIp)) { log.warn("watchdog: egress {} MangaFire-banned - re-selecting a clean exit", egressIp); reselect(currentExit); strikes = 0; continue }
                     if (egressWorks()) { strikes = 0; continue }
                     if (++strikes >= 3) { strikes = 0; log.warn("exit {} dead - failing over to next node", currentExit); reselect(currentExit) }
                     continue
