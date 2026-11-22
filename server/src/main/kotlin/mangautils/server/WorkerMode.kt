@@ -82,6 +82,8 @@ object WorkerMode {
     @Volatile private var cityPin = ""       // pinned state (city code): fail over among THAT state's servers only
     @Volatile private var currentExit = ""   // the specific exit node (tailnet ip) we last applied; "" = direct
     @Volatile private var currentExitCity = "" // its Mullvad state code (for the fleet map); "" = direct/unknown
+    @Volatile private var preferredCity = ""  // auto:<city> - auto still roams, but tries THIS city's servers first; only falls through to the rest of the pool if they're all banned/down (so #2 can rescue a fully-banned city)
+    @Volatile private var localEgressIp: String? = null // our DIRECT/ISP egress (measured with the exit OFF). Right after an exit is applied, egress can briefly read as this before WireGuard is up; selectFrom rejects it so a handshake LEAK is never recorded as a working exit
     private val scanProgress = java.util.concurrent.atomic.AtomicInteger(0) // series fetched in the current /worker/scan
     @Volatile private var scanTotal = 0 // size of the current scan batch (so main can poll live progress)
     private class CurScan(val source: String, val title: String, val manga: String, val start: Long) // + start, so the panel can show elapsed ms
@@ -652,6 +654,21 @@ object WorkerMode {
         }
         return null
     }
+    private fun ipifyOnce(): String? = runCatching {
+        OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
+            .newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { if (it.isSuccessful) it.body?.string()?.trim()?.ifBlank { null } else null }
+    }.getOrNull()
+    /** Egress probe that REJECTS a handshake leak: right after an exit is applied, egress can briefly read as
+     *  our own [localEgressIp] before WireGuard is up. Retry (~16s) until it differs (= real exit routing) or
+     *  give up (this node never actually routed out through the exit - don't record the leak as success). */
+    private fun probeExitEgress(): String? {
+        repeat(8) {
+            val ip = ipifyOnce()
+            if (ip != null && ip != localEgressIp) return ip
+            Thread.sleep(2000)
+        }
+        return null
+    }
     // Reactive: a MangaFire fetch came back CF-IP-banned. Learn the current egress /24 and, if we're on a
     // managed exit (auto or city-pin), kick an off-thread re-select to move onto a clean server. Debounced so
     // an 8-wide batch of failures triggers ONE move, not eight; selectFrom then skips the banned one.
@@ -688,43 +705,52 @@ object WorkerMode {
             if (ip == avoid) continue
             val (code, _) = applyExit(ip)
             if (code != 0) continue
-            val eg = probeEgressIp() ?: continue // this node gave no working egress - try the next
+            val eg = probeExitEgress() ?: continue // no working exit egress (or only a local leak) - try the next
             if (isBannedEgress(eg)) { log.info("exit {} egress {}.x is MangaFire-banned - skipping", p.HostName, prefix24(eg)); continue }
             currentExit = ip; currentExitCity = cityOf(p).orEmpty(); exitActive = true; egressIp = eg
             log.info("exit node -> {} ({}) egress {}", p.HostName, ip, eg)
             return
         }
         log.warn("exit: no eligible node connected - using normal egress for now")
-        applyExit(""); currentExit = ""; currentExitCity = ""; exitActive = false; egressIp = null
+        applyExit(""); currentExit = ""; currentExitCity = ""; exitActive = false
+        localEgressIp = probeEgressIp() ?: localEgressIp // learn our direct IP (exit off now) so future leaks are detectable
+        egressIp = null
     }
 
-    /** Broad auto: fail over across ALL nearby states. */
-    private fun autoSelect(avoid: String? = null): String? {
-        autoMode = true; cityPin = ""
+    /** Broad auto: fail over across ALL nearby states. With a [preferred] city (auto:<city>) it tries that
+     *  city's servers FIRST but keeps the rest of the pool behind them, so it sits on the preferred city yet
+     *  can still roam to a clean one when that whole city is banned/down (#2's fallback). */
+    private fun autoSelect(avoid: String? = null, preferred: String = preferredCity): String? {
+        autoMode = true; cityPin = ""; preferredCity = preferred
         val pings = cityPing
         val all = mullvadCandidates()
         // Skip states with an insane ping (unknown counts as OK so the boot window isn't starved); if that
         // leaves nothing, fall back to the full pool so a slow node still beats stranding the worker.
         val good = all.filter { (pings[cityOf(it)] ?: 0) <= PING_BAD_MS }
-        selectFrom(good.ifEmpty { all }, avoid); return null
+        val pool = good.ifEmpty { all }
+        // sortedBy is stable, so preferred-city servers come first in their ping order, then everything else.
+        val ordered = if (preferred.isBlank()) pool else pool.sortedBy { if (cityOf(it) == preferred) 0 else 1 }
+        selectFrom(ordered, avoid); return null
     }
 
     /** Pin to one STATE and fail over among ITS servers only (wg-001 dies -> wg-002 -> ...). */
     private fun citySelect(code: String, avoid: String? = null): String? {
-        autoMode = false; cityPin = code
+        autoMode = false; cityPin = code; preferredCity = ""
         selectFrom(mullvadCandidates().filter { cityOf(it) == code }, avoid); return null
     }
 
     /**
-     * Set the exit node: "" = off, "auto" = broad nearby failover, "city:<code>" = pin a state (fail over among
-     * its servers), else a specific ip/name (manual pin). Auto/state fail over to another node; a manual pin is
-     * SELF-REVERTING (drops to normal egress if it can't connect) so a dead node never strands the worker.
+     * Set the exit node: "" = off, "auto" = broad nearby failover, "auto:<code>" = auto but preferring one state
+     * (sits there, roams only if it's fully banned/down), "city:<code>" = pin a state (fail over among its servers),
+     * else a specific ip/name (manual pin). Auto/state fail over to another node; a manual pin is SELF-REVERTING
+     * (drops to normal egress if it can't connect) so a dead node never strands the worker.
      */
     private fun setExitNode(node: String): String? {
         persistExitMode(if (node.isBlank()) "off" else node) // remember the choice across restarts
-        if (node == "auto") return autoSelect()
+        if (node == "auto") return autoSelect(preferred = "")
+        if (node.startsWith("auto:")) return autoSelect(preferred = node.removePrefix("auto:"))
         if (node.startsWith("city:")) return citySelect(node.removePrefix("city:"))
-        autoMode = false; cityPin = ""
+        autoMode = false; cityPin = ""; preferredCity = ""
         val (code, out) = applyExit(node)
         if (code != 0) return out.trim().take(200).ifBlank { "tailscale set failed" }
         if (node.isBlank()) { exitActive = false; currentExit = ""; currentExitCity = ""; return null } // normal egress - nothing to verify
@@ -898,6 +924,11 @@ object WorkerMode {
             // explicit "off" is honoured (stay direct); "auto"/"city:<code>"/a node is re-applied and the
             // watchdog then manages it. With no saved mode, fall back to adopting whatever exit Tailscale still
             // has live so the UI matches reality instead of showing a stray leftover as "Off".
+            // Learn our DIRECT egress IP first (exit off), so selectFrom can tell a real exit from a handshake
+            // leak. Null (killswitch / no direct route) just disables leak detection - never fatal.
+            runCatching {
+                if (localEgressIp == null) { applyExit(""); Thread.sleep(800); localEgressIp = probeEgressIp(); log.info("baseline direct egress = {}", localEgressIp) }
+            }
             runCatching {
                 val saved = loadExitMode()
                 when {

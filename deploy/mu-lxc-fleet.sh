@@ -31,12 +31,14 @@ case "$cmd" in
     if [ "${1:-}" = "--all" ]; then build_all=1; shift; fi
     targets=("$@"); [ ${#targets[@]} -eq 0 ] && targets=("${WORKERS[@]}")
     for ct in "${targets[@]}"; do
+      # Each rebuild leaves ~2GB of stale layers; builder prune -f at the end keeps the CT root from
+      # creeping full (it only drops dangling cache, never live images/containers/download volumes).
       if [ "$build_all" = 1 ]; then
         echo "== CT $ct: git pull + rebuild ALL (incl solver/Chromium - slow) + up =="
-        in_ct "$ct" "cd $GIT_DIR && git pull --ff-only && cd $COMPOSE_DIR && docker compose up -d --build"
+        in_ct "$ct" "cd $GIT_DIR && git pull --ff-only && cd $COMPOSE_DIR && docker compose up -d --build && docker builder prune -f >/dev/null"
       else
         echo "== CT $ct: git pull + rebuild manga-worker only + up (sidecars kept) =="
-        in_ct "$ct" "cd $GIT_DIR && git pull --ff-only && cd $COMPOSE_DIR && docker compose up -d --build manga-worker && docker compose up -d"
+        in_ct "$ct" "cd $GIT_DIR && git pull --ff-only && cd $COMPOSE_DIR && docker compose up -d --build manga-worker && docker compose up -d && docker builder prune -f >/dev/null"
       fi
     done ;;
   restart)
