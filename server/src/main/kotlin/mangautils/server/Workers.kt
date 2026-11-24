@@ -244,6 +244,15 @@ object Workers {
     /** Quick blocking liveness check for the dispatcher (reserveWorker). */
     fun onlineNow(node: WorkerNode): Boolean = poll(node).online
 
+    /** The dispatcher's live probe just found this node down: drop it from the online cache so pump()'s
+     *  worker projection (which reads this cache) stops routing overflow tasks to a dead node until a
+     *  heartbeat/background poll proves it's back. Without this the projection keeps re-dispatching to it. */
+    fun markOffline(name: String) {
+        val prev = cache[name]?.status
+        cache[name] = Cached(0L, prev?.copy(online = false, error = "unreachable")
+            ?: WorkerStatus(name, "", enabled = true, online = false, error = "unreachable"))
+    }
+
     // Exit-node control is proxied straight through: main forwards the worker's own response body to the UI.
     private val exitClient = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
 

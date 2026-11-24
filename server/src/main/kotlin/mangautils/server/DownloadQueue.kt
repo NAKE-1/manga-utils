@@ -123,6 +123,7 @@ object DownloadQueue {
             if (!reserved) continue // already running this source here, or at cap
             if (Workers.onlineNow(node)) return node
             synchronized(workerLoad) { workerLoad[node.name]?.remove(task.sourceId) } // offline — unreserve, try next
+            Workers.markOffline(node.name) // stale the cache so pump() stops projecting this dead node
         }
         return null
     }
@@ -144,7 +145,12 @@ object DownloadQueue {
         val s = runCatching { SettingsStore.get() }.getOrNull()
         if (s?.workerDispatch != true) return WorkerProjection(emptyList(), mutableMapOf())
         val pick = s.workerNode
-        val names = runCatching { WorkerStore.list().filter { it.enabled && (pick.isBlank() || it.name == pick) }.map { it.name } }.getOrDefault(emptyList())
+        val nodes = runCatching { WorkerStore.list().filter { it.enabled && (pick.isBlank() || it.name == pick) } }.getOrDefault(emptyList())
+        // Online-aware, via the cheap status CACHE (heartbeat + background poller) — never a blocking probe on
+        // the pump lock. A down node is no longer projected as available, so same-source overflow tasks stay
+        // QUEUED instead of all falling back to a local download on main (the "12 Atsumarus on main" bug).
+        val online = runCatching { Workers.cachedStatuses(nodes).filter { it.online }.map { it.name }.toSet() }.getOrDefault(emptySet())
+        val names = nodes.map { it.name }.filter { it in online }
         val snap = synchronized(workerLoad) { names.associateWithTo(HashMap()) { (workerLoad[it] ?: emptySet()).toMutableSet() } }
         return WorkerProjection(names, snap)
     }
@@ -227,12 +233,25 @@ object DownloadQueue {
             slots--
             futures[task.id] = pool.submit { run(task) }
         }
-        // ponytail: the worker-vs-local choice is pinned on the task above; reserveWorker can still come back
-        // empty (a node went offline between here and there), in which case run() just downloads locally.
+        // ponytail: the worker-vs-local choice is pinned on the task above. The projection is online-aware, so
+        // a down node is never flagged as overflow. If a node still dies between here and reserveWorker, run()
+        // requeues the task (not a local fallback) so overflow never piles onto main past the per-source cap.
     }
 
     private fun run(task: Task) {
         if (Thread.currentThread().isInterrupted) { task.state = "stopped"; return }
+        // Overflow dispatch: pump() pinned this task to a worker because main is ALREADY at this source's
+        // per-source cap. Reserve one now. If none is actually online/free, put it BACK in the queue rather
+        // than download it on main — otherwise a batch of same-source overflow tasks whose workers are all
+        // down would each fall back to a local download at once, piling 12 Atsumarus onto main and blowing
+        // past the per-source cap. pump() re-places it when a worker frees or main's own source slot opens.
+        val worker = if (task.preferWorker) reserveWorker(task) else null
+        if (task.preferWorker && worker == null) {
+            task.state = "queued"
+            futures.remove(task.id)
+            pump(); persist()
+            return
+        }
         task.state = "running"
         task.failClass = "" // recomputed at the end; clear stale colour from a prior run
         Notifier.onDownloadStart(task.sourceId, task.mangaUrl, task.mangaTitle, task.total)
@@ -240,8 +259,6 @@ object DownloadQueue {
             // Worker pre-harvest: if a node is free, let it download what it can with its OWN cf_clearance
             // (true parallelism - other tasks keep running locally). Whatever it commits to main's disk is
             // then skipped by the local pass below. Best-effort: anything it misses falls through to local.
-            // Main-first: only reach for a worker when pump() flagged this task as an overflow (or a re-adopt).
-            val worker = if (task.preferWorker) reserveWorker(task) else null
             if (worker != null) {
                 task.assignedWorker = worker.name
                 try {
