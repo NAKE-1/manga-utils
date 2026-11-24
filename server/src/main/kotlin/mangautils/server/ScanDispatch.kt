@@ -97,6 +97,13 @@ object ScanDispatch {
         // evenly across buckets, so parallel hits on one source come from different egress IPs (politer).
         val buckets = Array(nodes.size + 1) { ArrayList<LibraryEntry>() }
         entries.forEachIndexed { i, e -> buckets[i % buckets.size].add(e) }
+        // Pre-warm overlap: lead each bucket with ONE MangaFire title so slot 0 of the 8-wide fetch issues a
+        // MangaFire GET at t0, kicking its cold cf_clearance warm (~60s FlareSolverr session reset) right away
+        // and overlapping it with the fast JSON titles. Without this the warm starts only once a node's fast
+        // titles drain and 8 slots then pile onto a cold warm at once - the node-1 scan stall. Reorder is
+        // WITHIN a bucket, so the cross-bucket source spread (politer egress) is untouched; workers fetch in
+        // the order main sends, so this one edit pre-warms main's bucket and every worker's.
+        for (b in buckets) { val i = b.indexOfFirst { it.sourceId in SLOW_SOURCES }; if (i > 0) b.add(0, b.removeAt(i)) }
 
         // Cost-weight the progress so the bar tracks TIME, not title COUNT. A library is ~half instant JSON-API
         // titles (Atsumaru/MangaDex) and ~half Cloudflare+solver titles (MangaFire) that cost ~10x more each, so
@@ -128,12 +135,14 @@ object ScanDispatch {
         // the per-series local fallback only kicks in once its future RETURNS, which for a hung worker is the
         // 15-min callTimeout. So if a worker makes NO progress for STALL_MS, cancel its future - fut.get() then
         // throws and its bucket falls back to a local fetch, and the scan moves on instead of stalling at ~50%.
-        // 45s: with workers kept on MangaFire-clean exits, cf_clearance warms fast - no doomed retries on a
-        // banned IP burning the full solver timeout - so a worker that's made NO progress for 45s is
-        // genuinely stuck, and failing its bucket over to a local fetch sooner beats waiting 90s. (Was 90s
-        // when a worker could land on a banned exit and a warm queued behind retries took 30-45s; the egress
-        // fixes removed that case, so the longer wait now just delays recovery.)
-        val STALL_MS = 45_000L
+        // 90s: a COLD MangaFire cf_clearance warm (FlareSolverr session reset) blocks the whole MangaFire part
+        // of a bucket and makes ZERO scan progress for ~60-75s - and that latency is INDEPENDENT of exit
+        // cleanliness. Clean exits killed the banned-IP RETRY loop, not the cold-warm cost, so 45s was too
+        // tight: it tripped on a healthy worker mid-warm and double-scanned its whole bucket locally on main
+        // (node-1: guard fired at 45s, yet the worker finished all 201 series fine at 100s). Wait the warm
+        // out; a genuinely dead worker still falls back in 90s. (Was lowered 90->45 on the false premise that
+        // clean exits warm fast - they don't; the warm is a FlareSolverr cold start either way.)
+        val STALL_MS = 90_000L
         val lastAdvance = HashMap<String, Long>().apply { val t0 = System.currentTimeMillis(); nodes.forEach { put(it.name, t0) } }
         val poller = pool.submit {
             runCatching {
