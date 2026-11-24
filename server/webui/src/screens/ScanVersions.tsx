@@ -25,6 +25,8 @@ export default function ScanVersions() {
   const [queued, setQueued] = useState<{ title: string; n: number } | null>(null)
   const [started, setStarted] = useState<Record<string, number>>({}) // title -> versions queued, sticky
   const [active, setActive] = useState<Set<string>>(new Set()) // mangaKeys with a live download, from the server
+  const [allBusy, setAllBusy] = useState(false)
+  const [armed, setArmed] = useState(false) // "download all" needs a second tap to confirm (big action)
 
   useEffect(() => {
     api.scanverPlan().then(setPlan).catch((e) => setErr(String(e?.message || e)))
@@ -61,6 +63,18 @@ export default function ScanVersions() {
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
   }
 
+  // Download EVERY missing version. Needs two taps (arm, then fire) since it can be a several-hundred-GB queue.
+  async function startAll() {
+    if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 4000); return }
+    setArmed(false); setAllBusy(true)
+    try {
+      const r = await api.scanverStartAll()
+      setQueued({ title: `all ${r.series} series`, n: r.queued })
+      setStarted((m) => { const n = { ...m }; for (const s of plan!.series) if (s.missing > 0) n[s.title] = n[s.title] ?? s.missing; return n })
+      setPlan(await api.scanverPlan().catch(() => plan))
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setAllBusy(false) }
+  }
+
   if (err) return <div className="center-msg">{err}</div>
   if (!plan) return <div className="spinner" />
 
@@ -79,6 +93,13 @@ export default function ScanVersions() {
       <div className="sv-tot">
         <div><b>{plan.totalMissing}</b> version{plan.totalMissing === 1 ? '' : 's'} missing</div>
         <div className="sv-tot-sub">across {series.length} series · about {fmtBytes(plan.totalEstBytes)} if you fetched them all</div>
+        {series.length > 0 && (
+          <button className="btn primary" style={{ marginTop: 10 }} disabled={allBusy} onClick={startAll}>
+            {allBusy ? 'Queuing all…'
+              : armed ? `Tap again to confirm — queues ${plan.totalMissing} version${plan.totalMissing === 1 ? '' : 's'} (~${fmtBytes(plan.totalEstBytes)})`
+              : `Download all ${plan.totalMissing} missing version${plan.totalMissing === 1 ? '' : 's'} (~${fmtBytes(plan.totalEstBytes)})`}
+          </button>
+        )}
       </div>
 
       {queued && (

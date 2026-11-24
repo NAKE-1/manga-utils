@@ -2884,6 +2884,16 @@ fun Application.module() {
             )
         }
 
+        /** Queue the missing versions for EVERY series at once (the "download all" button). Big action -
+         *  the UI confirms first; this is the whole-library counterpart the single-series guard warns about. */
+        post("/api/scanver/start-all") {
+            val r = runCatching { withContext(Dispatchers.IO) { ScanVersions.startAll() } }
+            r.fold(
+                onSuccess = { (series, queued) -> call.respond(mapOf("series" to series, "queued" to queued)) },
+                onFailure = { call.respond(HttpStatusCode.InternalServerError, ErrorDto(it.message ?: "failed")) },
+            )
+        }
+
         /**
          * Dev: what the app thinks each downloaded folder of a series actually is, plus what the source
          * currently offers. This is how the per-scanlator work gets checked by eye before anything

@@ -180,4 +180,21 @@ object ScanVersions {
         DownloadQueue.enqueue(entry.sourceId, entry.mangaUrl, entry.title, chapters)
         return chapters.size
     }
+
+    /**
+     * Queue EVERY missing version across the whole library, one enqueue per series (reuses [start]). This is
+     * the several-hundred-GB action the single-series guard existed to make you pause over, so it runs only
+     * from the explicit "download all" button. Returns series-count to versions-queued.
+     */
+    fun startAll(): Pair<Int, Int> {
+        val titles = plan().series.map { it.title } // plan() (library scope) already keeps only missing > 0
+        var series = 0
+        var versions = 0
+        for (t in titles) {
+            val n = runCatching { start(t) }.getOrElse { log.warn("scan-versions start-all: '{}' failed: {}", t, it.message); 0 }
+            if (n > 0) { series++; versions += n }
+        }
+        log.info("scan-versions: start-all queued {} version(s) across {} series", versions, series)
+        return series to versions
+    }
 }

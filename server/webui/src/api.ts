@@ -178,6 +178,12 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not start')
     return r.json() as Promise<{ queued: number }>
   },
+  /** Queue the missing versions for EVERY series at once. Big action — the UI confirms before calling this. */
+  scanverStartAll: async () => {
+    const r = await fetch('/api/scanver/start-all', { method: 'POST' })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Could not start')
+    return r.json() as Promise<{ series: number; queued: number }>
+  },
   updateProgress: () => getJson<UpdateProgress>('/api/library/update/progress'),
   // Start a library update (or join one already running) and resolve with the summary when it finishes —
   // polling /progress rather than holding a long POST open (which dropped over Tailscale → false "failed").
