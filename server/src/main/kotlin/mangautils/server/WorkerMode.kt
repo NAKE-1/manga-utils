@@ -625,10 +625,12 @@ object WorkerMode {
         "146.70.211", "37.19.200", "37.19.210", "37.19.221", "45.134.140", "45.134.142", "138.199.43",
         "143.244.47", "185.156.46", "135.136.36", "104.36.50", "169.150.203", "193.37.254", "79.127.217",
         "79.127.222", "89.45.4",
-        // 2026-11-24 sweep: the whole 23.234.x datacenter range now hard-blocks MangaFire at Cloudflare
-        // (clearance refused on every 23.234.x city, both node-3 workers). Was Atsumaru-only two weeks ago.
-        "23.234.68", "23.234.72", "23.234.76", "23.234.80", "23.234.100", "23.234.112",
     )
+    // Whole datacenter /16 blocks that are structurally MangaFire-hostile - every /24 in them CF-bans, so
+    // enumerating /24s is whack-a-mole (2026-11-24 sweep: nyc/sea/rag/lax/slc/den all egress 23.234.x and a
+    // live roam-off test still landed on an unseeded 23.234.101). No TTL - this is a datacenter fact, not a
+    // transient ban; edit this constant if the range ever recovers. Was Atsumaru-blocked two weeks ago, now MF.
+    private val BANNED_PREFIX16 = setOf("23.234")
     @Volatile private var bannedSeeded = false
     private fun seedBansOnce() {
         if (bannedSeeded) return; bannedSeeded = true
@@ -637,7 +639,10 @@ object WorkerMode {
     }
     private fun prefix24(ip: String?): String? =
         ip?.trim()?.split(".")?.takeIf { it.size == 4 && it.all { o -> o.toIntOrNull() != null } }?.let { "${it[0]}.${it[1]}.${it[2]}" }
+    private fun prefix16(ip: String?): String? =
+        ip?.trim()?.split(".")?.takeIf { it.size == 4 && it.all { o -> o.toIntOrNull() != null } }?.let { "${it[0]}.${it[1]}" }
     private fun isBannedEgress(ip: String?): Boolean {
+        if (prefix16(ip) in BANNED_PREFIX16) return true // structurally-banned datacenter /16
         val p = prefix24(ip) ?: return false
         val exp = bannedEgress[p] ?: return false
         if (System.currentTimeMillis() > exp) { bannedEgress.remove(p); return false } // TTL recovery
