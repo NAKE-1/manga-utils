@@ -214,6 +214,9 @@ object WorkerMode {
             if (failed > 0 && currentExitCity.isNotEmpty())
                 log.warn("EGRESS-BLOCK? job {} - {}/{} chapter(s) FAILED for source {} on exit '{}' ({}). If this source always fails on this state, its Mullvad IP is likely CDN-blocked - add to egress restrictions.",
                     job.id, failed, job.chapters.size, job.sourceId, currentExitCity, egress())
+            // Whole multi-chapter job wiped out = this egress /24 is source-blocked, not one bad chapter. Learn
+            // it + roll to a clean exit (any source; MangaFire also has its higher-confidence CF path above).
+            if (ready == 0 && job.chapters.size >= 2) onBatchWipeout(job.sourceId.toString())
         } catch (e: Exception) {
             if (job.cancelled) log.info("worker job {} cancelled by main - stopping", job.id)
             else {
@@ -367,6 +370,8 @@ object WorkerMode {
             }
             val ok = results.count { it.chapters != null }
             log.info("scan batch: {}/{} series in {}s", ok, results.size, (System.currentTimeMillis() - t0) / 1000)
+            // Whole scan batch failed on a managed exit = egress /24 is blocked, not the series. Roll off it.
+            if (ok == 0 && results.size >= 2) onBatchWipeout(req.series.firstOrNull()?.source ?: "?")
             scanTotal = 0; scanProgress.set(0); curScan.clear() // idle after a batch: an early poll of the NEXT run reads 0, not this batch's stale count (fixes the ~50% flash on main's update bar)
             call.respond(ScanResDto(results))
         }
@@ -620,6 +625,9 @@ object WorkerMode {
         "146.70.211", "37.19.200", "37.19.210", "37.19.221", "45.134.140", "45.134.142", "138.199.43",
         "143.244.47", "185.156.46", "135.136.36", "104.36.50", "169.150.203", "193.37.254", "79.127.217",
         "79.127.222", "89.45.4",
+        // 2026-11-24 sweep: the whole 23.234.x datacenter range now hard-blocks MangaFire at Cloudflare
+        // (clearance refused on every 23.234.x city, both node-3 workers). Was Atsumaru-only two weeks ago.
+        "23.234.68", "23.234.72", "23.234.76", "23.234.80", "23.234.100", "23.234.112",
     )
     @Volatile private var bannedSeeded = false
     private fun seedBansOnce() {
@@ -635,10 +643,10 @@ object WorkerMode {
         if (System.currentTimeMillis() > exp) { bannedEgress.remove(p); return false } // TTL recovery
         return true
     }
-    private fun markBannedEgress(ip: String?) {
+    private fun markBannedEgress(ip: String?, ttlMs: Long = BAN_TTL_MS) {
         val p = prefix24(ip) ?: return
-        if (bannedEgress.put(p, System.currentTimeMillis() + BAN_TTL_MS) == null)
-            log.warn("egress {}.x MangaFire-banned (learned) - avoiding it for {}h", p, BAN_TTL_MS / 3600_000)
+        if (bannedEgress.put(p, System.currentTimeMillis() + ttlMs) == null)
+            log.warn("egress {}.x banned (learned) - avoiding it for {}min", p, ttlMs / 60_000)
     }
     private fun cfBanned(msg: String?): Boolean =
         msg != null && ("your IP is banned" in msg || "Cloudflare bypass" in msg || "Cloudflare has blocked" in msg)
@@ -669,22 +677,43 @@ object WorkerMode {
         }
         return null
     }
-    // Reactive: a MangaFire fetch came back CF-IP-banned. Learn the current egress /24 and, if we're on a
-    // managed exit (auto or city-pin), kick an off-thread re-select to move onto a clean server. Debounced so
-    // an 8-wide batch of failures triggers ONE move, not eight; selectFrom then skips the banned one.
+    // Reactive: an egress /24 looks source-blocked. Mark it (TTL) and, if we're on a MANAGED exit (auto or
+    // city-pin, never a manual pin), kick ONE off-thread re-select onto a clean server. Debounced so an 8-wide
+    // batch of failures triggers one move, not eight; selectFrom then skips the banned /24.
     private val lastReselectAt = java.util.concurrent.atomic.AtomicLong(0)
-    private fun onMangaFireBanned() {
-        val eg = egressIp ?: return
-        markBannedEgress(eg)
+    private fun reselectOffBanned(eg: String, ttlMs: Long, reason: String) {
+        markBannedEgress(eg, ttlMs)
         if (!(autoMode || cityPin.isNotEmpty())) return
         val now = System.currentTimeMillis(); val prev = lastReselectAt.get()
         if (now - prev < 30_000 || !lastReselectAt.compareAndSet(prev, now)) return
         Thread {
             runCatching {
-                log.warn("MangaFire banned on egress {} - re-selecting a clean exit", eg)
+                log.warn("{} on egress {} - re-selecting a clean exit", reason, eg)
                 if (cityPin.isNotEmpty()) citySelect(cityPin, currentExit) else autoSelect(currentExit)
             }
-        }.apply { isDaemon = true; name = "mf-ban-reselect" }.start()
+        }.apply { isDaemon = true; name = "ban-reselect" }.start()
+    }
+    // MangaFire CF IP-ban: high confidence (the CF body literally says banned), full 24h TTL.
+    private fun onMangaFireBanned() { reselectOffBanned(egressIp ?: return, BAN_TTL_MS, "MangaFire banned") }
+
+    // Any source, inferred from a WHOLE batch wiping out on a managed exit (every item failed = it's the egress,
+    // not one bad chapter). Lower confidence than a CF ban -> short 30min TTL, plus a cap: >=3 wipeouts in a
+    // 10min window means the SOURCE is probably down, not our exit, so stop rolling (else a global outage would
+    // march us through every exit, banning each). The TTLs recover on their own. This is what catches a non-CF
+    // source (e.g. Atsumaru 403ing a datacenter /24) that onMangaFireBanned's message-sniff never would.
+    private val WIPEOUT_TTL_MS = 30L * 60_000
+    private val wipeoutWindowStart = java.util.concurrent.atomic.AtomicLong(0)
+    private val wipeoutCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private fun onBatchWipeout(sourceId: String) {
+        val eg = egressIp ?: return
+        if (!(autoMode || cityPin.isNotEmpty())) return  // a manual pin is the user's call - don't auto-roll it
+        val now = System.currentTimeMillis()
+        if (now - wipeoutWindowStart.get() > 600_000) { wipeoutWindowStart.set(now); wipeoutCount.set(0) }
+        if (wipeoutCount.incrementAndGet() > 3) {
+            log.warn("batch wipeout #{} in 10min (source {}) - looks like a source outage, not egress {}; not reselecting", wipeoutCount.get(), sourceId, eg)
+            return
+        }
+        reselectOffBanned(eg, WIPEOUT_TTL_MS, "batch wipeout (source $sourceId)")
     }
 
     /** Quick one-shot egress check (the watchdog's probe; verifyEgress is the slower retrying one for a set). */
